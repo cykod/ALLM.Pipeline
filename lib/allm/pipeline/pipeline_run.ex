@@ -26,7 +26,7 @@ defmodule ALLM.Pipeline.PipelineRun do
       no token, so a read path can never stamp a run terminal.
     * A **borrowed** run — an umbrella lending its run to an inner pipeline via
       the `:pipeline_run` opt — is passed through `borrow/1` at the receiving
-      boundary (`Runner.borrowed_run/1`), which strips the token. An inner
+      boundary (`Executor.borrowed_run/1`), which strips the token. An inner
       `complete/2` (or `fail/2`) is then a detectable `{:error, :not_run_owner}`
       instead of silently stamping the run terminal mid-loop and clobbering the
       umbrella's aggregate metadata with the last item's.
@@ -45,7 +45,7 @@ defmodule ALLM.Pipeline.PipelineRun do
       common path.
     * `assume_ownership/1` — an explicit, greppable **take-over** of a
       token-less run, for a caller that legitimately means to finish a run it
-      did not create (see `Runner.resume/2`, and the orphaned-run sweeper still
+      did not create (see `Executor.resume/2`, and the orphaned-run sweeper still
       open in `.work/HANDOFF.md`).
 
   Do not add a third: a re-mint hidden inside a function whose name does not say
@@ -169,7 +169,7 @@ defmodule ALLM.Pipeline.PipelineRun do
   The **explicit** counterpart to `create/3`'s implicit mint, and the sanctioned
   way to finish a run you did not create. Two callers need it:
 
-    * a driver of `Runner.resume/2`, whose handle is loaded from the database
+    * a driver of `Executor.resume/2`, whose handle is loaded from the database
       and therefore never an owner;
     * the orphaned-run sweeper (still open in `.work/HANDOFF.md`), which cannot
       use `fail/2` as an escape hatch now that `fail/2` and `cancel/1` are
@@ -196,7 +196,7 @@ defmodule ALLM.Pipeline.PipelineRun do
   Return a non-owning handle on `pipeline_run` — the same run, minus the
   completion token.
 
-  Called at the borrowed-run boundary (`Runner.borrowed_run/1`) so an inner
+  Called at the borrowed-run boundary (`Executor.borrowed_run/1`) so an inner
   pipeline handed an umbrella's run can log steps under it but cannot complete
   it. See the moduledoc.
   """
@@ -423,7 +423,7 @@ defmodule ALLM.Pipeline.PipelineRun do
   #
   # The message deliberately does NOT accuse an inner pipeline: the guard fires
   # for three distinct provenances (borrowed, re-loaded via `get/1`, resumed via
-  # `Runner.resume/2`), and only the first involves a borrowing bug. Naming the
+  # `Executor.resume/2`), and only the first involves a borrowing bug. Naming the
   # cause as "carries no completion token" plus the three ways that happens sends
   # the operator to the right place for all three.
   @spec refuse(t(), String.t()) :: {:error, :not_run_owner}

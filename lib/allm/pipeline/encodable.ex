@@ -2,10 +2,10 @@ defmodule ALLM.Pipeline.Encodable do
   @moduledoc """
   The single implementation of "make an arbitrary term safe for a jsonb column".
 
-  Two divergent copies of this used to exist — `Runner.normalize_metadata/1` and
+  Two divergent copies of this used to exist — `Executor.normalize_metadata/1` and
   `PipelineRun.stringify_keys/1` — and a term that survived one crashed the
   other. Worse, they ran in SEQUENCE on the create path
-  (`Runner.create_pipeline_run/3` normalized, then `PipelineRun.create/3`
+  (`Executor.create_pipeline_run/3` normalized, then `PipelineRun.create/3`
   stringified the same term), so metadata was double-processed on every run
   while `complete/2` and `fail/2` saw only the second set of rules. This module
   takes the UNION of both rule sets:

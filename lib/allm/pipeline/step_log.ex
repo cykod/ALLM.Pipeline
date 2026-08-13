@@ -195,7 +195,7 @@ defmodule ALLM.Pipeline.StepLog do
 
   # Fold the LLM-call artifact columns into a changeset's attrs, dropping nil
   # keys so a step that made no LLM calls writes nothing to these columns.
-  # The keys come from `Runner.drain_and_store_llm/2` (atom-keyed): a successful
+  # The keys come from `Executor.drain_and_store_llm/2` (atom-keyed): a successful
   # store carries all five; a store failure carries only the cheap counts; a
   # zero-LLM step carries `%{}`.
   @spec merge_llm_info(map(), map()) :: map()

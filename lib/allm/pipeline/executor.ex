@@ -1,4 +1,4 @@
-defmodule ALLM.Pipeline.Runner do
+defmodule ALLM.Pipeline.Executor do
   @moduledoc """
   Base utilities for executing pipeline steps.
 
@@ -198,7 +198,7 @@ defmodule ALLM.Pipeline.Runner do
   hand-written in four places (three `run_list_only/1` helpers plus
   `VideoSummaryPipeline`'s own copy) before being lifted here, which is also
   where it belongs: "finish the run you own" is framework logic, not consumer
-  logic, so it travels with `Runner` when the framework moves.
+  logic, so it travels with `Executor` when the framework moves.
 
   Matches both result shapes the codebase produces — the 2-tuple a pipeline
   returns (`{:ok, stats}` / `{:error, reason}`) and the 3-tuple `run_step/5`
@@ -249,7 +249,7 @@ defmodule ALLM.Pipeline.Runner do
      caller that finishes the resumed run without noticing strands it at
      `:running`. A caller that means to finish it must say so explicitly:
 
-         {:ok, run} = Runner.resume(run_id, step_id)
+         {:ok, run} = Executor.resume(run_id, step_id)
          run = PipelineRun.assume_ownership(run)
 
      Deliberately not re-minted inside this function: that would make `resume/2`
@@ -421,7 +421,7 @@ defmodule ALLM.Pipeline.Runner do
   # columns (atom-keyed) to fold into the StepLog logger; `%{}` when nothing was
   # captured. Wrapped so it can NEVER raise — LLM logging is observability and
   # must not fail the step (a build_envelope JSON-encode is a real raise
-  # candidate). This Runner-level rescue is what isolates the whole record/drain/
+  # candidate). This Executor-level rescue is what isolates the whole record/drain/
   # store path end-to-end.
   @spec drain_and_store_llm(Ecto.UUID.t(), module() | nil) :: map()
   defp drain_and_store_llm(step_id, step_module) do

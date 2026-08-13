@@ -41,7 +41,7 @@ defmodule ALLM.Pipeline.FanOut do
   | `Pipelines.PoiThumbnailStep.generate_for_pois/6` | `safe_generate_one/7` (`catch`) |
   | `Processors.DocumentTextCollector.execute/2` | `safe_collect_text/1` (`catch`) |
   | `Services.ProjectScaleRescale.run/1` | `rescore/3` (`rescue` + `catch`) |
-  | `Pipelines.CommitteePipeline` (×3) | total child — `Runner.run_step/5`; see that module's comment for why no `catch` |
+  | `Pipelines.CommitteePipeline` (×3) | total child — `Executor.run_step/5`; see that module's comment for why no `catch` |
 
   A sequential sibling, `Pipelines.ProjectRefreshPipeline.safe_run/2`, uses the
   same `catch` for the same reason (an exit is not an exception) even though it

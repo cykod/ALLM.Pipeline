@@ -2,7 +2,7 @@ defmodule ALLM.Pipeline.LLMCallLog do
   @moduledoc """
   Per-step collector for full LLM-call inputs/outputs.
 
-  The `Runner` calls `activate/0` in the step process before `execute/2` and
+  The `Executor` calls `activate/0` in the step process before `execute/2` and
   `drain/0` after; `AmesburyScraper.Transformers.LLMEngine.generate_structured/4`
   calls `record/1` for each call. The active collector pid lives in the step
   process's dictionary and is resolved from child tasks via the same
