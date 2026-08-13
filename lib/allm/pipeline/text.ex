@@ -4,26 +4,34 @@ defmodule ALLM.Pipeline.Text do
   Postgres will accept it, whitespace normalization, and head+tail truncation
   for oversized artifact bodies.
 
-  ## ⚠️ `scrub/1` and `scrub_strings/2` are a deliberate DUPLICATE of `Amesbury.TextSanitizer`
+  ## ⚠️ `scrub/1` and `scrub_strings/1` are a deliberate DUPLICATE of `Amesbury.TextSanitizer`
 
-  The other copy is `apps/amesbury/lib/amesbury/text_sanitizer.ex`. **Neither is
-  generated from the other and nothing machine-checks that they agree** — this
-  moduledoc and the matching one on `Amesbury.TextSanitizer` are the only link,
-  which is why each names the other (root `CLAUDE.md`, the hand-mirrored-list
-  rule).
+  The other copy is `apps/amesbury/lib/amesbury/text_sanitizer.ex`. Neither is
+  generated from the other, so per root `CLAUDE.md`'s hand-mirrored-list rule the
+  pair carries a **machine drift guard**:
+  `apps/amesbury_scraper/test/amesbury_scraper/text_parity_test.exs` calls both
+  implementations on one shared fixture table plus a deterministic random byte
+  corpus and asserts they agree. That test lives in the host tree because it is
+  the only one that can see both modules — **1.D must not move it** along with
+  the rest of the framework tests. Each moduledoc naming the other is the human
+  index; the parity test is the enforcement.
 
   It is a copy rather than a move because `Amesbury.Government` calls
-  `TextSanitizer.scrub/1` and `scrub_strings/1` at four sites. Moving the module
+  `TextSanitizer.scrub/1` and `scrub_strings/1` at three sites
+  (`grep -anE "TextSanitizer\\.(scrub|scrub_strings)\\(" apps/amesbury/lib/amesbury/government.ex`
+  → `:1864`, `:1908`, `:2424`, measured 2026-08-13). Moving the module
   would force `{:allm_pipeline, in_umbrella: true}` into `apps/amesbury` — the
   *core* app — which the extraction plan's Decision #2 defers to Phase 7. A
   package headed for hex must own this code regardless; there is no end state in
   which `ALLM.Pipeline.Text` calls back into `Amesbury.*`.
 
   The duplication is inert for the length of Phases 1–6: each copy has its own
-  test, and neither calls the other. **Phase 7 retires it** — when the core app
-  takes the dependency, `Amesbury.TextSanitizer` either `defdelegate`s here or
-  is deleted with its four call sites re-pointed. Until then, a fix to one is a
-  fix owed to the other.
+  test, the parity test above pins that they agree, and neither calls the other.
+  **Phase 7 retires it** — when the core app takes the dependency,
+  `Amesbury.TextSanitizer` either `defdelegate`s here or is deleted with its
+  three call sites re-pointed (and the parity test goes with it: a module
+  delegating to another cannot drift). Until then, a fix to one is a fix owed to
+  the other.
 
   See `steering/2026-08-10_ALLM_PIPELINE_PHASE_1.md` §5.2.
   """

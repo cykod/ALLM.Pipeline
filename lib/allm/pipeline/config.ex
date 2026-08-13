@@ -36,8 +36,10 @@ defmodule ALLM.Pipeline.Config do
 
       config :amesbury_scraper, repo: Amesbury.Repo
 
-  Raises when unconfigured, rather than returning `nil` and failing later inside
-  Ecto with a message that names neither this key nor this package.
+  Raises when unconfigured — or configured with something that is not a module —
+  rather than returning `nil` and failing later inside Ecto with a message that
+  names neither this key nor this package. Both raise branches name the key and
+  the package, and `config_test.exs` pins that they do.
   """
   @spec repo() :: module()
   def repo do
@@ -51,6 +53,18 @@ defmodule ALLM.Pipeline.Config do
 
       repo when is_atom(repo) ->
         repo
+
+      other ->
+        # A quoted module name (`repo: "Amesbury.Repo"`) is the likely typo here.
+        # Without this clause it raised a bare `CaseClauseError`, which names
+        # neither the key nor the package — the exact outcome the @doc rejects.
+        raise """
+        ALLM.Pipeline's configured repo must be a module, got: #{inspect(other)}
+
+        Fix in config/config.exs:
+
+            config :amesbury_scraper, repo: MyApp.Repo
+        """
     end
   end
 end
