@@ -7,7 +7,7 @@ defmodule ALLM.Pipeline.Metrics do
   import Ecto.Query
   require Logger
 
-  alias ALLM.Pipeline.{PipelineMetric, PipelineRun}
+  alias ALLM.Pipeline.{Config, PipelineMetric, PipelineRun}
 
   @type funnel :: %{
           optional(:found) => non_neg_integer(),
@@ -18,19 +18,23 @@ defmodule ALLM.Pipeline.Metrics do
           optional(:tokens) => non_neg_integer()
         }
 
-  # Pipelines that re-scrape a COMPLETE source listing every run: `found == 0` means the
-  # scrape itself broke (portal down, auth failed, selector rot), not a quiet week — so it
-  # is an auto-alert (see `status/1`). Keyed by the run `name` (= `pipeline_metrics.pipeline_name`).
-  # Default is OFF: incremental/backlog pipelines (`*_pending`, `poi_thumbnails`,
-  # `project_enrichment`) legitimately find nothing and are intentionally absent.
-  # `ordinance_scrape` is intentionally EXCLUDED — it scrapes only the current year's council
-  # bills, which is legitimately empty early in a calendar year (a January false-alarm is worse
-  # than a missed empty-scrape). Revisit if that pipeline changes to scrape all years.
-  @expects_data_pipelines ~w(committee_scrape meeting_agenda_scrape rvcs_board_meetings)
+  @doc """
+  Whether `found == 0` should alert for this pipeline (a full-listing scraper).
 
-  @doc "Whether `found == 0` should alert for this pipeline (a full-listing scraper)."
+  The SET is host domain knowledge, not framework knowledge: which pipelines
+  re-scrape a complete source listing every run — and which are legitimately
+  empty — is a fact about the host's sources. It is declared as
+  `alert_on_empty:` on the host's `ALLM.Pipeline.Registry` (batch 1.C moved it
+  off a hardcoded `@expects_data_pipelines` here) and resolved at runtime by
+  `ALLM.Pipeline.Config.alert_on_empty/0`. The reasons for each inclusion and
+  the one deliberate exclusion travel WITH the values, on the declaration.
+
+  Keyed by the run `name` (= `pipeline_metrics.pipeline_name`), a string —
+  not a cron atom; the two namespaces do not line up (extraction plan §3.8a).
+  Default is OFF for anything undeclared.
+  """
   @spec expects_data?(String.t() | nil) :: boolean()
-  def expects_data?(pipeline_name), do: pipeline_name in @expects_data_pipelines
+  def expects_data?(pipeline_name), do: pipeline_name in Config.alert_on_empty()
 
   @doc """
   Record one normalized metrics row for `run` and `entity_type`. `funnel` is a map of any
@@ -157,5 +161,5 @@ defmodule ALLM.Pipeline.Metrics do
   # depends on no umbrella app (see `apps/allm_pipeline/mix.exs`), so this tree
   # cannot `alias Amesbury.Repo` — that is a compile error here, by design.
   @spec repo() :: module()
-  defp repo, do: ALLM.Pipeline.Config.repo()
+  defp repo, do: Config.repo()
 end

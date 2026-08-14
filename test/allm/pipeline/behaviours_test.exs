@@ -211,5 +211,28 @@ defmodule ALLM.Pipeline.BehavioursTest do
                  "in exactly one place, ALLM.Pipeline.Config.repo/0"
       end
     end
+
+    test "exactly one module in the package exposes a repo accessor" do
+      # The guard above covers the three BEHAVIOURS by callback name. Batch 1.C
+      # added `ALLM.Pipeline.Registry`, which is neither a behaviour nor an
+      # adapter and so is invisible to it — and a generated `repo/0` on a host
+      # registry is precisely the second resolution path 1.B's option-(b)
+      # decision exists to prevent. This walks the whole package instead, so a
+      # future module of any shape is covered without widening a list.
+      #
+      # Scope, and its boundary: modules inside `:allm_pipeline` only. A
+      # host-side registry lives in the consumer app and is invisible here —
+      # `ALLM.Pipeline.RegistryTest`'s "it generates no accessor for anything
+      # it installs" pins the GENERATED shape (which is what a host gets), and
+      # `Amesbury.PipelinesTest` pins the live host module.
+      exposing =
+        for module <- package_modules(),
+            function_exported?(module, :repo, 0),
+            do: module
+
+      assert exposing == [ALLM.Pipeline.Config],
+             "the package resolves the repo in exactly one place, " <>
+               "ALLM.Pipeline.Config.repo/0 — found: #{inspect(exposing)}"
+    end
   end
 end

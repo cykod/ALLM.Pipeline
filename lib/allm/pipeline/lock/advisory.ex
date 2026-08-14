@@ -5,9 +5,12 @@ defmodule ALLM.Pipeline.Lock.Advisory do
   **PRESERVED, NOT ACTIVE.** The active implementation is
   `ALLM.Pipeline.Lock.Noop` — see `ALLM.Pipeline.Lock` for
   why the lock was dropped and how to restore this one. This module is kept
-  intact (and its serialization mapping still guarded by `runner_test.exs`) so
-  the guarantee can be brought back deliberately rather than reconstructed from
-  scratch.
+  intact so the guarantee can be brought back deliberately rather than
+  reconstructed from scratch. The serialization mapping it applies is no longer
+  its own — batch 1.C moved it onto the host's `ALLM.Pipeline.Registry`
+  (`lock_keys:`); the host-side membership guard is
+  `apps/amesbury_scraper/test/amesbury/pipelines_test.exs`, and
+  `runner_test.exs` still pins the derived lock keys.
 
   ## Mechanism
 
@@ -40,7 +43,7 @@ defmodule ALLM.Pipeline.Lock.Advisory do
 
   require Logger
 
-  alias ALLM.Pipeline.Lock
+  alias ALLM.Pipeline.{Config, Lock}
 
   @impl true
   @spec with_lock(Lock.name(), (-> result)) :: result | {:error, :already_running}
@@ -83,17 +86,18 @@ defmodule ALLM.Pipeline.Lock.Advisory do
   @doc """
   Map pipelines that must serialize against each other to one canonical name.
 
-  - `:project_refresh` → `:project`: both drive the same OpenGov session +
-    upsert the same `projects` rows.
-  - `:poi_thumbnails` → `:video_summary`: both write a meeting's
-    `points_of_interest` embed with full-replace (`on_replace: :delete`)
-    semantics, so a concurrent run would clobber (last-writer-wins on the whole
-    embed) — see `steering/POINT_OF_INTEREST_THUMBNAILS.md` "Replace-all hazard".
+  WHICH pipelines must serialize is host domain knowledge — it depends on what
+  external session they share and which rows they replace — so the mapping is
+  declared as `lock_keys:` on the host's `ALLM.Pipeline.Registry` (batch 1.C
+  moved it off two hardcoded clauses here) and resolved at runtime by
+  `ALLM.Pipeline.Config.lock_keys/0`. The per-pair reasons travel WITH the
+  values, on that declaration.
+
+  An undeclared pipeline maps to itself, so it gets its own key and runs
+  concurrently with everything else.
   """
   @spec canonical_lock_name(Lock.name()) :: atom()
-  def canonical_lock_name(:project_refresh), do: :project
-  def canonical_lock_name(:poi_thumbnails), do: :video_summary
-  def canonical_lock_name(name), do: name
+  def canonical_lock_name(name), do: Map.get(Config.lock_keys(), name, name)
 
   @spec acquire_lock(non_neg_integer()) :: :ok | :busy
   defp acquire_lock(lock_key) do
@@ -126,5 +130,5 @@ defmodule ALLM.Pipeline.Lock.Advisory do
   # depends on no umbrella app (see `apps/allm_pipeline/mix.exs`), so this tree
   # cannot `alias Amesbury.Repo` — that is a compile error here, by design.
   @spec repo() :: module()
-  defp repo, do: ALLM.Pipeline.Config.repo()
+  defp repo, do: Config.repo()
 end

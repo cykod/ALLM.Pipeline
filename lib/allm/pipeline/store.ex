@@ -55,7 +55,9 @@ defmodule ALLM.Pipeline.Store do
         impl: ALLM.Pipeline.Store.Ecto
 
   `impl/0` resolves at RUNTIME and defaults to `ALLM.Pipeline.Store.Ecto`, so
-  the key is optional. `Store.Memory` is **not planned, in this or any phase**:
+  the key is optional. A host that declares an `ALLM.Pipeline.Registry` supplies
+  this key's default from its `store:` declaration instead; a config-file
+  `impl:` still wins, per environment (see that module's "Precedence"). `Store.Memory` is **not planned, in this or any phase**:
   the lineage tree is a recursive CTE with no ETS equivalent, and every
   realistic consumer of an observability framework has a database.
   """
@@ -153,11 +155,11 @@ defmodule ALLM.Pipeline.Store do
   @doc """
   The currently-configured store adapter (default `ALLM.Pipeline.Store.Ecto`).
 
-  Resolved at RUNTIME, like every config read in this package. Nothing inside
-  the framework dispatches through this yet — `ALLM.Pipeline.Executor` still
-  calls `PipelineRun` / `StepLog` directly, and the extraction plan's batch 1.C
-  re-points it when the host registry lands and module resolution moves to
-  compile time.
+  Resolved at RUNTIME, like every config read in this package;
+  `ALLM.Pipeline.Registry` is what fixes WHICH module at the host's compile
+  time. `ALLM.Pipeline.Executor` dispatches every run/step write and read
+  through it (batch 1.C), except `PipelineRun.borrow/1` and
+  `assume_ownership/1` — see "Not callbacks" above.
   """
   @spec impl() :: module()
   def impl do

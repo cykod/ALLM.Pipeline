@@ -35,9 +35,12 @@ defmodule ALLM.Pipeline.Artifacts do
         impl: ALLM.Pipeline.Artifacts.Filesystem
 
   Resolved at RUNTIME (`impl/0`), like every other config read in this package
-  — see `ALLM.Pipeline.Config`. The extraction plan's §3.3 moves *which module*
-  to a compile-time host registry in a later batch; adapters keep resolving
-  their own values (table names, roots, buckets) at runtime regardless.
+  — see `ALLM.Pipeline.Config`. Batch 1.C moved *which module* onto a
+  compile-time host registry (`ALLM.Pipeline.Registry`), so for a host that
+  declares one the `artifacts:` declaration supplies this key's default and the
+  config form above overrides it per environment (see that module's
+  "Precedence"). Adapters keep resolving their own values (table names, roots,
+  buckets) at runtime regardless.
 
   ## Phase 1 adapters
 

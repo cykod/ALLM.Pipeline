@@ -12,6 +12,13 @@ defmodule ALLM.Pipeline.Artifacts.Filesystem do
       config :amesbury_scraper, ALLM.Pipeline.Artifacts.Filesystem,
         root: "/var/tmp/amesbury-artifacts"
 
+  That first key still works on a host that declares an
+  `ALLM.Pipeline.Registry`: the registry's `artifacts:` supplies the DEFAULT and
+  a config-file `impl:` overrides it per environment (`install/0` writes the
+  seam keys with `put_new` for exactly this promise — see that module's
+  "Precedence", pinned by `registry_test.exs`). Put it in `config/dev.exs` and
+  the production `artifacts:` declaration is untouched.
+
   `:root` defaults to `allm_pipeline_artifacts` under the system temp
   directory, and is read at RUNTIME on every call.
 

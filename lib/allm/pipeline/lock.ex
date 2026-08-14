@@ -14,6 +14,11 @@ defmodule ALLM.Pipeline.Lock do
       config :amesbury_scraper, ALLM.Pipeline.Lock,
         impl: ALLM.Pipeline.Lock.Advisory
 
+  This works on a host that declares an `ALLM.Pipeline.Registry` too — the
+  registry's `lock:` supplies the DEFAULT and a config-file `impl:` outranks it
+  per environment (see that module's "Precedence"). Restoring it for **every**
+  environment is the one-line edit to the host's `lock:` declaration instead.
+
   ## Why the advisory lock was dropped
 
   The advisory lock is *session*-scoped, so it required pinning ONE Postgres
@@ -27,14 +32,19 @@ defmodule ALLM.Pipeline.Lock do
 
   Dropping the lock removes the checkout, and with it that entire failure mode.
   The overlap guard it provided is, for the pipelines that get their own key,
-  mostly a cost / duplicate-work guard (`rich_summary`) rather than a
-  correctness invariant; the genuinely correctness-critical cases
-  (`poi_thumbnails`/`video_summary` full-replace-embed clobber,
-  `project`/`project_refresh` shared OpenGov session) can be reintroduced in a
-  form that does NOT hold a connection for the run's duration — e.g. a lease
-  row claimed with short queries — if overlap becomes a real problem. The
-  serialization mapping (which names must share a key) is preserved on
-  `Advisory` so it isn't lost.
+  mostly a cost / duplicate-work guard rather than a correctness invariant; the
+  genuinely correctness-critical cases are exactly the pairs the host declares
+  in `lock_keys:`, each of which carries its own reason on that declaration.
+  Those can be reintroduced in a form that does NOT hold a connection for the
+  run's duration — e.g. a lease row claimed with short queries — if overlap
+  becomes a real problem.
+
+  The serialization mapping (which names must share a key) is **host domain
+  knowledge, and this package no longer carries it**: batch 1.C moved it off
+  `Advisory`'s two hardcoded clauses onto the host's `ALLM.Pipeline.Registry`
+  (`lock_keys:`), where `ALLM.Pipeline.Config.lock_keys/0` reads it and
+  `Advisory.canonical_lock_name/1` applies it. For this repo the declaration is
+  `Amesbury.Pipelines`.
   """
 
   @typedoc "A pipeline name, e.g. `:rich_summary`."

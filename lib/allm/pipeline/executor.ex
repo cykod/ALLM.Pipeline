@@ -5,6 +5,20 @@ defmodule ALLM.Pipeline.Executor do
   Provides step execution, validation, and artifact storage.
   Specific pipelines (CommitteePipeline, MeetingsPipeline, etc.) use these
   utilities to orchestrate their domain-specific flows.
+
+  ## Persistence goes through `ALLM.Pipeline.Store`
+
+  Every run/step write and read here dispatches through `store()`
+  (= `ALLM.Pipeline.Store.impl/0`, the host-wired adapter, default
+  `ALLM.Pipeline.Store.Ecto`) rather than naming `PipelineRun` / `StepLog`
+  directly.
+
+  **Two calls deliberately do NOT:** `PipelineRun.borrow/1` (in
+  `borrowed_run/1`) and `PipelineRun.assume_ownership/1` (named in `resume/2`'s
+  `@doc`). Both are pure struct operations on the completion token with no
+  backend involvement, so they are absent from the behaviour on purpose —
+  routing them through an adapter is how a third token mint point gets created.
+  See `ALLM.Pipeline.Store`'s "Not callbacks" section.
   """
 
   alias ALLM.Pipeline.{
@@ -13,6 +27,7 @@ defmodule ALLM.Pipeline.Executor do
     ArtifactStore,
     Context,
     Step,
+    Store,
     LLMCallLog,
     Text
   }
@@ -51,11 +66,11 @@ defmodule ALLM.Pipeline.Executor do
     # `PipelineRun.create/3` encodes `metadata` itself. `Encodable.encode/1` is
     # idempotent, so this used to be applied twice on this path with two
     # DIFFERENT rule sets (design doc §2.11) — now it is applied once, there.
-    case PipelineRun.create(name, metadata, attrs) do
+    case store().create_run(name, metadata, attrs) do
       {:ok, pipeline_run} ->
         # `Repo.update` carries `changeset.data`'s virtual fields through, so
         # the completion token minted by `create/3` survives `start/1`.
-        PipelineRun.start(pipeline_run)
+        store().start_run(pipeline_run)
 
       error ->
         error
@@ -142,7 +157,7 @@ defmodule ALLM.Pipeline.Executor do
   @spec log_section(PipelineRun.t(), String.t(), Ecto.UUID.t() | nil) ::
           {:ok, StepLog.t()} | {:error, Ecto.Changeset.t()}
   def log_section(pipeline_run, title, input_step_id \\ nil) do
-    StepLog.log_section(pipeline_run.id, title, input_step_id)
+    store().log_section(pipeline_run.id, title, input_step_id)
   end
 
   @doc """
@@ -152,7 +167,7 @@ defmodule ALLM.Pipeline.Executor do
   @spec log_summary(PipelineRun.t(), String.t(), map(), Ecto.UUID.t() | nil) ::
           {:ok, StepLog.t()} | {:error, Ecto.Changeset.t()}
   def log_summary(pipeline_run, step_type, output_data, input_step_id \\ nil) do
-    StepLog.log_summary(pipeline_run.id, step_type, output_data, input_step_id)
+    store().log_summary(pipeline_run.id, step_type, output_data, input_step_id)
   end
 
   @doc """
@@ -165,7 +180,7 @@ defmodule ALLM.Pipeline.Executor do
   @spec complete_pipeline_run(PipelineRun.t(), [run_step_result()], [run_step_result()]) ::
           {:ok, PipelineRun.t()} | {:error, Ecto.Changeset.t()} | {:error, :not_run_owner}
   def complete_pipeline_run(pipeline_run, detail_results \\ [], transform_results \\ []) do
-    stats = StepLog.get_pipeline_stats(pipeline_run.id)
+    stats = store().pipeline_stats(pipeline_run.id)
 
     result_metadata = %{
       stats: stats,
@@ -175,7 +190,7 @@ defmodule ALLM.Pipeline.Executor do
       transform_success_count: count_successes(transform_results)
     }
 
-    PipelineRun.complete(pipeline_run, result_metadata)
+    store().complete_run(pipeline_run, result_metadata)
   end
 
   @doc """
@@ -188,7 +203,7 @@ defmodule ALLM.Pipeline.Executor do
   @spec fail_pipeline_run(PipelineRun.t(), term()) ::
           {:ok, PipelineRun.t()} | {:error, Ecto.Changeset.t()} | {:error, :not_run_owner}
   def fail_pipeline_run(pipeline_run, error) do
-    PipelineRun.fail(pipeline_run, error)
+    store().fail_run(pipeline_run, error)
   end
 
   @doc """
@@ -211,7 +226,7 @@ defmodule ALLM.Pipeline.Executor do
   """
   @spec finish_run(PipelineRun.t(), result) :: result when result: var
   def finish_run(pipeline_run, {:ok, _stats} = result) do
-    PipelineRun.complete(pipeline_run)
+    store().complete_run(pipeline_run, %{})
     result
   end
 
@@ -264,12 +279,12 @@ defmodule ALLM.Pipeline.Executor do
   @spec resume(Ecto.UUID.t(), Ecto.UUID.t()) ::
           {:ok, PipelineRun.t()} | {:error, term()}
   def resume(pipeline_run_id, from_step_id) do
-    case PipelineRun.get(pipeline_run_id) do
+    case store().get_run(pipeline_run_id) do
       nil ->
         {:error, :pipeline_not_found}
 
       pipeline_run ->
-        case StepLog.get(from_step_id) do
+        case store().get_step(from_step_id) do
           nil ->
             {:error, :step_not_found}
 
@@ -279,7 +294,7 @@ defmodule ALLM.Pipeline.Executor do
               # `{:ok, run} | {:error, changeset}`, which is already this
               # function's declared return — pass it through rather than
               # bang-matching (a `MatchError` here escapes every caller).
-              PipelineRun.start(pipeline_run)
+              store().start_run(pipeline_run)
             else
               {:error, :step_not_in_pipeline}
             end
@@ -292,12 +307,12 @@ defmodule ALLM.Pipeline.Executor do
   """
   @spec get_status(Ecto.UUID.t()) :: {:ok, map()} | {:error, :not_found}
   def get_status(pipeline_run_id) do
-    case PipelineRun.get(pipeline_run_id) do
+    case store().get_run(pipeline_run_id) do
       nil ->
         {:error, :not_found}
 
       pipeline_run ->
-        stats = StepLog.get_pipeline_stats(pipeline_run_id)
+        stats = store().pipeline_stats(pipeline_run_id)
 
         {:ok,
          %{
@@ -319,7 +334,7 @@ defmodule ALLM.Pipeline.Executor do
           run_step_result()
   defp execute_step(pipeline_run, step_module, input_struct, input_step_id, opts) do
     # Create step log record (status: running, captures start time)
-    case StepLog.log_start(pipeline_run.id, step_module, input_struct, input_step_id) do
+    case store().log_step_start(pipeline_run.id, step_module, input_struct, input_step_id) do
       {:ok, step_log} ->
         run_with_step_log(pipeline_run, step_module, input_struct, step_log, opts)
 
@@ -378,7 +393,7 @@ defmodule ALLM.Pipeline.Executor do
 
         # Update step log with success (LLM columns folded into artifact_info)
         {:ok, updated_log} =
-          StepLog.log_success(step_log, output_struct, Map.merge(artifact_info, llm_info))
+          store().log_step_success(step_log, output_struct, Map.merge(artifact_info, llm_info))
 
         {:ok, updated_log, output_struct}
 
@@ -405,7 +420,7 @@ defmodule ALLM.Pipeline.Executor do
     # fall-through: drain/0 already deleted its key, so this returns %{}.
     llm_info = drain_and_store_llm(step_log.id, nil)
 
-    case StepLog.log_failure(step_log, reason, llm_info: llm_info) do
+    case store().log_step_failure(step_log, reason, llm_info: llm_info) do
       {:ok, updated_log} ->
         {:error, updated_log, reason}
 
@@ -636,4 +651,10 @@ defmodule ALLM.Pipeline.Executor do
   defp count_successes(results) do
     Enum.count(results, &match?({:ok, _, _}, &1))
   end
+
+  # The host-wired run/step persistence adapter, resolved at RUNTIME like every
+  # config read in this package (`ALLM.Pipeline.Registry` fixes WHICH module at
+  # the host's compile time; `impl/0` reads it here).
+  @spec store() :: module()
+  defp store, do: Store.impl()
 end
