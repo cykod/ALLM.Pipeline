@@ -370,8 +370,19 @@ defmodule ALLM.Pipeline.Schema do
     end
   end
 
-  @doc false
-  def process_fields(fields) do
+  # Private, and `@spec`'d, since 2.4's follow-up: it is called from exactly one
+  # place — `__before_compile__/1`, in this module's own compile-time body — and
+  # never from generated code, so unlike `__cast__/2` it needs no public
+  # visibility. `introspection_clauses/3`, invoked two lines away, is `defp` for
+  # the same reason. Re-derive with
+  # `python3 scripts/refsweep.py 'process_fields\(' apps --include '*.ex' --include '*.exs' --format hits`
+  # → **3** hits, all in this file, of which exactly ONE is a call: `:280`, plus
+  # the `@spec` immediately below and the `defp` head (2026-08-14). Counted after
+  # the `@spec` landed — it supplies its own match, so a `2` written before the
+  # edit would read as a regression forever.
+  @spec process_fields([{atom(), Macro.t(), keyword()}]) ::
+          {[atom()], [atom() | {atom(), term()}], [{atom(), Macro.t()}]}
+  defp process_fields(fields) do
     Enum.reduce(fields, {[], [], []}, fn {name, type, opts}, {required, struct_def, type_def} ->
       # `== true`, not a truthiness test, so this reads `required:` the same way
       # `flagged/3` reads the other four flags. `__validate_field__!/3` has

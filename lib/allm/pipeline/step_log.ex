@@ -56,8 +56,38 @@ defmodule ALLM.Pipeline.StepLog do
   raise `Protocol.UndefinedError` on the un-rescued `log_start/4` path. So the
   same type both writes and raises depending on how it was built.
 
-  Unreachable today — `grep -rna "field(.*Changeset" apps/ --include=*.ex`
-  returns nothing — and recorded rather than fixed for that reason.
+  **No field DECLARES a changeset type today**, and that is the exact scope of
+  the claim — the sweep is type-declaration-based while the hazard is not.
+  Re-derive it NUL-safely and across both extensions (2026-08-14):
+
+      python3 scripts/refsweep.py 'field\\(.*Changeset' apps scripts steering \\
+        --include '*.ex' --include '*.exs' --format hits
+
+  → **1 hit, and it is this moduledoc**, at the line just below quoting the
+  superseded command `grep -rna "field(.*Changeset" apps/ --include=*.ex` (which
+  could not see `.exs` at all). Real declarations: **zero**. Read the expected
+  count as "every hit is prose", not as a number — this paragraph supplies its
+  own match, so a bare `→ 1` would stop meaning anything the moment someone
+  rewords it.
+
+  What no such sweep can see is a field declared `term()`, `map()` or
+  `[map()]` that *holds* a changeset at runtime — which is exactly how one would
+  arrive, since Step Outputs routinely carry `term()`-typed result collections.
+  That half is not closed by any grep. It was closed once, by tracing, and the
+  trace is **not re-derivable from this file**: subphase 2.3's security review
+  (`.work/security-reviews/2026-08-14-allm-p2c.md`, Informational 4) walked the
+  five loaders and found a changeset surfacing only as a failure return (→
+  `normalize_error/1`, whose `inspect/1` omits `params` via `Ecto.Changeset`'s
+  own `Inspect` impl) and via `Encodable.encode/1` (→ `changeset_errors` only),
+  so none reaches this serializer. That is a **dated observation about the
+  loaders**, not a property of this module, and a new `term()`-typed Step Output
+  can falsify it without touching anything here.
+
+  Which is why the standing fix is not a wider sweep: give `serialize_struct/2`
+  an `%Ecto.Changeset{}` clause mirroring `Encodable`'s `changeset_errors` leaf.
+  It closes the silent write, the `prepare_changes/2` raise, and the declared
+  divergence at once, and it needs no dated evidence. Tracked as an open item in
+  `.work/HANDOFF.md`.
   """
   use Ecto.Schema
   import Ecto.Changeset

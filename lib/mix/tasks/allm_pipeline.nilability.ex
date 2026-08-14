@@ -7,8 +7,12 @@ defmodule Mix.Tasks.AllmPipeline.Nilability do
 
       mix allm_pipeline.nilability [--report]
 
-  `--report` is the default and only mode: the task never edits a file, and it
-  always exits 0.
+  `--report` is the default and only mode: the task never edits a file, and
+  every **valid** invocation exits 0. An unrecognised switch or a stray
+  positional argument is refused with `Mix.raise/1` — before subphase 2.4's
+  follow-up the parse discarded all three of its elements, so
+  `mix allm_pipeline.nilability --reprot` exited 0 with a full report and a typo
+  was indistinguishable from a request.
 
   ## The rule
 
@@ -103,17 +107,44 @@ defmodule Mix.Tasks.AllmPipeline.Nilability do
           pending: boolean()
         }
 
+  @usage "Usage: mix allm_pipeline.nilability [--report]"
+
   @impl Mix.Task
   @spec run([String.t()]) :: :ok
   def run(args) do
-    {_opts, _rest, _invalid} =
-      OptionParser.parse(args, switches: [report: :boolean])
+    args
+    |> OptionParser.parse(strict: [report: :boolean])
+    |> validate_args!()
 
     modules = schema_modules()
     reports = Enum.map(modules, fn module -> {module, field_reports(module)} end)
 
     print_report(reports)
   end
+
+  # `--report` is the default and only mode, so the parsed `opts` are genuinely
+  # unused — which is exactly how the old `{_opts, _rest, _invalid} =` shape came
+  # to discard `invalid` and `rest` as well, leaving `--reprot` to exit 0 with a
+  # full report. A parse whose every element is discarded is not validation; the
+  # two refusing clauses below are. This is the package's first Mix task, so the
+  # shape is the one Phase 3's will copy.
+  #
+  # `strict:` rather than `switches:` is half the fix, not a style choice:
+  # non-strict `switches:` DROPS an undeclared flag instead of reporting it, so
+  # reading `invalid` would have changed nothing on its own. Measured 2026-08-14:
+  #
+  #     OptionParser.parse(["--reprot"], switches: [report: :boolean])
+  #     #=> {[], [], []}                     # the typo vanishes entirely
+  #     OptionParser.parse(["--reprot"], strict: [report: :boolean])
+  #     #=> {[], [], [{"--reprot", nil}]}    # the typo is reportable
+  @spec validate_args!({keyword(), [String.t()], [{String.t(), String.t() | nil}]}) :: :ok
+  defp validate_args!({_opts, [], []}), do: :ok
+
+  defp validate_args!({_opts, _rest, [{switch, _value} | _]}),
+    do: Mix.raise("unrecognised switch #{switch}. #{@usage}")
+
+  defp validate_args!({_opts, [arg | _], []}),
+    do: Mix.raise("unexpected argument #{inspect(arg)}. #{@usage}")
 
   @doc """
   Every loaded module exporting `__allm_schema__/1`, in sorted order.

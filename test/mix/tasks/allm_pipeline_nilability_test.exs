@@ -240,4 +240,45 @@ defmodule Mix.Tasks.AllmPipeline.NilabilityTest do
       refute ALLM.Pipeline.Schema in Nilability.schema_modules()
     end
   end
+
+  describe "run/1 argument validation" do
+    # The refusals below are only meaningful next to a POSITIVE CONTROL: a
+    # validator that rejected everything would satisfy both `assert_raise`s and
+    # prove nothing. This test is that control, and it is the one that fails if
+    # the accepting clause is ever narrowed.
+    test "the documented invocations run and print a report" do
+      for args <- [[], ["--report"]] do
+        output = ExUnit.CaptureIO.capture_io(fn -> assert Nilability.run(args) == :ok end)
+        assert output =~ "narrow nilability rule (report)"
+        assert output =~ "PENDING"
+      end
+    end
+
+    test "a mistyped switch is refused instead of silently reporting" do
+      # The finding this closes: `--reprot` used to exit 0 with a full report,
+      # because `{_opts, _rest, _invalid} = OptionParser.parse(...)` discarded
+      # the element that carries the typo.
+      assert_raise Mix.Error, ~r/unrecognised switch --reprot/, fn ->
+        Nilability.run(["--reprot"])
+      end
+    end
+
+    test "a stray positional argument is refused" do
+      assert_raise Mix.Error, ~r/unexpected argument "schemas"/, fn ->
+        Nilability.run(["schemas"])
+      end
+    end
+
+    test "refusal happens before any report is printed" do
+      # Discriminates "refused" from "reported AND raised" — the two are
+      # identical at the exit code, and only the absence of output separates
+      # them.
+      output =
+        ExUnit.CaptureIO.capture_io(fn ->
+          assert_raise Mix.Error, fn -> Nilability.run(["--reprot"]) end
+        end)
+
+      refute output =~ "narrow nilability rule (report)"
+    end
+  end
 end

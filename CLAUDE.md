@@ -1,8 +1,17 @@
 # ALLM.Pipeline — Agent Guide
 
-The extracted pipeline framework: `ALLM.Pipeline.*`, 24 `lib/` modules, 15 test
-files. A **leaf** umbrella app headed for hex (extraction plan Phase 8), so it is
-developed in-tree with no version skew against the published copy.
+The extracted pipeline framework: `ALLM.Pipeline.*`. A **leaf** umbrella app headed
+for hex (extraction plan Phase 8), so it is developed in-tree with no version skew
+against the published copy.
+
+Its size carries no literal here on purpose — every file this package gains
+re-breaks one, and the two that used to live on this line had drifted by 2.4
+(`24`/`15` written, `25`/`18` measured). Re-derive instead:
+
+```bash
+find apps/allm_pipeline/lib  -name '*.ex'       | wc -l   # lib files
+find apps/allm_pipeline/test -name '*_test.exs' | wc -l   # test files
+```
 
 > Read the umbrella `/CLAUDE.md` and `/AGENTS.md` first. What the framework *does*
 > — Step, Executor, StepLog, ArtifactStore, the `:content` convention, artifact
