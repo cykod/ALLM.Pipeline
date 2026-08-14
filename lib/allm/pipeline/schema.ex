@@ -30,22 +30,36 @@ defmodule ALLM.Pipeline.Schema do
   | `:log` | `true` / `false` / unset | see "The three states of `log:`" below |
   | `:artifact` | `true` | implies `log: false`, and lists the field in `__allm_schema__(:artifact)` |
   | `:redact` | `true` | value replaced by `"[REDACTED]"` at serialization |
-  | `:nilable` | `true` / `false` | overrides the generated-type nilability rule in either direction (**⚠ not yet implemented — see "Status" below**) |
+  | `:nilable` | `true` / `false` | overrides the generated-type nilability rule in either direction — see "The narrow nilability rule" below |
 
   An unknown field option raises `ArgumentError` at the *using* module's compile
   time, naming the option and the field. So does a non-boolean **value** on any
   of the five boolean options (everything except `default:`): `redact: "true"`
   is a compile error rather than a silently-unredacted field.
 
-  ### ⚠ Status: `nilable:` is declared, not yet enforced
+  ### The narrow nilability rule
 
-  `nilable:` is accepted, validated and reported through `__allm_schema__/1`
-  **today**, and read by **nothing**: the generated `@type t` is the declared AST
-  verbatim (see `process_fields/1`), so neither direction of the override does
-  anything. It lands in Phase 2 subphase 2.4, which owns deleting this section.
+  A field's generated `@type t` entry gains `| nil` **iff** it has neither
+  `required: true` nor a non-nil `default:`, its declared type does not already
+  end in `| nil`, and it carries no explicit `nilable:` option. `nilable: true`
+  forces the tail — even onto a `required:` field — and `nilable: false` forbids
+  it. A field with a default always holds that default, and a required field is
+  non-nil by construction, so the rule adds `| nil` exactly where a value can
+  genuinely be absent at runtime.
 
-  `log:` / `artifact:` / `redact:` are live — read by
-  `ALLM.Pipeline.StepLog.serialize_struct/2` since subphase 2.2.
+  Two readings the rule depends on, both deliberate:
+
+  - **`default: nil` is not a default** (the producers test `!= nil`), so
+    `field(:engine, term(), default: nil)` gains `| nil`.
+  - **`default: false` IS a default** (`false != nil`), so it does not.
+
+  The rule is applied here in `process_fields/1` and rewrites **no** `field/3`
+  source line. Consequences: a hand-written `| nil` is detected and left alone
+  rather than doubled; `__allm_schema__(:types)` keeps reporting the declared
+  AST, while `:generated_types` reports what was spliced; and every field
+  declared after this inherits the rule without an edit.
+
+  `mix allm_pipeline.nilability --report` prints the current state per module.
 
   ### The three states of `log:`
 
@@ -166,10 +180,12 @@ defmodule ALLM.Pipeline.Schema do
   `:content` never reaches `output_data`. The persisted set is computable only
   with the fallback in hand, which is the serializer's job, not the schema's.
 
-  `:types` vs `:generated_types` are equal today. They exist as separate keys
-  because the nilability rule is applied by this macro and rewrites no source, so
-  the *declared* AST is byte-identical before and after that change and only the
-  *generated* AST moves.
+  `:types` vs `:generated_types` diverge for exactly the fields the nilability
+  rule fires on. They are separate keys because that rule is applied by this
+  macro and rewrites no source: the *declared* AST is byte-identical before and
+  after, so only the *generated* AST can show the change. Use `:types` to ask
+  "what did the author write?" and `:generated_types` to ask "what does dialyzer
+  see?".
 
   ## Not implemented here
 
@@ -379,14 +395,16 @@ defmodule ALLM.Pipeline.Schema do
           [name | struct_def]
         end
 
-      # The declared type is spliced VERBATIM into `@type t` — this never adds
-      # `| nil`, whatever `required`/`default` say. (An earlier comment here
-      # claimed it did; it never has.) So `field(:thing, map())` declares a
-      # NON-nilable field, and a runtime `is_nil(x.thing)` or `x.thing ||
-      # default` on it reads to dialyzer as provably dead code. Write
-      # `field(:thing, map() | nil)` yourself on any field that is genuinely nil
-      # at runtime — see `HeroCropReviewer.Input.framing_bbox`.
-      new_type = [{name, type} | type_def]
+      # The narrow nilability rule (subphase 2.4). The declared type is NOT
+      # spliced verbatim any more: a field that has neither `required: true` nor
+      # a non-nil `default:` can hold `nil` at runtime — nothing stops
+      # `struct!/2` leaving it there — so `@type t` says so. Applying it here
+      # rather than by rewriting 98 `field(...)` lines is what keeps it from
+      # drifting, and what makes every field declared after this inherit it.
+      #
+      # `:types` still reports the declared AST; only `:generated_types` (this
+      # list) moves. Hand-written `| nil` is left alone rather than doubled.
+      new_type = [{name, generated_type(type, opts, is_required, default)} | type_def]
 
       {new_required, new_struct, new_type}
     end)
@@ -394,6 +412,64 @@ defmodule ALLM.Pipeline.Schema do
       {Enum.reverse(required), Enum.reverse(struct_def), Enum.reverse(type_def)}
     end)
   end
+
+  # The rule, in one place. `nilable:` is resolved BEFORE the category so that
+  # `nilable: true` forces the tail even onto a `required:` or defaulted field,
+  # and `nilable: false` forbids it on a bare one — Decision #1's "overrides in
+  # either direction".
+  #
+  # `default: nil` is not a default here (`is_nil/1`), matching the struct
+  # default above; `default: false` IS one, because `false != nil` — 26 DSL
+  # declarations in the tree depend on that reading (2026-08-14; re-derive with
+  # `python3 scripts/refsweep.py '^\s*field\(' apps --include '*.ex' --format
+  # hits | grep -c 'default: false'`). The figure read 40 until the 2.4 fix
+  # pass: that came from a substring count over three populations (26 DSL
+  # declarations + 10 Ecto `:boolean` columns, which this rule never sees + 7
+  # prose mentions).
+  @spec generated_type(Macro.t(), keyword(), boolean(), term()) :: Macro.t()
+  defp generated_type(type, opts, is_required, default) do
+    if nilable?(opts, is_required, default) and not nilable_tail?(type) do
+      {:|, [], [type, nil]}
+    else
+      type
+    end
+  end
+
+  @spec nilable?(keyword(), boolean(), term()) :: boolean()
+  defp nilable?(opts, is_required, default) do
+    case Keyword.get(opts, :nilable) do
+      true -> true
+      false -> false
+      nil -> not is_required and is_nil(default)
+    end
+  end
+
+  # A union nests to the RIGHT — `a | b | nil` is `{:|, _, [a, {:|, _, [b,
+  # nil]}]}` — so walk the right spine for a literal `nil`. A leading
+  # `nil | a` is deliberately NOT a nilable tail: appending to it is harmless,
+  # and making detection depend on where in a union the author wrote `nil`
+  # would be a second rule to remember.
+  #
+  # ⚠️ DELIBERATE MIRROR — this function is byte-identical to
+  # `Mix.Tasks.AllmPipeline.Nilability.nilable_tail?/1`, and `generated_type/4`
+  # + `nilable?/3` above are mirrored there as `categorize/4` +
+  # `rule_says_nilable?/2`. A third copy lives in
+  # `scripts/nilability_predict.py`. **Do not extract a shared helper.** The
+  # task exists to falsify this implementation: if it called into here, its
+  # `0 pending` result would be the macro agreeing with itself and would verify
+  # nothing. Same house shape as `Amesbury.Media.UrlBuilder.@param_order` ⇔
+  # `frontend/src/lib/media_url.ts`.
+  #
+  # The drift guard that keeps the copies honest WITHOUT collapsing that
+  # independence is `test/mix/tasks/allm_pipeline_nilability_test.exs`'s
+  # "drift guard: the macro's rule and the task's copy" describe — it runs both
+  # implementations over one shared fixture (`Applied`) and asserts they agree
+  # field for field, neither calling the other. Change the rule here and that
+  # test reds until the task's copy is changed to match.
+  @spec nilable_tail?(Macro.t()) :: boolean()
+  defp nilable_tail?({:|, _meta, [_left, right]}), do: nilable_tail?(right)
+  defp nilable_tail?(nil), do: true
+  defp nilable_tail?(_type), do: false
 
   @doc false
   @spec __validate_field__!(module(), atom(), keyword()) :: :ok

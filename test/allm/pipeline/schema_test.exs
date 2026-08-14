@@ -38,7 +38,9 @@ defmodule ALLM.Pipeline.SchemaTest do
       field(:maybe, map(), nilable: true)
       # `false` is a real default, NOT "no default": `process_fields/1` and
       # `introspection_clauses/3` both reject only on nil. Pinned here because
-      # 40 declarations in the tree carry `default: false`.
+      # 26 DSL declarations in the tree carry `default: false` (2026-08-14;
+      # `python3 scripts/refsweep.py '^\s*field\(' apps --include '*.ex'
+      # --format hits | grep -c 'default: false'`).
       field(:flagfalse, boolean(), default: false)
       field(:plain, term())
     end
@@ -61,6 +63,32 @@ defmodule ALLM.Pipeline.SchemaTest do
 
     schema do
       field(:count, integer(), default: 0)
+    end
+  end
+
+  # One field per branch of the narrow nilability rule (subphase 2.4). Every
+  # assertion about it reads `:generated_types`, never `:types` — the rule is
+  # applied by the macro and rewrites no source, so `:types` is byte-identical
+  # whether or not the rule exists and asserting on it would be vacuous.
+  defmodule Nilability do
+    @moduledoc false
+    use ALLM.Pipeline.Schema
+
+    schema do
+      field(:bare, map())
+      field(:req, String.t(), required: true)
+      field(:defaulted, integer(), default: 0)
+      # `default: nil` is NOT a default for this rule. The discriminator
+      # against a `Keyword.has_key?(opts, :default)` implementation, and three
+      # real `field(:engine, term(), default: nil)` declarations depend on it.
+      field(:nil_default, term(), default: nil)
+      # `default: false` IS a default (`false != nil`) — 26 DSL declarations
+      # carry it, and none of them may gain `| nil`.
+      field(:false_default, boolean(), default: false)
+      field(:hand_written, String.t() | nil)
+      field(:union_tail, integer() | atom() | nil)
+      field(:forced_off, map(), nilable: false)
+      field(:forced_on, String.t(), required: true, nilable: true)
     end
   end
 
@@ -129,16 +157,104 @@ defmodule ALLM.Pipeline.SchemaTest do
       assert Keyword.keys(types) == Everything.__allm_schema__(:fields)
     end
 
-    test ":types and :generated_types are equal for every field" do
-      # They diverge only when the nilability rule lands in the macro. Until
-      # then this is what makes a `:generated_types` diff a meaningful signal.
-      for schema <- [Everything, TwoRequired, NoRequired] do
-        assert schema.__allm_schema__(:types) == schema.__allm_schema__(:generated_types)
+    test ":types is the declared AST even where :generated_types diverges" do
+      # Rewritten in 2.4's diff (was ":types and :generated_types are equal for
+      # every field", which asserted the pre-rule state). The two keys exist
+      # precisely so that the rule — applied by the macro, rewriting no source —
+      # is observable: `:types` must NOT move, `:generated_types` must.
+      for schema <- [Everything, TwoRequired, NoRequired, Nilability] do
+        declared = schema.__allm_schema__(:types)
+        generated = schema.__allm_schema__(:generated_types)
+
+        assert Keyword.keys(declared) == Keyword.keys(generated)
+
+        for {field, declared_type} <- declared do
+          generated_type = Keyword.fetch!(generated, field)
+
+          assert Macro.to_string(generated_type) in [
+                   Macro.to_string(declared_type),
+                   Macro.to_string(declared_type) <> " | nil"
+                 ]
+        end
       end
+
+      # ... and the divergence is real on at least one field, so the loop above
+      # cannot pass vacuously against a macro that appends nothing.
+      assert Macro.to_string(Keyword.fetch!(Nilability.__allm_schema__(:types), :bare)) ==
+               "map()"
+
+      assert Macro.to_string(Keyword.fetch!(Nilability.__allm_schema__(:generated_types), :bare)) ==
+               "map() | nil"
     end
 
     test "an unknown key raises FunctionClauseError" do
       assert_raise FunctionClauseError, fn -> Everything.__allm_schema__(:logged) end
+    end
+  end
+
+  describe "the narrow nilability rule" do
+    defp generated(field), do: Macro.to_string(Keyword.fetch!(gen_types(), field))
+    defp gen_types, do: Nilability.__allm_schema__(:generated_types)
+
+    test "a bare field gains `| nil`" do
+      assert generated(:bare) == "map() | nil"
+    end
+
+    test "a `required: true` field does not" do
+      assert generated(:req) == "String.t()"
+    end
+
+    test "a field with a non-nil `default:` does not" do
+      assert generated(:defaulted) == "integer()"
+    end
+
+    test "`default: false` is a default, so the field does not gain `| nil`" do
+      # `false != nil`, so this is a real default and the rule must not fire.
+      # 26 DSL declarations in the tree carry `default: false` (2026-08-14;
+      # `python3 scripts/refsweep.py '^\s*field\(' apps --include '*.ex'
+      # --format hits | grep -c 'default: false'`); a producer that tested
+      # falsiness instead of nil-ness would widen every one of them.
+      assert generated(:false_default) == "boolean()"
+    end
+
+    test "`default: nil` is NOT a default, so the field DOES gain `| nil`" do
+      # Discriminator against `Keyword.has_key?(opts, :default)`, which would
+      # suppress the rule here. Three real `field(:engine, term(), default: nil)`
+      # declarations depend on this reading.
+      assert generated(:nil_default) == "term() | nil"
+    end
+
+    test "a hand-written `| nil` is left alone, not doubled" do
+      assert generated(:hand_written) == "String.t() | nil"
+      refute generated(:hand_written) =~ "nil | nil"
+    end
+
+    test "a nilable tail is detected through a nested union, not just at arity 2" do
+      # A union nests right, so `integer() | atom() | nil` is
+      # `{:|, _, [integer, {:|, _, [atom, nil]}]}`. An implementation that
+      # inspected only the top node's right child would see `{:|, ...}`, decide
+      # the type is not nilable-tailed, and append a second `nil`.
+      assert generated(:union_tail) == "integer() | atom() | nil"
+    end
+
+    test "`nilable: false` forbids the rule on a bare field" do
+      assert generated(:forced_off) == "map()"
+    end
+
+    test "`nilable: true` forces `| nil` onto a `required: true` field" do
+      # The other override direction. One-direction coverage passes against an
+      # implementation that only honours the common case.
+      assert generated(:forced_on) == "String.t() | nil"
+    end
+
+    test ":nilable lists the explicitly-flagged fields only, never the rule-derived ones" do
+      # `nilable: false` is deliberately ABSENT (the key's contract is
+      # `[atom()]`, which cannot express it), and every bare field that gained
+      # `| nil` by the RULE is absent too — otherwise the key would report a
+      # derived fact as a declaration.
+      assert Nilability.__allm_schema__(:nilable) == [:forced_on]
+      refute :bare in Nilability.__allm_schema__(:nilable)
+      refute :forced_off in Nilability.__allm_schema__(:nilable)
     end
   end
 
