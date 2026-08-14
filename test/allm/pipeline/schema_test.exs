@@ -243,6 +243,107 @@ defmodule ALLM.Pipeline.SchemaTest do
       assert {:kind, :missing} in issues
     end
 
+    test "reports a field supplied under BOTH its atom and its string key" do
+      # Both keys resolve to `:name`. Before subphase 2.3 `resolve_keys/2` folded
+      # them into one `Map.put/3`, so this returned `{:ok, …}` carrying whichever
+      # value map iteration order visited last, with NO issue — the one input
+      # shape D1's reason set could not describe, and a direct contradiction of
+      # D2's "unknown keys are an error, never silently dropped".
+      #
+      # Discriminator: the assertion is on the ISSUE, never on the surviving
+      # value. Which value wins is map iteration order, so a value assertion
+      # would be flaky by construction — and the whole point of the reason atom
+      # is that the survivor is unspecified.
+      assert {:error, issues} = TwoRequired.cast(%{"name" => "A", :name => "B", :kind => :k})
+      assert issues == [{:name, :duplicate_key}]
+
+      # Symmetric: the collision is reported whichever key is seen first, so the
+      # test cannot pass by accident on one iteration order.
+      assert {:error, [{:kind, :duplicate_key}]} =
+               TwoRequired.cast(%{:name => "N", :kind => :k, "kind" => :j})
+    end
+
+    test "a duplicate key is reported alongside every other issue" do
+      # Guard: an implementation that short-circuits on the duplicate (or that
+      # reports it by REPLACING the resolved map) loses the sibling issues.
+      assert {:error, issues} = TwoRequired.cast(%{"name" => "A", :name => "B", "bogus" => 1})
+
+      assert {:name, :duplicate_key} in issues
+      assert {"bogus", :unknown_field} in issues
+      assert {:kind, :missing} in issues
+      assert length(issues) == 3
+    end
+
+    test "reports a field repeated in a KEYWORD LIST" do
+      # The keyword list is the dominant production construction shape — every
+      # `Input.new/1` / `Output.new/1` call site in `apps/amesbury_scraper/lib`
+      # passes one, while a JSON-decoded map structurally cannot carry both an
+      # atom and a string form of one key. So this, not the map case above, is
+      # the shape a real caller collides on.
+      #
+      # 2.3 hardened only the map path: `__cast__/2`'s list arm called
+      # `Map.new(input)` first, which collapsed the pair BEFORE `resolve_keys/2`
+      # could see it, and returned `{:ok, %TwoRequired{name: "B"}}` with no
+      # issue. Same assertion discipline as the map case — the ISSUE, never the
+      # survivor.
+      assert {:error, issues} = TwoRequired.cast(name: "A", name: "B", kind: :k)
+      assert issues == [{:name, :duplicate_key}]
+
+      # Siblings survive here too, and a non-adjacent repeat still collides.
+      assert {:error, issues} = TwoRequired.cast(name: "A", bogus: 1, name: "B")
+      assert {:name, :duplicate_key} in issues
+      assert {:bogus, :unknown_field} in issues
+      assert {:kind, :missing} in issues
+      assert length(issues) == 3
+    end
+
+    test "a keyword list with no repeat still casts" do
+      # Anti-vacuity for the test above: an implementation that reported
+      # `:duplicate_key` for every keyword list would pass it. Also pins that
+      # dropping `Map.new/1` did not change the accepted shape.
+      assert {:ok, %TwoRequired{name: "N", kind: :k}} = TwoRequired.cast(name: "N", kind: :k)
+    end
+
+    test "new/1 RAISES on a keyword list repeat too" do
+      # `new/1`'s keyword clause used to call `struct!/2` directly, which reduces
+      # with `Map.put` — last writer wins, silently, never reaching
+      # `__atomize_keys__/2`. Both `new/1` clauses now route through it.
+      message =
+        assert_raise(ArgumentError, fn ->
+          TwoRequired.new(name: "A", name: "B", kind: :k)
+        end).message
+
+      assert message =~ ":name"
+      assert message =~ ":duplicate_key"
+      refute message =~ ~s("A")
+      refute message =~ ~s("B")
+    end
+
+    test "new/1 still builds from a well-formed keyword list, and still raises on an unknown key" do
+      # Anti-vacuity twin: routing the keyword clause through
+      # `__atomize_keys__/2` must not change either of `new/1`'s two existing
+      # behaviours on that shape.
+      assert %TwoRequired{name: "N", kind: :k} = TwoRequired.new(name: "N", kind: :k)
+      assert_raise KeyError, fn -> TwoRequired.new(name: "N", kind: :k, bogus: 1) end
+    end
+
+    test "new/1 RAISES on the same duplicate, naming the field" do
+      # The `new/1` twin of the case above. `new/1` raises where `cast/1`
+      # reports — it already does so for an unknown key — so the two functions
+      # tell one story: a supplied value is never silently dropped.
+      message =
+        assert_raise(ArgumentError, fn ->
+          TwoRequired.new(%{"name" => "A", :name => "B", :kind => :k})
+        end).message
+
+      assert message =~ ":name"
+      assert message =~ ":duplicate_key"
+      # Neither value may appear — which one would have survived is iteration
+      # order, and rendering it would document an order nobody may rely on.
+      refute message =~ ~s("A")
+      refute message =~ ~s("B")
+    end
+
     test "returns a tuple for a non-castable term instead of raising" do
       # `cast/1` runs inside `Executor.validate_input/2`, which sits BEFORE the
       # Executor's rescue — a raise here escapes a `Task.async_stream` fan-out

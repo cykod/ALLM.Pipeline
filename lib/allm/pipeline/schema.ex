@@ -76,14 +76,19 @@ defmodule ALLM.Pipeline.Schema do
 
   The value is replaced by the literal string `"[REDACTED]"` when
   `ALLM.Pipeline.StepLog` serializes the struct — construction-time scrubbing
-  would destroy the value the field exists to carry. Four paths are therefore
-  **not** covered, and none of them can be:
+  would destroy the value the field exists to carry. Four paths were therefore
+  **not** covered; subphase 2.3 closed the second in code and **three** remain
+  uncovered, none of which the flag can reach:
 
   1. **`artifact_content/1`** — an opaque binary the Step builds itself. The rule
      that replaces coverage is documentation: *a `redact: true` field must not be
      included in `artifact_content/1`.*
-  2. **`ALLM.Pipeline.Executor`'s validation error messages**, which render the
-     rejected term into `step_logs.error`.
+  2. ~~**`ALLM.Pipeline.Executor`'s validation error messages**~~ — **closed in
+     subphase 2.3.** They used to `inspect/1` the rejected term into
+     `step_logs.error` and the logs; `Executor`'s `render_shape/1` now renders
+     the term's type and key NAMES only, never its values. Listed rather than
+     deleted because it is the one of the four that a code fix could reach, and
+     the reason it could is that the Executor owns the whole message.
   3. **`ALLM.Pipeline.Executor.log_summary/4`**, which writes a caller-supplied
      map straight to `output_data` without passing through the serializer at all.
   4. **`Inspect` and exception messages.** DSL structs derive no `Inspect`
@@ -96,7 +101,8 @@ defmodule ALLM.Pipeline.Schema do
 
   - `new/0` — a struct with defaults (only when there are no required fields)
   - `new/1` — a struct from a keyword list, or from a map with atom **or** string
-    keys. Raises on an unknown key (`struct!/2` semantics)
+    keys. Raises on an unknown key (`struct!/2` semantics) and on a field
+    supplied twice (both key forms in a map, or repeated in a keyword list)
   - `cast/1` — `{:ok, t()} | {:error, [issue()]}`; see below
   - `__allm_schema__/1` — introspection; see below
 
@@ -108,9 +114,17 @@ defmodule ALLM.Pipeline.Schema do
     `%__MODULE__{}` — otherwise `{:error, [{:__input__, :not_castable}]}`
   - every key resolves to a declared field — otherwise `{key, :unknown_field}`
     (unknown keys are an **error**, never silently dropped)
+  - no field is supplied twice — under both its atom and its string key in a
+    map, or repeated in a keyword list — otherwise `{field, :duplicate_key}`
   - every `required: true` field is present and non-nil — otherwise
     `{field, :missing}`
   - a struct of a different module → `{:error, [{:__struct__, :wrong_struct}]}`
+
+  It takes a `term()`, not `map() | keyword() | t()`: it is called from
+  `ALLM.Pipeline.Executor.validate_input/2` with whatever a caller handed
+  `run_step/5`, which runs BEFORE the Executor's try/rescue — so it **never
+  raises**, and the `:not_castable` arm is the reachable answer for anything
+  else.
 
   It performs **no runtime checking of the declared type**. The declared types
   are arbitrary quoted AST (`[map()]`, `String.t()`, `term()`, module-qualified
@@ -186,8 +200,17 @@ defmodule ALLM.Pipeline.Schema do
   unknown key arrives as-written, so a string-keyed map's unknown key is
   reported as a `String.t()` (a key that matches no field cannot be safely
   converted to an atom).
+
+  `:duplicate_key` is reported when one field is supplied **twice** — under
+  both its atom and its string key in a map, or repeated in a keyword list
+  (which permits repeats). The field name is reported, never either value —
+  which of the two would have won is unspecified (map iteration order, or
+  last-writer-wins for a keyword list) and deliberately so, because no caller
+  should depend on it.
   """
-  @type issue :: {atom() | String.t(), :missing | :unknown_field | :wrong_struct | :not_castable}
+  @type issue ::
+          {atom() | String.t(),
+           :missing | :unknown_field | :wrong_struct | :not_castable | :duplicate_key}
 
   @doc false
   defmacro __using__(opts) do
@@ -285,13 +308,13 @@ defmodule ALLM.Pipeline.Schema do
         Creates a new struct from a keyword list, or from a map with atom or
         string keys.
 
-        Raises on an unknown key (`struct!/2` semantics). Use `cast/1` when an
-        unknown key should be reported rather than raised.
+        Raises on an unknown key (`struct!/2` semantics), and on one field
+        supplied twice — under both its atom and its string key in a map, or
+        repeated in a keyword list. Use `cast/1` when either should be reported
+        rather than raised.
         """
         @spec new(keyword() | map()) :: t()
-        def new(attrs) when is_list(attrs), do: struct!(__MODULE__, attrs)
-
-        def new(attrs) when is_map(attrs) and not is_struct(attrs) do
+        def new(attrs) when is_list(attrs) or (is_map(attrs) and not is_struct(attrs)) do
           struct!(__MODULE__, ALLM.Pipeline.Schema.__atomize_keys__(__MODULE__, attrs))
         end
       end
@@ -305,9 +328,15 @@ defmodule ALLM.Pipeline.Schema do
         `%__MODULE__{}`. Returns every issue it finds, not just the first. The
         declared type of a field is **not** checked at runtime — see the module
         doc.
+
+        The argument is `term()` rather than `map() | keyword() | t()` on
+        purpose: `ALLM.Pipeline.Executor.validate_input/2` calls this with
+        whatever a caller handed `run_step/5`, and the whole reason
+        `{:__input__, :not_castable}` exists is that such a term may be
+        anything at all. A narrower spec would declare that arm unreachable
+        while the function's own contract promises it.
         """
-        @spec cast(map() | keyword() | t()) ::
-                {:ok, t()} | {:error, [ALLM.Pipeline.Schema.issue()]}
+        @spec cast(term()) :: {:ok, t()} | {:error, [ALLM.Pipeline.Schema.issue()]}
         def cast(input), do: ALLM.Pipeline.Schema.__cast__(__MODULE__, input)
       end
 
@@ -397,13 +426,26 @@ defmodule ALLM.Pipeline.Schema do
   end
 
   @doc false
-  @spec __atomize_keys__(module(), map()) :: map()
+  @spec __atomize_keys__(module(), map() | keyword()) :: map()
   def __atomize_keys__(module, attrs) do
     fields = module.__allm_schema__(:fields)
 
-    Map.new(attrs, fn
-      {key, value} when is_binary(key) -> {resolve_string_key(key, fields) || key, value}
-      {key, value} -> {key, value}
+    # NOT `Map.new/2`, and `new/1`'s keyword clause routes through here for the
+    # same reason rather than calling `struct!/2` directly: both collapse a
+    # field supplied twice — under its atom and its string key in a map, or
+    # repeated in a keyword list — into a single entry, silently keeping
+    # whichever value was visited last. `new/1` raises on an unknown key, so
+    # raising here too is the consistent reading — dropping a supplied value is
+    # the class of bug this DSL exists to remove, and which value survived is
+    # not something a caller may depend on.
+    Enum.reduce(attrs, %{}, fn {key, value}, acc ->
+      resolved = if is_binary(key), do: resolve_string_key(key, fields) || key, else: key
+
+      if Map.has_key?(acc, resolved) do
+        raise ArgumentError, duplicate_key_message(module, resolved)
+      end
+
+      Map.put(acc, resolved, value)
     end)
   end
 
@@ -422,9 +464,14 @@ defmodule ALLM.Pipeline.Schema do
 
   def __cast__(module, input) when is_map(input), do: cast_attrs(module, input)
 
+  # NOT `cast_attrs(module, Map.new(input))`: `Map.new/1` collapses
+  # `[name: "A", name: "B"]` into one entry BEFORE `resolve_keys/2` can see the
+  # pairs, so the duplicate would go unreported on the shape every production
+  # `Input.new/1` call site actually uses. `resolve_keys/2` reduces over
+  # `{key, value}` pairs and works on a keyword list unchanged.
   def __cast__(module, input) when is_list(input) do
     if Keyword.keyword?(input) do
-      cast_attrs(module, Map.new(input))
+      cast_attrs(module, input)
     else
       {:error, [{:__input__, :not_castable}]}
     end
@@ -432,7 +479,7 @@ defmodule ALLM.Pipeline.Schema do
 
   def __cast__(_module, _input), do: {:error, [{:__input__, :not_castable}]}
 
-  @spec cast_attrs(module(), map()) :: {:ok, struct()} | {:error, [issue()]}
+  @spec cast_attrs(module(), map() | keyword()) :: {:ok, struct()} | {:error, [issue()]}
   defp cast_attrs(module, attrs) do
     {resolved, unknown} = resolve_keys(module.__allm_schema__(:fields), attrs)
 
@@ -442,12 +489,28 @@ defmodule ALLM.Pipeline.Schema do
     end
   end
 
-  @spec resolve_keys([atom()], map()) :: {map(), [issue()]}
+  # Two keys can resolve to ONE field in either input shape: `%{"name" => "A",
+  # name: "B"}`, because a string key is matched against the declared field
+  # names, and `[name: "A", name: "B"]`, because a keyword list simply permits
+  # repeats. Folding both into one `Map.put/3` (what this did before subphase
+  # 2.3) silently kept whichever value was visited last and reported nothing,
+  # which is the one input shape D1's reason set could not describe and a direct
+  # contradiction of D2's "unknown keys are an error, never silently dropped".
+  # The field NAME is reported and neither value is, because which one would
+  # have won is unspecified and no caller may depend on it.
+  @spec resolve_keys([atom()], map() | keyword()) :: {map(), [issue()]}
   defp resolve_keys(fields, attrs) do
-    Enum.reduce(attrs, {%{}, []}, fn {key, value}, {resolved, unknown} ->
+    Enum.reduce(attrs, {%{}, []}, fn {key, value}, {resolved, issues} ->
       case resolve_key(key, fields) do
-        nil -> {resolved, unknown ++ [{issue_key(key), :unknown_field}]}
-        field -> {Map.put(resolved, field, value), unknown}
+        nil ->
+          {resolved, issues ++ [{issue_key(key), :unknown_field}]}
+
+        field ->
+          if Map.has_key?(resolved, field) do
+            {resolved, issues ++ [{field, :duplicate_key}]}
+          else
+            {Map.put(resolved, field, value), issues}
+          end
       end
     end)
   end
@@ -478,6 +541,15 @@ defmodule ALLM.Pipeline.Schema do
   defp unknown_option_message(module, name, unknown) do
     "#{inspect(module)}: unknown option(s) #{inspect(unknown)} on `field :#{name}`. " <>
       "Known field options: #{inspect(@field_options)}."
+  end
+
+  @spec duplicate_key_message(module(), atom() | String.t()) :: String.t()
+  defp duplicate_key_message(module, field) do
+    "#{inspect(module)}: the field #{inspect(field)} was supplied twice — under both its " <>
+      "atom key and its string key, or repeated in a keyword list. Which value would " <>
+      "survive is unspecified, so one of them would be dropped silently. Supply it once, " <>
+      "or use `cast/1`, which reports this as `{#{inspect(field)}, :duplicate_key}` " <>
+      "instead of raising."
   end
 
   @spec non_boolean_option_message(module(), atom(), atom(), term()) :: String.t()

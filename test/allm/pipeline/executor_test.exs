@@ -191,6 +191,198 @@ defmodule ALLM.Pipeline.ExecutorTest do
     def execute(_context, _input), do: {:ok, %{result: "a bare map"}}
   end
 
+  # A Step whose schemas are built with `ALLM.Pipeline.Schema`, so validation
+  # runs through `cast/1` (subphase 2.3). Every OTHER fixture in this file uses
+  # an Ecto embedded schema, which exports no `cast/1` — that is not an
+  # oversight, it is what drives `validate_against/3`'s fallback clause, and
+  # three real Step schemas are in the same position today
+  # (`CastusListingScraper.Input`/`.Output`, `VideoMatchStep.Input`).
+  defmodule CastStep do
+    @behaviour ALLM.Pipeline.Step
+
+    defmodule Input do
+      use ALLM.Pipeline.Schema
+
+      schema do
+        field(:value, String.t(), required: true)
+        field(:api_key, String.t(), redact: true)
+      end
+    end
+
+    defmodule Output do
+      use ALLM.Pipeline.Schema
+
+      schema do
+        field(:result, String.t(), required: true)
+      end
+    end
+
+    @impl true
+    def step_type, do: :cast_step
+
+    @impl true
+    def input_schema, do: Input
+
+    @impl true
+    def output_schema, do: Output
+
+    @impl true
+    def artifact_content_type, do: "text/plain"
+
+    @impl true
+    def artifact_content(%Output{result: result}), do: result
+
+    @impl true
+    def execute(_context, %Input{value: value}) do
+      {:ok, %Output{result: "processed: #{value}"}}
+    end
+  end
+
+  # Same schemas as `CastStep`, but `execute/2` returns a bare MAP where the
+  # behaviour promises the `output_schema()` struct. `cast/1` accepts it, and
+  # everything downstream must receive the CAST STRUCT rather than the map.
+  defmodule MapOutputCastStep do
+    @behaviour ALLM.Pipeline.Step
+
+    @impl true
+    def step_type, do: :cast_step
+
+    @impl true
+    def input_schema, do: CastStep.Input
+
+    @impl true
+    def output_schema, do: CastStep.Output
+
+    @impl true
+    def artifact_content_type, do: "text/plain"
+
+    @impl true
+    def artifact_content(%CastStep.Output{result: result}), do: result
+
+    @impl true
+    def execute(_context, %CastStep.Input{value: value}) do
+      {:ok, %{result: "processed: #{value}"}}
+    end
+  end
+
+  # Returns a struct of the WRONG module where the behaviour promises
+  # `output_schema()`'s — the output twin of the wrong-module input case.
+  defmodule WrongOutputCastStep do
+    @behaviour ALLM.Pipeline.Step
+
+    @impl true
+    def step_type, do: :cast_step
+
+    @impl true
+    def input_schema, do: CastStep.Input
+
+    @impl true
+    def output_schema, do: CastStep.Output
+
+    @impl true
+    def execute(_context, _input), do: {:ok, %TestStep.Output{result: "wrong module"}}
+  end
+
+  # Returns a map that `CastStep.Output.cast/1` REJECTS (unknown key, and the
+  # required `:result` missing), so the output half of the rejection message is
+  # exercised on a value-bearing map — the shape the redaction assertion needs.
+  defmodule BadMapOutputCastStep do
+    @behaviour ALLM.Pipeline.Step
+
+    @impl true
+    def step_type, do: :cast_step
+
+    @impl true
+    def input_schema, do: CastStep.Input
+
+    @impl true
+    def output_schema, do: CastStep.Output
+
+    @impl true
+    def execute(_context, _input), do: {:ok, %{secret_note: "SUPERSECRETVALUE"}}
+  end
+
+  # A schema module that exports a `cast/1` which is NOT the DSL's — the exact
+  # shape of `Ecto.Type.cast/1`, whose contract is
+  # `{:ok, term} | :error | {:error, keyword}`. It is a plain `defstruct`, so
+  # `Executor` must route it through the module-comparison fallback; keying the
+  # branch on the generic name `cast/1` (which 2.3 originally did) would send it
+  # to the DSL branch, where a bare `:error` matches neither `case` arm and
+  # raises `CaseClauseError` — before `execute_step`'s try/rescue, inside a
+  # linking `Task.async_stream`.
+  defmodule EctoTypeishStep do
+    @behaviour ALLM.Pipeline.Step
+
+    defmodule Input do
+      defstruct [:value]
+
+      # Deliberately `Ecto.Type`-shaped, and deliberately never called. The
+      # `Process.put/2` is the test's observable: `Executor.run_step/5` runs
+      # `validate_input/2` in the CALLING process, so the flag is visible to the
+      # test, and "was `cast/1` reached at all?" is the property that actually
+      # distinguishes the two predicates. Asserting on the error message cannot:
+      # `validate_against/3`'s catch-all arm turns the bare `:error` below into a
+      # tuple too, so both branches return `{:error, nil, "Input must be …"}`.
+      def cast(%__MODULE__{} = value) do
+        Process.put(:ecto_typeish_cast_called, true)
+        {:ok, value}
+      end
+
+      def cast(_other) do
+        Process.put(:ecto_typeish_cast_called, true)
+        :error
+      end
+    end
+
+    defmodule Output do
+      defstruct [:result]
+    end
+
+    @impl true
+    def step_type, do: :ecto_typeish_step
+
+    @impl true
+    def input_schema, do: Input
+
+    @impl true
+    def output_schema, do: Output
+
+    @impl true
+    def execute(_context, %Input{value: value}), do: {:ok, %Output{result: "processed: #{value}"}}
+  end
+
+  # Passes `dsl_schema?/1` (it exports `__allm_schema__/1`) but returns a shape
+  # neither `case` arm matches. Unconstructible from the DSL macro, and that is
+  # the point: it is the only way to exercise `validate_against/3`'s catch-all,
+  # which exists so that a future `cast/1` contract change degrades to an error
+  # tuple instead of a `CaseClauseError` on the un-rescued input path.
+  defmodule RogueCastStep do
+    @behaviour ALLM.Pipeline.Step
+
+    defmodule Input do
+      defstruct [:value]
+
+      def __allm_schema__(:fields), do: [:value]
+      def __allm_schema__(_other), do: []
+
+      # An `Ecto.Type`-style bare `:error`, from a module that otherwise looks
+      # like a DSL schema.
+      def cast(_input), do: :error
+    end
+
+    @impl true
+    def step_type, do: :rogue_cast_step
+
+    @impl true
+    def input_schema, do: Input
+
+    @impl true
+    def output_schema, do: CastStep.Output
+
+    @impl true
+    def execute(_context, _input), do: {:ok, %CastStep.Output{result: "unreachable"}}
+  end
+
   describe "create_pipeline_run/2" do
     test "creates pipeline run record" do
       {:ok, pipeline_run} = Executor.create_pipeline_run("test_pipeline")
@@ -317,7 +509,10 @@ defmodule ALLM.Pipeline.ExecutorTest do
                    Executor.run_step(pipeline_run, TestStep, %{value: "a bare map"})
 
           assert reason =~ "Input must be"
-          assert reason =~ "a bare map"
+          # Subphase 2.3: the message renders the term's SHAPE — its type and
+          # its key names — never its values. `"a bare map"` is the VALUE.
+          assert reason =~ "a map with keys [:value]"
+          refute reason =~ "a bare map"
         end)
 
       assert log =~ "Input validation failed"
@@ -347,6 +542,284 @@ defmodule ALLM.Pipeline.ExecutorTest do
       {:ok, step2, _output2} = Executor.run_step(pipeline_run, TestStep, input2, step1.id)
 
       assert step2.input_step_id == step1.id
+    end
+  end
+
+  # Subphase 2.3. `validate_input/2` / `validate_output/2` route through the
+  # schema's `cast/1` when it has one, and keep the `mod ==` comparison when it
+  # does not. Both halves return the CAST STRUCT, and both callers use it.
+  describe "run_step/5 validating through cast/1" do
+    setup do
+      {:ok, pipeline_run} = Executor.create_pipeline_run("test_pipeline")
+      %{pipeline_run: pipeline_run}
+    end
+
+    test "a valid struct input still runs the step", %{pipeline_run: pipeline_run} do
+      input = %CastStep.Input{value: "test", api_key: "k"}
+
+      assert {:ok, step_log, output} = Executor.run_step(pipeline_run, CastStep, input)
+      assert step_log.status == :success
+      assert output == %CastStep.Output{result: "processed: test"}
+    end
+
+    test "a struct of the wrong module keeps the message prefix", %{pipeline_run: pipeline_run} do
+      log =
+        capture_log(fn ->
+          assert {:error, nil, reason} =
+                   Executor.run_step(pipeline_run, CastStep, %TestStep.Input{value: "x"})
+
+          # The existing assertions in this file pin the PREFIX; `cast/1`'s issue
+          # list is appended, so they survive and the detail is additive.
+          assert reason =~ "Input must be "
+          assert reason =~ "wrong_struct"
+        end)
+
+      assert log =~ "Input validation failed"
+    end
+
+    test "a map input matching the schema runs, and its input_data matches the struct path's",
+         %{pipeline_run: pipeline_run} do
+      {:ok, from_struct, _} =
+        Executor.run_step(pipeline_run, CastStep, %CastStep.Input{value: "test", api_key: "k"})
+
+      {:ok, from_map, output} =
+        Executor.run_step(pipeline_run, CastStep, %{value: "test", api_key: "k"})
+
+      # The widening: `run_step/5` accepted only a struct before 2.3.
+      assert output == %CastStep.Output{result: "processed: test"}
+      assert from_map.input_data == from_struct.input_data
+      assert from_map.input_schema == from_struct.input_schema
+      # Guard against a vacuous comparison of two empty maps: the row must
+      # actually carry the field, and `redact:` must still have applied.
+      assert from_map.input_data["value"] == "test"
+      assert from_map.input_data["api_key"] == "[REDACTED]"
+    end
+
+    test "a string-keyed map input is accepted too", %{pipeline_run: pipeline_run} do
+      assert {:ok, step_log, _output} =
+               Executor.run_step(pipeline_run, CastStep, %{"value" => "test"})
+
+      assert step_log.input_data["value"] == "test"
+    end
+
+    test "a map missing a required field is rejected, naming the field", %{
+      pipeline_run: pipeline_run
+    } do
+      capture_log(fn ->
+        assert {:error, nil, reason} =
+                 Executor.run_step(pipeline_run, CastStep, %{api_key: "k"})
+
+        assert reason =~ "Input must be "
+        assert reason =~ "value"
+        assert reason =~ "missing"
+      end)
+    end
+
+    test "a non-castable input returns a tuple and does not raise", %{pipeline_run: pipeline_run} do
+      # ⚠️ This case was ALREADY correct at HEAD, through `validate_input/2`'s
+      # catch-all clause — the test is a pin against `cast/1` regressing it, not
+      # a fix. `validate_input/2` runs BEFORE `execute_step`'s try/rescue, and
+      # callers fan `run_step/5` out through `Task.async_stream`, which links its
+      # children: a raise here kills the calling process, not one item.
+      capture_log(fn ->
+        for term <- [42, nil, "a string", ["not", "a", "keyword"]] do
+          assert {:error, nil, reason} = Executor.run_step(pipeline_run, CastStep, term)
+          assert reason =~ "Input must be "
+        end
+      end)
+    end
+
+    test "a process-y term is NAMED in the rejection, not called an unrenderable term", %{
+      pipeline_run: pipeline_run
+    } do
+      # `render_shape/1`'s catch-all used to swallow pids, references and ports —
+      # the three BEAM types with no clause of their own — into "an unrenderable
+      # term", which tells an operator reading `step_logs.error` nothing about
+      # what a caller actually handed `run_step/5`. Naming the type leaks no
+      # value, which is the property the whole function exists for.
+      capture_log(fn ->
+        for {term, expected} <- [{self(), "a pid"}, {make_ref(), "a reference"}] do
+          assert {:error, nil, reason} = Executor.run_step(pipeline_run, CastStep, term)
+          assert reason =~ "got #{expected}:"
+          refute reason =~ "unrenderable"
+        end
+      end)
+    end
+
+    test "a non-DSL schema module still validates by module comparison", %{
+      pipeline_run: pipeline_run
+    } do
+      # ⚠️ Both halves in one test on purpose — that is what makes the fallback
+      # distinguishable from its absence. `TestStep.Input` is an Ecto embedded
+      # schema and exports no `__allm_schema__/1`; `CastStep.Input` is a DSL
+      # schema and does.
+      #
+      # If `dsl_schema?/1` were hardcoded TRUE, the `TestStep` half raises
+      # `UndefinedFunctionError` out through `run_step/5` (the fan-out hazard).
+      # If it were hardcoded FALSE, the `CastStep` half is rejected because a
+      # bare map has no `__struct__` to compare. Neither half alone catches both.
+      assert {:ok, _log, _out} =
+               Executor.run_step(pipeline_run, TestStep, %TestStep.Input{value: "ok"})
+
+      capture_log(fn ->
+        assert {:error, nil, reason} =
+                 Executor.run_step(pipeline_run, TestStep, %{value: "ok"})
+
+        assert reason =~ "Input must be "
+      end)
+
+      assert {:ok, _log, _out} = Executor.run_step(pipeline_run, CastStep, %{value: "ok"})
+    end
+
+    test "a schema exporting a NON-DSL cast/1 takes the fallback and never raises", %{
+      pipeline_run: pipeline_run
+    } do
+      # The discriminator for keying the branch on `__allm_schema__/1` rather
+      # than on the generic name `cast/1`. `EctoTypeishStep.Input` is a plain
+      # `defstruct` exporting an `Ecto.Type`-shaped `cast/1`
+      # (`{:ok, term} | :error`), which is the collision the `__schema__/1`
+      # argument in `ALLM.Pipeline.Schema`'s moduledoc predicts.
+      #
+      # ⚠️ The assertion that discriminates is `Process.get/1`, NOT the message:
+      # `validate_against/3`'s catch-all arm degrades the bare `:error` to a
+      # tuple as well, so a message assertion passes under BOTH predicates
+      # (measured — a mutant flipping the predicate survived one). "Was
+      # `cast/1` reached?" is the only observable the two branches differ on.
+      Process.delete(:ecto_typeish_cast_called)
+
+      assert {:ok, _log, out} =
+               Executor.run_step(pipeline_run, EctoTypeishStep, %EctoTypeishStep.Input{
+                 value: "ok"
+               })
+
+      assert out.result == "processed: ok"
+
+      capture_log(fn ->
+        assert {:error, nil, reason} =
+                 Executor.run_step(pipeline_run, EctoTypeishStep, %{value: "ok"})
+
+        # The fallback's non-struct clause: shape only, no appended issue list
+        # and no "unrecognised result" (which is what the DSL branch's catch-all
+        # would have produced from the bare `:error`).
+        assert reason =~ "Input must be "
+        assert reason =~ "a map with keys"
+        refute reason =~ "unrecognised result"
+      end)
+
+      refute Process.get(:ecto_typeish_cast_called),
+             "Executor called a non-DSL module's cast/1 — the branch is keying on the " <>
+               "generic name `cast/1` rather than on `__allm_schema__/1`"
+    end
+
+    test "a cast/1 returning an unrecognised shape degrades to a tuple, not a CaseClauseError",
+         %{pipeline_run: pipeline_run} do
+      # Belt and braces on the un-rescued path. `dsl_schema?/1` makes this
+      # unreachable in production today — only `ALLM.Pipeline.Schema` modules
+      # export `__allm_schema__/1`, and their `cast/1` returns one of two arms —
+      # so this fixture is the only thing that can price the catch-all. Deleting
+      # the arm reddens this with `CaseClauseError` escaping `run_step/5`, which
+      # is precisely the fan-out kill the subphase exists to prevent.
+      capture_log(fn ->
+        assert {:error, nil, reason} =
+                 Executor.run_step(pipeline_run, RogueCastStep, %{value: "x"})
+
+        assert reason =~ "Input must be "
+        assert reason =~ "unrecognised result"
+        # The rogue return value is rendered by shape, not inspected — the
+        # leak rule applies to this arm too.
+        assert reason =~ "(an atom)"
+      end)
+    end
+
+    test "a step returning a struct of the wrong module names the contract it broke", %{
+      pipeline_run: pipeline_run
+    } do
+      capture_log(fn ->
+        assert {:error, step_log, {:output_validation_failed, reason}} =
+                 Executor.run_step(pipeline_run, WrongOutputCastStep, %{value: "x"})
+
+        assert reason =~ "Output must be "
+        assert reason =~ "wrong_struct"
+        assert step_log.status == :failed
+        assert step_log.error["message"] =~ "Output must be "
+      end)
+    end
+
+    test "a step returning a bare map gets the CAST STRUCT forwarded downstream", %{
+      pipeline_run: pipeline_run
+    } do
+      {:ok, from_struct, _} = Executor.run_step(pipeline_run, CastStep, %{value: "test"})
+
+      assert {:ok, from_map, output} =
+               Executor.run_step(pipeline_run, MapOutputCastStep, %{value: "test"})
+
+      # `run_step/5`'s third element is the STRUCT, not the step's raw map — the
+      # property every caller that pattern-matches `{:ok, _, %Mod{}}` relies on.
+      assert output == %CastStep.Output{result: "processed: test"}
+      assert from_map.output_data == from_struct.output_data
+      assert from_map.output_data["result"] == "processed: test"
+    end
+
+    @tag :dynamo
+    test "the bare-map path's artifact is byte-identical to the struct path's", %{
+      pipeline_run: pipeline_run
+    } do
+      # Discriminator: this is what fails an implementation that validates the
+      # map but forwards it unconverted — `artifact_content/1` heads on
+      # `%Output{}` and would `BadMapError` inside the try/rescue, producing a
+      # failed step log with no artifact at all.
+      {:ok, from_struct, _} = Executor.run_step(pipeline_run, CastStep, %{value: "test"})
+      {:ok, from_map, _} = Executor.run_step(pipeline_run, MapOutputCastStep, %{value: "test"})
+
+      # Non-nil first: two `nil` checksums would compare equal and prove nothing.
+      assert from_struct.artifact_checksum != nil
+      assert from_map.artifact_checksum == from_struct.artifact_checksum
+      assert from_map.artifact_size_bytes == from_struct.artifact_size_bytes
+    end
+
+    test "a rejected term's VALUES reach neither the reason, the logs, nor step_logs.error",
+         %{pipeline_run: pipeline_run} do
+      # The security-lane target. `redact:` applies at serialization only
+      # (`ALLM.Pipeline.Schema`, D3), and none of these three paths goes through
+      # the serializer — so before 2.3 the `inspect(other)` in the rejection
+      # message put a rejected map's whole contents into all three. Now that
+      # `cast/1` makes a bare map a SUPPORTED input shape, a rejected map
+      # carrying real field values is a realistic input rather than a malformed
+      # one.
+      secret = "SUPERSECRETVALUE"
+
+      # Half 1 — the INPUT path. No step log exists yet (`{:error, nil, _}`), so
+      # the exposure is the returned reason plus the log line, and host pipelines
+      # persist that reason to `pipeline_runs.metadata.error` via `fail_run/2`.
+      input_log =
+        capture_log(fn ->
+          assert {:error, nil, reason} =
+                   Executor.run_step(pipeline_run, CastStep, %{api_key: secret, bogus: secret})
+
+          assert reason =~ "Input must be "
+          # The KEY names may appear — the design permits that, and they are
+          # what makes the message diagnosable at all.
+          assert reason =~ "api_key"
+          refute reason =~ secret
+        end)
+
+      refute input_log =~ secret
+
+      # Half 2 — the OUTPUT path, which DOES reach `step_logs.error` through
+      # `handle_failure/2`. Nothing else in this file covers that column.
+      output_log =
+        capture_log(fn ->
+          assert {:error, step_log, {:output_validation_failed, reason}} =
+                   Executor.run_step(pipeline_run, BadMapOutputCastStep, %{value: "x"})
+
+          refute reason =~ secret
+          refute step_log.error["message"] =~ secret
+          # Guard: the row must actually carry the rejection, or the `refute`
+          # above passes against an empty column.
+          assert step_log.error["message"] =~ "Output must be "
+        end)
+
+      refute output_log =~ secret
     end
   end
 

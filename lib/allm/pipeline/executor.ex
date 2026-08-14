@@ -140,10 +140,11 @@ defmodule ALLM.Pipeline.Executor do
   @spec run_step(PipelineRun.t(), module(), struct(), Ecto.UUID.t() | nil, keyword()) ::
           run_step_result()
   def run_step(pipeline_run, step_module, input_struct, input_step_id \\ nil, opts \\ []) do
-    # Validate input against schema
+    # Validate input against schema. The CAST struct is what proceeds, not the
+    # caller's term — see `validate_input/2`.
     case validate_input(step_module, input_struct) do
-      :ok ->
-        execute_step(pipeline_run, step_module, input_struct, input_step_id, opts)
+      {:ok, cast_input} ->
+        execute_step(pipeline_run, step_module, cast_input, input_step_id, opts)
 
       {:error, reason} ->
         Logger.error("Input validation failed for #{step_module}: #{inspect(reason)}")
@@ -385,17 +386,20 @@ defmodule ALLM.Pipeline.Executor do
     # handle_failure below re-drains harmlessly (returns []).
     llm_info = drain_and_store_llm(step_log.id, step_module)
 
-    # Validate output against schema
+    # Validate output against schema. Everything downstream uses the CAST
+    # struct, not the step's raw return: `artifact_content/1` would `BadMapError`
+    # on a bare map, `log_success/3` reads the flags off `__struct__`, and every
+    # caller that pattern-matches `{:ok, _, %Mod{}}` depends on it.
     case validate_output(step_module, output_struct) do
-      :ok ->
+      {:ok, cast_output} ->
         # Store artifact if step produces one
-        artifact_info = maybe_store_artifact(step_log.id, step_module, output_struct)
+        artifact_info = maybe_store_artifact(step_log.id, step_module, cast_output)
 
         # Update step log with success (LLM columns folded into artifact_info)
         {:ok, updated_log} =
-          store().log_step_success(step_log, output_struct, Map.merge(artifact_info, llm_info))
+          store().log_step_success(step_log, cast_output, Map.merge(artifact_info, llm_info))
 
-        {:ok, updated_log, output_struct}
+        {:ok, updated_log, cast_output}
 
       {:error, reason} ->
         Logger.error("Output validation failed for #{step_module}: #{inspect(reason)}")
@@ -587,23 +591,23 @@ defmodule ALLM.Pipeline.Executor do
   @spec artifact_size_limit() :: pos_integer()
   defp artifact_size_limit, do: 400 * 1024
 
-  # Runs BEFORE `execute_step`'s try/rescue, so `input_struct.__struct__` on a
-  # non-struct (a bare map, a keyword list, nil — a caller that built its input by
-  # hand) raised `BadMapError`/`KeyError` out through `run_step`. Matching `%mod{}`
-  # in the head makes the non-struct case a normal `{:error, message}`.
-  @spec validate_input(module(), term()) :: :ok | {:error, String.t()}
-  defp validate_input(step_module, %mod{}) do
-    expected_schema = step_module.input_schema()
-
-    if mod == expected_schema do
-      :ok
-    else
-      {:error, "Input must be #{expected_schema}, got #{mod}"}
-    end
-  end
-
-  defp validate_input(step_module, other) do
-    {:error, "Input must be #{step_module.input_schema()}, got #{inspect(other)}"}
+  # Runs BEFORE `execute_step`'s try/rescue, so anything that raises here escapes
+  # `run_step/5` into a `Task.async_stream` fan-out — which LINKS its children, so
+  # a raise kills the calling process rather than failing one item. Every path
+  # below therefore returns a tuple: the schema module not being a DSL schema, or
+  # not being loadable at all (see `validate_against/3` / `dsl_schema?/1`);
+  # `cast/1` on a non-castable term (`ALLM.Pipeline.Schema.__cast__/2`'s final
+  # clause, pinned by `schema_test.exs`); and `cast/1` returning a shape neither
+  # arm matches (`validate_against/3`'s catch-all).
+  #
+  # Returns the CAST struct, which is what `run_step/5` proceeds with. A caller
+  # that hands `run_step/5` a bare map matching the schema therefore now succeeds
+  # where it used to be rejected — a consequence of routing validation through one
+  # contract, not a documented API promise (`run_step/5`'s `@spec` still says
+  # `struct()`).
+  @spec validate_input(module(), term()) :: {:ok, struct()} | {:error, String.t()}
+  defp validate_input(step_module, input) do
+    validate_against(step_module.input_schema(), input, "Input")
   end
 
   # Same shape as `validate_input/2`. This one runs INSIDE the try, so a raise here
@@ -611,20 +615,148 @@ defmodule ALLM.Pipeline.Executor do
   # because the two are a symmetric pair, and because a Step that returns
   # `{:ok, <non-struct>}` produced a `%BadMapError{}` in `step_logs.error` instead
   # of naming the contract it broke.
-  @spec validate_output(module(), term()) :: :ok | {:error, String.t()}
-  defp validate_output(step_module, %mod{}) do
-    expected_schema = step_module.output_schema()
+  @spec validate_output(module(), term()) :: {:ok, struct()} | {:error, String.t()}
+  defp validate_output(step_module, output) do
+    validate_against(step_module.output_schema(), output, "Output")
+  end
 
-    if mod == expected_schema do
-      :ok
+  # Two validation strategies, chosen by whether the schema is an
+  # `ALLM.Pipeline.Schema` DSL module.
+  #
+  # The DSL's `cast/1` is the real contract: it reports unknown keys,
+  # missing-or-nil required fields, duplicate keys and a wrong struct module, and
+  # it accepts a map or keyword list as well as the struct itself.
+  #
+  # The fallback is NOT dead code. `input_schema/0` / `output_schema/0` are plain
+  # callbacks returning any module, and a small set of Step schemas are
+  # hand-rolled `defstruct`s with no DSL today. Calling `cast/1` on those would
+  # raise `UndefinedFunctionError` right where a raise is most expensive, so they
+  # keep the module comparison. That set's MEMBERSHIP is machine-guarded from the
+  # host tree, where the Step modules can be named:
+  # `apps/amesbury_scraper/test/amesbury_scraper/pipeline/step_schema_census_test.exs`
+  # (`AmesburyScraper.Pipeline.StepSchemaCensusTest`) enumerates every Step's
+  # `input_schema/0` / `output_schema/0` and pins the non-DSL set exactly, so a
+  # new one cannot appear here silently. Re-derive by running that test, not by
+  # hand — the set's members are listed there and nowhere else.
+  #
+  # `@spec`'s first parameter is `term()`, not `module()`: `input_schema/0` is an
+  # unenforced behaviour callback that can return anything, which is why
+  # `dsl_schema?/1` guards on `is_atom/1` rather than assuming.
+  @spec validate_against(term(), term(), String.t()) :: {:ok, struct()} | {:error, String.t()}
+  defp validate_against(expected_schema, term, label) do
+    if dsl_schema?(expected_schema) do
+      case expected_schema.cast(term) do
+        {:ok, struct} ->
+          {:ok, struct}
+
+        {:error, issues} ->
+          {:error,
+           "#{label} must be #{expected_schema}, got #{render_shape(term)}: #{inspect(issues)}"}
+
+        other ->
+          # Belt and braces on an un-rescued path: `dsl_schema?/1` already keys on
+          # `__allm_schema__/1`, so only an `ALLM.Pipeline.Schema` module reaches
+          # here and its `cast/1` returns one of the two arms above. Without this
+          # clause a third shape would raise `CaseClauseError` BEFORE
+          # `execute_step`'s try/rescue, inside a linking `Task.async_stream` —
+          # i.e. it would kill the caller instead of failing one item.
+          {:error,
+           "#{label} must be #{expected_schema}, got #{render_shape(term)}: " <>
+             "#{expected_schema}.cast/1 returned an unrecognised result " <>
+             "(#{render_shape(other)})"}
+      end
     else
-      {:error, "Output must be #{expected_schema}, got #{mod}"}
+      validate_by_module(expected_schema, term, label)
     end
   end
 
-  defp validate_output(step_module, other) do
-    {:error, "Output must be #{step_module.output_schema()}, got #{inspect(other)}"}
+  # Keys on `__allm_schema__/1`, NOT on the generic name `cast/1`.
+  #
+  # `ALLM.Pipeline.Schema`'s moduledoc spends a section arguing that a generically
+  # named function is the wrong discriminator for "is this a DSL schema" — it is
+  # the whole reason the introspection function is not called `__schema__/1`. That
+  # argument applies to `:cast` at least as strongly: `Ecto.Type` exports `cast/1`
+  # with a different contract (`{:ok, term} | :error | {:error, keyword}`), and a
+  # bare `:error` from one would have missed the two-arm `case` above. Same
+  # predicate as `ALLM.Pipeline.StepLog.drop_and_redact/1`'s, which asks the same
+  # question of the same modules.
+  #
+  # "Module absent" is distinguished from "module present, not a DSL schema": the
+  # former is a wiring bug that would otherwise silently pick the weaker path, and
+  # `validate_by_module/3` will then reject EVERY term (a struct of an unloaded
+  # module cannot be constructed), so the log line is what explains the rejection.
+  @spec dsl_schema?(term()) :: boolean()
+  defp dsl_schema?(schema) when is_atom(schema) do
+    case Code.ensure_loaded(schema) do
+      {:module, ^schema} ->
+        function_exported?(schema, :__allm_schema__, 1)
+
+      {:error, reason} ->
+        Logger.warning(
+          "Step schema module #{inspect(schema)} could not be loaded (#{inspect(reason)}); " <>
+            "falling back to struct-module validation, which will reject every input"
+        )
+
+        false
+    end
   end
+
+  defp dsl_schema?(_schema), do: false
+
+  @spec validate_by_module(module(), term(), String.t()) :: {:ok, struct()} | {:error, String.t()}
+  defp validate_by_module(expected_schema, %mod{} = term, label) do
+    if mod == expected_schema do
+      {:ok, term}
+    else
+      {:error, "#{label} must be #{expected_schema}, got #{mod}"}
+    end
+  end
+
+  defp validate_by_module(expected_schema, other, label) do
+    {:error, "#{label} must be #{expected_schema}, got #{render_shape(other)}"}
+  end
+
+  # Renders the rejected term's SHAPE — its type, and for a map or keyword list
+  # its key NAMES — and never its values.
+  #
+  # `run_step/5` logs this reason and returns it, host pipelines fail their run
+  # with it (`pipeline_runs.metadata.error`), and `validate_output/2`'s half
+  # reaches `step_logs.error` through `handle_failure/2`. None of those paths
+  # touches `StepLog`'s serializer, so `redact: true` — which applies only at
+  # serialization (`ALLM.Pipeline.Schema`, D3) — cannot reach them. A bare
+  # `inspect(term)` here (what this built until subphase 2.3) therefore persisted
+  # a rejected map's entire contents, and since `cast/1` made a bare map a
+  # SUPPORTED input shape, rejected maps carrying real field values became a
+  # realistic input rather than a malformed one.
+  @spec render_shape(term()) :: String.t()
+  defp render_shape(%mod{}), do: "#{mod}"
+  defp render_shape(term) when is_map(term), do: "a map with keys #{inspect(Map.keys(term))}"
+
+  defp render_shape(term) when is_list(term) do
+    if Keyword.keyword?(term) do
+      "a keyword list with keys #{inspect(Keyword.keys(term))}"
+    else
+      "a #{length(term)}-element list"
+    end
+  end
+
+  defp render_shape(nil), do: "nil"
+  defp render_shape(term) when is_boolean(term), do: "a boolean"
+  defp render_shape(term) when is_atom(term), do: "an atom"
+  defp render_shape(term) when is_binary(term), do: "a #{byte_size(term)}-byte binary"
+  defp render_shape(term) when is_integer(term), do: "an integer"
+  defp render_shape(term) when is_float(term), do: "a float"
+  defp render_shape(term) when is_tuple(term), do: "a #{tuple_size(term)}-element tuple"
+  defp render_shape(term) when is_function(term), do: "a function"
+  defp render_shape(term) when is_pid(term), do: "a pid"
+  defp render_shape(term) when is_reference(term), do: "a reference"
+  defp render_shape(term) when is_port(term), do: "a port"
+
+  # The only BEAM term left is a non-byte-aligned bitstring (`is_binary/1` above
+  # takes the byte-aligned ones), so the catch-all stays genuinely reachable
+  # rather than becoming provably-dead code. It must stay: a
+  # `FunctionClauseError` here would raise on the un-rescued input path.
+  defp render_shape(_term), do: "an unrenderable term"
 
   defp maybe_store_artifact(step_id, step_module, output_struct) do
     if Step.produces_artifact?(step_module) do

@@ -35,6 +35,29 @@ defmodule ALLM.Pipeline.StepLog do
 
   Recursion carries a depth budget of 16 levels and **truncates** rather than
   raising; see `@max_depth`.
+
+  ## An `%Ecto.Changeset{}` reaching the serializer flattens SILENTLY
+
+  `Ecto.Changeset` is the one declared divergence from `ALLM.Pipeline.Encodable`'s
+  leaf rules (`Encodable` renders it as `%{"changeset_errors" => …}`; this module
+  treats it as an ordinary struct), and subphase 2.2's tuple clause turned that
+  divergence from a loud failure into a quiet write. A changeset now flattens to
+  all **fifteen** `defstruct` keys and persists `params`, `data`, `types`,
+  `changes` and `errors` **in full** — so a changeset built from user or LLM
+  input writes those raw params into `input_data` / `output_data`, where
+  `redact:` cannot reach them (no field declares a changeset type, so layer 1 has
+  no flags to read). This is the same "loud failure turned QUIET" shape
+  `ALLM.Pipeline.Encodable`'s moduledoc documents for its own `is_struct`
+  widening, mirrored here because `StepLog` is the path that reaches a row.
+
+  The quiet write is **not** total, which is the trap: measured 2026-08-14, a
+  changeset that has been through `Ecto.Changeset.prepare_changes/2` carries
+  anonymous functions in `:prepare`, which reach `Jason` unchanged and still
+  raise `Protocol.UndefinedError` on the un-rescued `log_start/4` path. So the
+  same type both writes and raises depending on how it was built.
+
+  Unreachable today — `grep -rna "field(.*Changeset" apps/ --include=*.ex`
+  returns nothing — and recorded rather than fixed for that reason.
   """
   use Ecto.Schema
   import Ecto.Changeset
