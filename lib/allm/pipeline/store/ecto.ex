@@ -38,7 +38,7 @@ defmodule ALLM.Pipeline.Store.Ecto do
 
   @behaviour ALLM.Pipeline.Store
 
-  alias ALLM.Pipeline.{PipelineRun, StepLog}
+  alias ALLM.Pipeline.{PipelineRun, StepLog, Store}
 
   # ── Runs ───────────────────────────────────────────────────────────────────
 
@@ -104,6 +104,6 @@ defmodule ALLM.Pipeline.Store.Ecto do
   defdelegate get_step(id), to: StepLog, as: :get
 
   @impl true
-  @spec pipeline_stats(Ecto.UUID.t()) :: map()
+  @spec pipeline_stats(Ecto.UUID.t()) :: Store.stats()
   defdelegate pipeline_stats(run_id), to: StepLog, as: :get_pipeline_stats
 end

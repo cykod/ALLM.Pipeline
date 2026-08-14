@@ -60,6 +60,15 @@ defmodule ALLM.Pipeline.Config do
   unlike `repo/0`, which has no neutral default because there is nothing to
   persist through.
 
+  An *absent* value is therefore neutral, but a **wrongly-shaped** one raises
+  here exactly as `repo/0` does, naming the key and the package (added by the
+  Phase 1 polish pass). The registry validates its own options, so this guard
+  is for the direct-config route `repo/0`'s `@doc` documents as supported —
+  where both keys previously failed open: a bad `alert_on_empty` degraded to a
+  permanent `false` from `Metrics.expects_data?/1`, and `lock_keys` in the
+  natural keyword form reached `Advisory.canonical_lock_name/1` as a
+  `BadMapError` from `Map.get/3`, far from the cause.
+
   ## Why `Application.get_env` and not a compile-time module attribute
 
   A `mix release` build never evaluates `config/runtime.exs`, and
@@ -136,19 +145,80 @@ defmodule ALLM.Pipeline.Config do
   Defaults to `[]`: a host that declares nothing alerts on nothing, which is
   the safe direction (a false alarm is worse than a missed empty scrape, which
   is also the reason the one Amesbury exclusion exists — see the registry).
+
+  A wrongly-shaped value raises here, naming the key and the package, for the
+  same reason `repo/0` does: the registry validates its own `alert_on_empty:`
+  option, but `config :amesbury_scraper, alert_on_empty: …` written straight
+  into a config file bypasses that path, and the failure downstream is a silent
+  `false` from `Metrics.expects_data?/1` — never an alert, never an error.
   """
   @spec alert_on_empty() :: [String.t()]
-  def alert_on_empty, do: Application.get_env(:amesbury_scraper, :alert_on_empty, [])
+  def alert_on_empty do
+    names = Application.get_env(:amesbury_scraper, :alert_on_empty, [])
+
+    if is_list(names) and Enum.all?(names, &is_binary/1) do
+      names
+    else
+      raise """
+      ALLM.Pipeline's configured alert_on_empty must be a list of run-name \
+      STRINGS (it keys on PipelineRun.name, not on a cron atom), got: \
+      #{inspect(names)}
+
+      Fix on the host's ALLM.Pipeline.Registry declaration, or in
+      config/config.exs:
+
+          config :amesbury_scraper, alert_on_empty: ["some_scrape"]
+      """
+    end
+  end
 
   @doc """
   Pipelines that must serialize against each other, as
   `%{pipeline_name => canonical_name}` — read by
   `ALLM.Pipeline.Lock.Advisory.canonical_lock_name/1`.
 
-  Declared by the host as `lock_keys:` on its `ALLM.Pipeline.Registry`.
+  Declared by the host as `lock_keys:` on its `ALLM.Pipeline.Registry`, which
+  normalizes the keyword list it accepts into the map returned here.
+
+  A host configuring the key directly — which `repo/0`'s `@doc` documents as
+  supported for a registry-less host — naturally writes the **keyword** form
+  `lock_keys: [project_refresh: :project]`, the exact shape the registry takes.
+  That is accepted and normalized here rather than reaching
+  `Advisory.canonical_lock_name/1` as a `BadMapError` from `Map.get/3`, far
+  from the cause. Anything else raises naming the key and both shapes.
+
   Defaults to `%{}`, i.e. every pipeline gets its own key, which is the
   behaviour of the identity mapping the module documents.
   """
   @spec lock_keys() :: %{atom() => atom()}
-  def lock_keys, do: Application.get_env(:amesbury_scraper, :lock_keys, %{})
+  def lock_keys do
+    case Application.get_env(:amesbury_scraper, :lock_keys, %{}) do
+      map when is_map(map) ->
+        map
+
+      pairs when is_list(pairs) ->
+        if Keyword.keyword?(pairs) and
+             Enum.all?(pairs, fn {name, canonical} ->
+               is_atom(name) and is_atom(canonical)
+             end),
+           do: Map.new(pairs),
+           else: raise_bad_lock_keys(pairs)
+
+      other ->
+        raise_bad_lock_keys(other)
+    end
+  end
+
+  @spec raise_bad_lock_keys(term()) :: no_return()
+  defp raise_bad_lock_keys(value) do
+    raise """
+    ALLM.Pipeline's configured lock_keys must map a pipeline atom to a \
+    canonical atom — either a map or a keyword list — got: #{inspect(value)}
+
+    Fix on the host's ALLM.Pipeline.Registry declaration, or in
+    config/config.exs:
+
+        config :amesbury_scraper, lock_keys: [some_refresh: :some]
+    """
+  end
 end

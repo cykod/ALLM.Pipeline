@@ -42,6 +42,11 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   @metadata_allowance 2 * 1024
   @max_payload_bytes @item_limit - @metadata_allowance
 
+  # The URL scheme this adapter owns, as `Memory` and `Filesystem` declare
+  # theirs. One emit site (`put/4`, an interpolation) and three match heads —
+  # the shape where a rename touches three and misses the fourth.
+  @scheme "dynamo://"
+
   @type artifact :: %{
           artifact_id: String.t(),
           content_type: String.t(),
@@ -121,7 +126,7 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
       }) do
     if fits_item?(content) do
       case put_artifact(id, content, content_type, size_bytes, checksum, compressed) do
-        :ok -> {:ok, "dynamo://#{table_name()}/#{id}"}
+        :ok -> {:ok, @scheme <> "#{table_name()}/#{id}"}
         {:error, reason} -> {:error, reason}
       end
     else
@@ -135,7 +140,7 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   """
   @impl true
   @spec fetch(Artifacts.url()) :: {:ok, Artifacts.stored()} | {:error, term()}
-  def fetch("dynamo://" <> rest = url) do
+  def fetch(@scheme <> rest = url) do
     case artifact_id(rest) do
       {:ok, artifact_id} -> get_artifact(artifact_id)
       :error -> {:error, {:invalid_artifact_url, url}}
@@ -147,7 +152,7 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   @doc "Delete the artifact behind a `dynamo://` URL."
   @impl true
   @spec delete(Artifacts.url()) :: :ok | {:error, term()}
-  def delete("dynamo://" <> rest) do
+  def delete(@scheme <> rest) do
     case artifact_id(rest) do
       {:ok, artifact_id} -> delete_artifact(artifact_id)
       :error -> {:error, :invalid_url}
@@ -170,7 +175,7 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   """
   @impl true
   @spec exists?(Artifacts.url()) :: boolean()
-  def exists?("dynamo://" <> rest) do
+  def exists?(@scheme <> rest) do
     case artifact_id(rest) do
       {:ok, artifact_id} ->
         case get_artifact(artifact_id) do

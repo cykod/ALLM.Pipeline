@@ -110,8 +110,12 @@ defmodule ALLM.Pipeline.ArtifactStore do
   """
   @spec delete(String.t()) :: :ok | {:error, term()}
   def delete("s3://" <> _rest) do
-    # TODO: Implement S3 deletion
-    {:error, :not_implemented}
+    # TODO: Implement S3 deletion (Phase 7 — `Artifacts.S3`).
+    # Answers `:s3_not_implemented`, the same atom `store_in_s3/0` and
+    # `fetch_from_s3/0` use for the identical condition. It read
+    # `:not_implemented` until the Phase 1 polish pass, which made it the only
+    # occurrence of that atom in the repo — three names for one unbuilt tier.
+    {:error, :s3_not_implemented}
   end
 
   def delete(url), do: Artifacts.impl().delete(url)
@@ -143,6 +147,7 @@ defmodule ALLM.Pipeline.ArtifactStore do
     {:error, :s3_not_implemented}
   end
 
+  @spec compute_checksum(binary()) :: String.t()
   defp compute_checksum(content) do
     :crypto.hash(:sha256, content)
     |> Base.encode16(case: :lower)

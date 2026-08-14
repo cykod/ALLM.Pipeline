@@ -71,10 +71,21 @@ defmodule ALLM.Pipeline.Store do
   @type step :: StepLog.t()
 
   @typedoc """
-  Aggregate counts and timings over a run's non-`section` steps: `:total_steps`,
-  `:successful`, `:failed`, `:skipped`, `:total_duration_ms`, `:avg_duration_ms`.
+  Aggregate counts and timings over a run's non-`section` steps.
+
+  Spelled out rather than left as `map()` so a second adapter's
+  `pipeline_stats/1` is checkable against the contract — which is what `Store`
+  is for. The two `nil`s are real: SQL `sum`/`avg` over a run whose steps all
+  carry a `NULL` `duration_ms` return `NULL`, and `avg` returns a `Decimal`.
   """
-  @type stats :: map()
+  @type stats :: %{
+          total_steps: non_neg_integer(),
+          successful: non_neg_integer(),
+          failed: non_neg_integer(),
+          skipped: non_neg_integer(),
+          total_duration_ms: non_neg_integer() | nil,
+          avg_duration_ms: Decimal.t() | nil
+        }
 
   # ── Runs ───────────────────────────────────────────────────────────────────
 

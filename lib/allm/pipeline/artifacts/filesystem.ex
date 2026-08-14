@@ -153,6 +153,10 @@ defmodule ALLM.Pipeline.Artifacts.Filesystem do
   Compares filesystem mtime, whose resolution is one second — hence "at or
   before" rather than "before", so an artifact written in the same second as
   the cutoff is collected rather than surviving a full purge.
+
+  The count is of payloads actually **removed**, not of payloads selected: a
+  payload whose `File.rm/1` fails (permissions, a concurrent `gc/1` that got
+  there first) is not counted.
   """
   @impl true
   @spec gc(keyword()) :: {:ok, non_neg_integer()}
@@ -165,17 +169,8 @@ defmodule ALLM.Pipeline.Artifacts.Filesystem do
     collected =
       root()
       |> payload_paths()
-      |> Enum.count(fn path ->
-        case File.stat(path, time: :posix) do
-          {:ok, %{mtime: mtime}} when mtime <= cutoff ->
-            _ = File.rm(path)
-            _ = File.rm(path <> @meta_suffix)
-            true
-
-          _ ->
-            false
-        end
-      end)
+      |> Enum.filter(&expired?(&1, cutoff))
+      |> Enum.count(&delete_artifact_files/1)
 
     {:ok, collected}
   end
@@ -194,6 +189,23 @@ defmodule ALLM.Pipeline.Artifacts.Filesystem do
 
   @spec path_for(Artifacts.id()) :: Path.t()
   defp path_for(id), do: Path.join(root(), URI.encode_www_form(id))
+
+  @spec expired?(Path.t(), integer()) :: boolean()
+  defp expired?(path, cutoff) do
+    match?({:ok, %{mtime: mtime}} when mtime <= cutoff, File.stat(path, time: :posix))
+  end
+
+  # Removes a payload and its sidecar, reporting whether the PAYLOAD went. An
+  # already-absent sidecar is not a failure (`gc/1` may be racing another), but
+  # a payload that survives must not be counted as collected — which it was
+  # while the deletions lived inside `Enum.count/2`'s predicate and discarded
+  # `File.rm/1`'s result.
+  @spec delete_artifact_files(Path.t()) :: boolean()
+  defp delete_artifact_files(path) do
+    removed? = File.rm(path) == :ok
+    _ = File.rm(path <> @meta_suffix)
+    removed?
+  end
 
   # Payloads only — the sidecars share the directory and must not be collected
   # as artifacts in their own right (each is removed with its payload).

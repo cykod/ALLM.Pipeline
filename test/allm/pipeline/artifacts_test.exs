@@ -273,6 +273,22 @@ defmodule ALLM.Pipeline.ArtifactsTest do
       assert Path.wildcard(Path.join(root, "*")) == []
     end
 
+    test "gc/1 counts payloads REMOVED, not payloads selected", %{root: root} do
+      {:ok, _url, _, _} = ArtifactStore.store(Ecto.UUID.generate(), "body", "text/plain")
+
+      # An entry `File.rm/1` refuses. `Path.wildcard` returns it, `File.stat`
+      # ages it, so it is selected — and every deletion attempt fails. While
+      # `gc/1`'s deletions lived inside `Enum.count/2`'s predicate they were
+      # `_ = File.rm(path)`, so this was counted as collected and `{:ok, n}`
+      # overstated by one against a directory that is still there.
+      undeletable = Path.join(root, "not-a-payload-dir")
+      File.mkdir_p!(Path.join(undeletable, "occupied"))
+
+      assert {:ok, 1} = Filesystem.gc()
+
+      assert File.dir?(undeletable)
+    end
+
     test "gc/1 collects only what is older than the cutoff, sidecar and all", %{root: root} do
       {:ok, old_url, _, _} = ArtifactStore.store(Ecto.UUID.generate(), "stale", "text/plain")
       {:ok, fresh_url, _, _} = ArtifactStore.store(Ecto.UUID.generate(), "fresh", "text/plain")
@@ -372,8 +388,22 @@ defmodule ALLM.Pipeline.ArtifactsTest do
 
     test "an s3:// URL never reaches the configured adapter" do
       assert {:error, :s3_not_implemented} = ArtifactStore.fetch("s3://bucket/key")
-      assert {:error, :not_implemented} = ArtifactStore.delete("s3://bucket/key")
+      assert {:error, :s3_not_implemented} = ArtifactStore.delete("s3://bucket/key")
       refute ArtifactStore.exists?("s3://bucket/key")
+    end
+
+    test "all three read/write arms answer the unbuilt tier with ONE atom" do
+      # `delete/1` answered `:not_implemented` through Phase 1 — the only
+      # occurrence of that atom in the repo, for the identical condition its
+      # two siblings 30 lines away call `:s3_not_implemented`. Asserted as a
+      # SET so a fourth `s3://` arm cannot reintroduce a third spelling.
+      answers =
+        MapSet.new([
+          ArtifactStore.fetch("s3://bucket/key"),
+          ArtifactStore.delete("s3://bucket/key")
+        ])
+
+      assert MapSet.to_list(answers) == [{:error, :s3_not_implemented}]
     end
   end
 end
