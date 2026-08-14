@@ -365,6 +365,56 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
     end
   end
 
+  @doc """
+  Is the local DynamoDB stack reachable?
+
+  `table_exists?/0` plus the `rescue` a test harness needs: a stack that is not
+  merely missing the table but not listening at all raises out of ExAws rather
+  than returning `{:error, _}`.
+  """
+  @spec available?() :: boolean()
+  def available? do
+    table_exists?()
+  rescue
+    _ -> false
+  end
+
+  @doc """
+  The ExUnit tags to exclude when DynamoDB is unreachable, plus an operator hint.
+
+  **Single source of truth for the tag list.** Two `test_helper.exs` files —
+  `apps/amesbury_scraper/test/` and `apps/allm_pipeline/test/` — need the same
+  answer, because each umbrella app starts ExUnit with its own option set, and
+  DynamoDB-backed tests now live in BOTH trees. Hand-copying the probe was
+  survivable; hand-copying the TAG LIST is the "a rule enforced in more than one
+  shape needs a membership guard" defect in its data-map form (root `CLAUDE.md`)
+  — add a third tag on one side and the other tree silently stops honouring it.
+  This module is package-side, so both trees can call it.
+
+  **Why test-harness support sits in `lib/` rather than `test/support/`:** a
+  `test/support/` module is visible to exactly one umbrella app's test tree, and
+  this answer is needed by two — in trees that, by design, cannot see each other's
+  support code (`apps/allm_pipeline` declares no umbrella dependency). `lib/` is
+  the only place both can reach. Same reasoning, and the same precedent, as
+  `ALLM.Pipeline.Test` shipping in `lib/` (PHASE_1 §5.5). It does no I/O beyond
+  the probe and is not referenced by any production path.
+
+  Returns `{[], nil}` when the stack is up (nothing excluded, nothing to print)
+  and `{tags, message}` when it is down. The message is the caller's to print;
+  this function does no I/O beyond the probe.
+  """
+  @spec exclusions() :: {[atom()], String.t() | nil}
+  def exclusions do
+    if available?() do
+      {[], nil}
+    else
+      {[:dynamo, :skip_unless_dynamo],
+       "\n[test_helper] Local DynamoDB is unreachable at #{inspect(table_name())} — " <>
+         "excluding :dynamo / :skip_unless_dynamo tests. Start it with " <>
+         "`docker-compose -f docker-compose.dev.yml up -d dynamodb-local`.\n"}
+    end
+  end
+
   # Private functions
 
   defp decode_item(item) do

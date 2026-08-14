@@ -12,9 +12,10 @@ defmodule ALLM.Pipeline.Text do
   `apps/amesbury_scraper/test/amesbury_scraper/text_parity_test.exs` calls both
   implementations on one shared fixture table plus a deterministic random byte
   corpus and asserts they agree. That test lives in the host tree because it is
-  the only one that can see both modules — **1.D must not move it** along with
-  the rest of the framework tests. Each moduledoc naming the other is the human
-  index; the parity test is the enforcement.
+  the only one that can see both modules, and **batch 1.D left it there** when it
+  moved the rest of the framework tests into `apps/allm_pipeline/test/` (2026-08-14
+  — this used to read "1.D must not move it"). Each moduledoc naming the other is
+  the human index; the parity test is the enforcement.
 
   It is a copy rather than a move because `Amesbury.Government` calls
   `TextSanitizer.scrub/1` and `scrub_strings/1` at three sites
