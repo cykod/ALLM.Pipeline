@@ -7,12 +7,40 @@ defmodule ALLM.Pipeline.StepLog do
   - `input_step_id` enables lineage tree reconstruction when needed
   - Timing fields capture execution performance metrics
   - Input/output schemas stored as JSONB for debugging and replay
+
+  ## Two-layer serialization
+
+  `input_data` / `output_data` are produced by `serialize_struct/2`, which keeps
+  heavy bodies out of Postgres using **two** layers:
+
+  - **Layer 1 — per-field flags.** A struct whose module exports
+    `__allm_schema__/1` (i.e. one built with `ALLM.Pipeline.Schema`) contributes
+    `__allm_schema__(:dropped)` — `log: false` or `artifact: true` — and
+    `__allm_schema__(:redacted)`.
+  - **Layer 2 — `@fallback_drop`,** a package-level list of four *generic* field
+    names that applies to **every** struct, DSL or not. It is what covers plain
+    `defstruct`s and live Ecto structs reached through recursion, which carry no
+    flags at all.
+
+  The two are **additive**: the drop set is
+  `:dropped ∪ (@fallback_drop − :kept)`. Flags do not replace the fallback — an
+  unflagged `field :content, …` on a DSL struct is still dropped, which is the
+  point (`AmesburyScraper.Digest.DigestRenderStep.Output` relies on it). The one
+  escape in the other direction is an explicit `log: true`.
+
+  ⚠️ The predicate is `__allm_schema__/1`, **never** `__schema__/1`: every
+  `Ecto.Schema` module exports the latter, `__schema__(:fields)` *succeeds* with
+  a colliding shape, and `__schema__(:dropped)` raises `FunctionClauseError` —
+  on this un-rescued write path. See `ALLM.Pipeline.Schema`'s moduledoc.
+
+  Recursion carries a depth budget of 16 levels and **truncates** rather than
+  raising; see `@max_depth`.
   """
   use Ecto.Schema
   import Ecto.Changeset
   import Ecto.Query
 
-  alias ALLM.Pipeline.Text
+  alias ALLM.Pipeline.Encodable
   alias ALLM.Pipeline.PipelineRun
 
   @type status :: :pending | :running | :success | :failed | :skipped
@@ -415,76 +443,154 @@ defmodule ALLM.Pipeline.StepLog do
     |> repo().all()
   end
 
-  # Serialize struct to map with string keys, excluding artifact content to keep
-  # step logs lightweight. `:engine` is dropped: it is a transient
-  # `%ALLM.Engine{}` injected into some extractor inputs (parent-process engine
-  # resolution for `Task.async` safety) and carries adapter opts — including the
-  # test Fake's `{:scripts, ...}` keyword — that Jason cannot encode and that have
-  # no value in the step log.
-  defp serialize_struct(nil), do: nil
+  # LAYER 2 of the two-layer drop (see the moduledoc). Four GENERIC field names,
+  # dropped on every struct this module serializes — DSL structs included, and
+  # plain `defstruct` / live Ecto structs reached through recursion, which carry
+  # no flags at all. Domain-specific names do NOT belong here: a name on this
+  # list is stripped from every struct that happens to reuse it, which is the
+  # wart per-field `log: false` exists to remove. The four that stay are generic
+  # enough that no struct wants them persisted:
+  #
+  # - `:content` — the convention for a Step Output's heavy artifact body
+  #   (Markdown / large text). Naming a field `:content` opts it OUT of
+  #   `output_data` for free, so only the lightweight envelope is persisted (the
+  #   body lives in DynamoDB). Renaming a producer field away from `:content`
+  #   (e.g. `DigestRenderStep.Output`) silently re-bloats every step log.
+  # - `:raw_html` / `:html` — a scraper Output's whole fetched page.
+  # - `:engine` — a transient `%ALLM.Engine{}` injected into some extractor
+  #   inputs (parent-process engine resolution for `Task.async` safety). It
+  #   carries adapter opts — including the test Fake's `{:scripts, ...}` keyword
+  #   — that Jason cannot encode and that have no value in the step log.
+  #
+  # Pinned as an exact set by `step_log_serialization_test.exs` so a fifth name
+  # cannot be added silently. To drop a field on ONE struct, declare
+  # `log: false` on it; to keep a field whose name is on this list, `log: true`.
+  @fallback_drop [:raw_html, :html, :content, :engine]
 
-  defp serialize_struct(struct) do
-    # `:content` is the convention for a Step Output's heavy artifact body
-    # (Markdown / large text): naming a field `:content` opts it OUT of
-    # `output_data` so only the lightweight envelope is persisted (the body
-    # lives in DynamoDB). Renaming a producer field away from `:content` (e.g.
-    # `DigestRenderStep.Output`) would silently start bloating every step log.
-    # `:bill_catalog` is dropped for the same lightweight-row reason as `:content`:
-    # the meeting-summary Input carries a per-year ordinance catalog (~150 rows)
-    # for LLM bill attribution; it is reconstructable from the DB and would
-    # otherwise bloat every summary step log.
-    # `:assignments` is dropped because `VideoMatchStep.Output` carries it as a
-    # list of LIVE `%Meeting{}` / `%VideoListing{}` structs (with
-    # `%Ecto.Association.NotLoaded{}` fields) that the pipeline reads off the
-    # returned Output to write meetings — un-encodable and not for the row. The
-    # serializable `:decisions` audit stays in `output_data` and the artifact.
-    # `:extracted_text` is dropped because `DocumentTextExtractor.Output` carries
-    # the full extracted PDF/DOC text (often 100KB–1MB) — already persisted once
-    # as the `text/plain` DynamoDB artifact via
-    # `DocumentTextExtractor.artifact_content/1`; leaving it here would write the
-    # same large body a second time into the `output_data` JSONB row. The
-    # lightweight `:character_count` / `:extracted_links` stay in `output_data`.
-    # `:shortlist` is dropped because `HeroCropReviewer.Input` carries the whole
-    # ranked candidate pool (up to 24 decorated classifier maps) purely so the
-    # `reject_image` swap and the gallery repair have something to draw from —
-    # the same images are already persisted by the classifier/curator step logs
-    # upstream, so keeping them here would write the pool a third time. The
-    # global-by-field-name check is done: `grep -rn "field(:shortlist" apps/*/lib`
-    # returns only that one declaration.
+  # D4: a bound on UNREVIEWED nesting depth, not a cycle guard — Elixir terms are
+  # acyclic by construction and nothing today fails to terminate. The serializer
+  # recurses into arbitrary structs it does not own (live Ecto structs with their
+  # `__meta__` and `%NotLoaded{}` placeholders, `%ALLM.Engine{}`), and the depth
+  # of that walk is otherwise whatever the caller's struct graph happens to be.
+  #
+  # 16 is 2× the observed maximum of 8, measured over all 43,571 non-null
+  # `input_data` + `output_data` values in the dev database. Re-derive with
+  # `python3 scripts/steplog_depth.py input_data` and the `output_data` twin —
+  # and match that script's convention, which this module implements: the
+  # serialized struct is level 1 and its field values are level 2, so a flat map
+  # of scalars is depth 2.
+  #
+  # TRUNCATE, NEVER RAISE. `serialize_struct/2` runs inside `log_start/4`, whose
+  # `{:ok, step_log} = …` bang-match in `ALLM.Pipeline.Executor` is reached
+  # BEFORE the executor's rescue. A raise here loses the whole step log — and,
+  # through a `Task.async_stream` fan-out, the caller — rather than one field.
+  @max_depth 16
+  @truncated "[truncated: max depth #{@max_depth}]"
+
+  # D3: `redact: true` applies at SERIALIZATION, not at construction — a step
+  # that receives a credential needs the credential. This is the single choke
+  # point where a field value crosses into persistence. Note the coverage is
+  # exactly `input_data` / `output_data`: `artifact_content/1`, the Executor's
+  # validation error messages, `log_summary/4` and `inspect/1` are NOT covered,
+  # and `ALLM.Pipeline.Schema`'s moduledoc enumerates all four.
+  @redacted "[REDACTED]"
+
+  @spec serialize_struct(struct() | nil) :: map() | nil
+  defp serialize_struct(nil), do: nil
+  defp serialize_struct(struct), do: serialize_struct(struct, 1)
+
+  # `level` is the nesting level of `struct` itself under the convention above.
+  @spec serialize_struct(struct(), pos_integer()) :: map()
+  defp serialize_struct(struct, level) do
+    {drop, redact} = drop_and_redact(struct.__struct__)
+
     struct
     |> Map.from_struct()
-    |> Map.drop([
-      :raw_html,
-      :html,
-      :content,
-      :engine,
-      :bill_catalog,
-      :assignments,
-      :extracted_text,
-      :shortlist
-    ])
-    |> Enum.into(%{}, fn {k, v} -> {to_string(k), maybe_serialize(v)} end)
+    |> Map.drop(drop)
+    |> Enum.into(%{}, fn {key, value} ->
+      {to_string(key), serialize_field(key, value, redact, level + 1)}
+    end)
   end
 
-  # Calendar structs carry a `microsecond: {n, precision}` tuple that Jason
-  # cannot encode, so render them as ISO-8601 strings rather than recursing.
-  defp maybe_serialize(%DateTime{} = v), do: DateTime.to_iso8601(v)
-  defp maybe_serialize(%NaiveDateTime{} = v), do: NaiveDateTime.to_iso8601(v)
-  defp maybe_serialize(%Date{} = v), do: Date.to_iso8601(v)
-  defp maybe_serialize(%Time{} = v), do: Time.to_iso8601(v)
-  defp maybe_serialize(v) when is_struct(v), do: serialize_struct(v)
+  # The two-layer drop set, resolved per MODULE. Layer 1 is the module's own
+  # field flags; layer 2 is `@fallback_drop`, minus anything the module declares
+  # `log: true`. `:dropped` already unions `artifact: true` into `log: false`,
+  # and `:dropped` / `:kept` are disjoint by construction (`log:` is one option,
+  # and `artifact: true` + `log: true` is a compile-time `ArgumentError`), so the
+  # two operations cannot conflict.
+  @spec drop_and_redact(module()) :: {[atom()], [atom()]}
+  defp drop_and_redact(module) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :__allm_schema__, 1) do
+      kept = module.__allm_schema__(:kept)
 
-  defp maybe_serialize(v) when is_map(v),
-    do: Map.new(v, fn {k, val} -> {k, maybe_serialize(val)} end)
+      {module.__allm_schema__(:dropped) ++ (@fallback_drop -- kept),
+       module.__allm_schema__(:redacted)}
+    else
+      {@fallback_drop, []}
+    end
+  end
 
-  defp maybe_serialize(v) when is_list(v), do: Enum.map(v, &maybe_serialize/1)
-  # Strip NUL bytes / invalid UTF-8 that PostgreSQL's jsonb columns reject.
-  # OCR'd PDF text and LLM output occasionally carry them (e.g. a NUL echoed
-  # into an agenda item's title/description); without scrubbing here a single
+  @spec serialize_field(atom(), term(), [atom()], pos_integer()) :: term()
+  defp serialize_field(key, value, redact, level) do
+    if key in redact, do: @redacted, else: maybe_serialize(value, level)
+  end
+
+  # Leaves shared with `ALLM.Pipeline.Encodable` are DELEGATED to it rather than
+  # re-implemented: Calendar structs (which carry a `microsecond: {n, precision}`
+  # tuple Jason cannot encode), `Decimal`, and binaries — where the scrub strips
+  # NUL bytes / invalid UTF-8 that PostgreSQL's jsonb columns reject. OCR'd PDF
+  # text and LLM output occasionally carry them, and without scrubbing a single
   # bad byte fails the step_log insert/update with
   # `ERROR 22P05 (untranslatable_character)` and the whole meeting is lost.
-  defp maybe_serialize(v) when is_binary(v), do: Text.scrub(v)
-  defp maybe_serialize(v), do: v
+  #
+  # The delegation is deliberately LEAF-ONLY, for two reasons that are OBSERVABLE
+  # in the persisted row:
+  #
+  #   1. This module's container clauses recurse through `serialize_field/4`, so
+  #      the drop set, the `redact:` substitution and the depth budget apply
+  #      INSIDE every map/list/tuple. `Encodable.encode/1` applies none of them,
+  #      so a delegated container would persist a nested `:raw_html` body and a
+  #      nested `redact:` value verbatim.
+  #   2. `Encodable` folds a non-empty keyword list into a map; this module maps
+  #      it to a list of two-element lists. That is a genuine shape difference in
+  #      `output_data`.
+  #
+  # (Corrected 2026-08-14 by the 2.2 fix pass, code review F3: this comment used
+  # to lead with "`Encodable` stringifies every key, so delegating changes
+  # `output_data`'s shape". That reason is NOT observable — `output_data` is
+  # dumped through Jason, which stringifies atom keys anyway. Atom keys are
+  # preserved in the in-memory term only. The DECISION was and is right; only
+  # the reason was wrong.)
+  #
+  # Container rules are re-stated here instead, and the tuple rule (tuple → list)
+  # matches `Encodable`'s semantics while staying inside this module's contract.
+  @spec maybe_serialize(term(), pos_integer()) :: term()
+  defp maybe_serialize(%DateTime{} = v, _level), do: Encodable.encode(v)
+  defp maybe_serialize(%NaiveDateTime{} = v, _level), do: Encodable.encode(v)
+  defp maybe_serialize(%Date{} = v, _level), do: Encodable.encode(v)
+  defp maybe_serialize(%Time{} = v, _level), do: Encodable.encode(v)
+  defp maybe_serialize(%Decimal{} = v, _level), do: Encodable.encode(v)
+
+  # The budget is spent by CONTAINERS only: a scalar at the limit is kept (it
+  # adds no level), a container at the limit is replaced, so the emitted term is
+  # never deeper than `@max_depth`.
+  defp maybe_serialize(v, level)
+       when level >= @max_depth and (is_map(v) or is_list(v) or is_tuple(v)),
+       do: @truncated
+
+  defp maybe_serialize(v, level) when is_struct(v), do: serialize_struct(v, level)
+
+  defp maybe_serialize(v, level) when is_map(v),
+    do: Map.new(v, fn {k, val} -> {k, maybe_serialize(val, level + 1)} end)
+
+  defp maybe_serialize(v, level) when is_list(v),
+    do: Enum.map(v, &maybe_serialize(&1, level + 1))
+
+  defp maybe_serialize(v, level) when is_tuple(v),
+    do: v |> Tuple.to_list() |> Enum.map(&maybe_serialize(&1, level + 1))
+
+  defp maybe_serialize(v, _level) when is_binary(v), do: Encodable.encode(v)
+  defp maybe_serialize(v, _level), do: v
 
   defp normalize_error(%{__exception__: true} = e) do
     %{"type" => to_string(e.__struct__), "message" => Exception.message(e)}

@@ -45,13 +45,54 @@ defmodule ALLM.Pipeline.Encodable do
      the jsonb write with `ERROR 22P05`. On the metadata path that aborts a run
      at `complete/2` — after every item has already been processed.
 
-  ## Not unified here
+  ## The `struct -> map` widening is a LOUD failure turned QUIET
 
-  `StepLog.serialize_struct/1` / `maybe_serialize/1` is a third serializer with
-  a *different* contract: it applies the heavy-field drop list and deliberately
-  preserves atom map keys. It overlaps on the Calendar and binary rules only.
-  Folding the two together is Phase 2 work (design doc §3.5's two-layer
-  serializer), not this one.
+  The `is_struct/1` rule above is the intended fix for a real abort: before it,
+  a struct that reached `metadata` crashed the jsonb write at `complete/2` —
+  after every item in the run had already been processed. Note what the fix
+  costs, because nothing signals it: a term that used to raise now serializes
+  **silently**, field by field. So a future `complete/2` metadata map that picks
+  up a credential-bearing struct persists its contents to `pipeline_runs`
+  with no error and no log line.
+
+  Not reachable today — every `complete/2` call site passes counts and scalars,
+  and `%ALLM.Engine{}` (the most plausible carrier) holds no `:api_key` in its
+  `defstruct`. The mitigation if that changes is a field-name exclusion during
+  struct flattening, mirroring `ALLM.Pipeline.StepLog`'s `@fallback_drop` and its
+  `redact:` flag. Deliberately not built here: this module has no schema to read
+  flags from, and a hardcoded name list is the global-by-name wart Phase 2
+  removed from `StepLog`.
+
+  ## Partly unified with `StepLog`
+
+  `ALLM.Pipeline.StepLog.serialize_struct/2` / `maybe_serialize/2` is a second
+  serializer with a *different* contract: it applies a two-layer heavy-field drop
+  set (per-field `log:` / `artifact:` flags over a package fallback list),
+  substitutes `"[REDACTED]"` for `redact:` fields, carries a recursion depth
+  budget, and preserves nested atom map keys in the in-memory term where this
+  module stringifies every key (not observable after the jsonb round-trip —
+  Jason stringifies atom keys either way).
+
+  Phase 2.2 converged the **leaves** and left the containers separate:
+  `maybe_serialize/2` delegates `Decimal`, the four Calendar structs and binaries
+  straight to `encode/1`, so those rules have one implementation. Its container
+  clauses are re-stated rather than delegated, for two reasons that ARE
+  observable in the persisted row: (a) `StepLog` applies its drop set, its
+  `redact:` substitution and its depth budget *inside* every container, and this
+  module applies none of them; (b) this module folds a non-empty keyword list
+  into a map (`encode/1`'s list clause below) where `StepLog` maps it to a list
+  of two-element lists. The tuple rule (tuple -> list) is duplicated in
+  *semantics* only; `StepLog` recurses with its own function so the drop set and
+  depth budget still apply inside a tuple.
+
+  (Corrected 2026-08-14 by the 2.2 fix pass, code review F3: this section
+  previously gave key-stringification as the lead reason. The decision is right;
+  that reason was not observable.)
+
+  The leaf sets are hand-mirrored across the two modules and pinned by
+  `step_log_serialization_test.exs`'s "every Encodable struct rule is delegated
+  here, except the declared exception" — `Ecto.Changeset` is the one declared
+  divergence. Adding a struct clause here without one there reddens it.
   """
 
   alias ALLM.Pipeline.Text

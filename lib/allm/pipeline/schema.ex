@@ -29,7 +29,7 @@ defmodule ALLM.Pipeline.Schema do
   | `:default` | term | the struct default (a `nil` default is "no default") |
   | `:log` | `true` / `false` / unset | see "The three states of `log:`" below |
   | `:artifact` | `true` | implies `log: false`, and lists the field in `__allm_schema__(:artifact)` |
-  | `:redact` | `true` | value replaced by `"[REDACTED]"` at serialization (**⚠ not yet implemented — see "Status" below**) |
+  | `:redact` | `true` | value replaced by `"[REDACTED]"` at serialization |
   | `:nilable` | `true` / `false` | overrides the generated-type nilability rule in either direction (**⚠ not yet implemented — see "Status" below**) |
 
   An unknown field option raises `ArgumentError` at the *using* module's compile
@@ -37,34 +37,24 @@ defmodule ALLM.Pipeline.Schema do
   of the five boolean options (everything except `default:`): `redact: "true"`
   is a compile error rather than a silently-unredacted field.
 
-  ### ⚠ Status: `log:` / `artifact:` / `redact:` / `nilable:` are declared, not yet enforced
+  ### ⚠ Status: `nilable:` is declared, not yet enforced
 
-  All four are accepted, validated and reported through `__allm_schema__/1`
-  **today**, and read by **nothing**. Declaring one changes no behaviour:
+  `nilable:` is accepted, validated and reported through `__allm_schema__/1`
+  **today**, and read by **nothing**: the generated `@type t` is the declared AST
+  verbatim (see `process_fields/1`), so neither direction of the override does
+  anything. It lands in Phase 2 subphase 2.4, which owns deleting this section.
 
-  - `log:` / `artifact:` — `ALLM.Pipeline.StepLog.serialize_struct/1` still drops
-    a fixed global-by-field-name list and consults no flags.
-  - `redact:` — a `redact: true` field is currently persisted **verbatim** into
-    `step_logs.input_data` / `output_data`. Nothing writes `"[REDACTED]"`.
-  - `nilable:` — the generated `@type t` is the declared AST verbatim (see
-    `process_fields/1`), so neither direction of the override does anything.
-
-  Everything below this line describes the **designed** behaviour, which lands
-  in Phase 2 subphases 2.2 (serializer) and 2.4 (nilability). Those subphases
-  own deleting this section. Do not read the sections below as statements about
-  today's behaviour until then.
+  `log:` / `artifact:` / `redact:` are live — read by
+  `ALLM.Pipeline.StepLog.serialize_struct/2` since subphase 2.2.
 
   ### The three states of `log:`
 
-  `ALLM.Pipeline.StepLog` will keep heavy bodies out of `input_data` /
+  `ALLM.Pipeline.StepLog` keeps heavy bodies out of `input_data` /
   `output_data` with **two** layers: the per-field flags below, *and* a retained
   package-level fallback list of generic field names (`:raw_html`, `:html`,
   `:content`, `:engine`) that applies to every struct it serializes — including
   DSL structs, and including plain `defstruct` / Ecto structs it recurses into,
-  which have no flags at all. (Today that list is layer 2 only and is longer —
-  it also carries the four *domain* names `:bill_catalog`, `:assignments`,
-  `:extracted_text` and `:shortlist`, which 2.2 migrates to per-field flags. The
-  four generic names above are the ones that stay.)
+  which have no flags at all.
 
   So `log:` is deliberately three-state rather than boolean:
 
@@ -83,10 +73,6 @@ defmodule ALLM.Pipeline.Schema do
   express opposite intents and the serializer's drop set would be contradictory.
 
   ### `redact: true` applies at serialization, not at construction
-
-  ⚠ **Status: declared only.** Nothing reads `__allm_schema__(:redacted)` yet, so
-  a `redact: true` field is persisted verbatim by `ALLM.Pipeline.StepLog` today.
-  Enforcement lands in 2.2. The rest of this section describes that end state.
 
   The value is replaced by the literal string `"[REDACTED]"` when
   `ALLM.Pipeline.StepLog` serializes the struct — construction-time scrubbing
