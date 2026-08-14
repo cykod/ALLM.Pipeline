@@ -1,33 +1,47 @@
 defmodule ALLM.Pipeline.ArtifactStore do
   @moduledoc """
-  Stores and retrieves pipeline artifacts (HTML, JSON, extracted text) in DynamoDB.
+  The shared wrapper over `ALLM.Pipeline.Artifacts` — stores and retrieves
+  pipeline artifacts (HTML, JSON, extracted text) through the configured
+  adapter, and returns a URL reference for the PostgreSQL `step_log`.
 
-  Uses DynamoDB for artifacts that fit its 400KB item limit, S3 for larger files.
-  Returns a URL reference that is stored in the PostgreSQL step_log.
+  ## What this module owns, and what the adapter owns
+
+  **Here: compression, checksum and size accounting.** `store/4` gzips (unless
+  `compress: false`), SHA-256s the ORIGINAL bytes, records the ORIGINAL size,
+  and `fetch/1` gunzips on the way back out. An adapter receives an opaque,
+  already-encoded payload plus a `t:ALLM.Pipeline.Artifacts.meta/0` and stores
+  both verbatim — so a new backend never re-derives any of it.
+
+  **There: capacity.** "Does this fit me?" is the adapter's question. An
+  adapter that cannot take a payload returns `{:error, :too_large}` and this
+  module routes to the next tier. DynamoDB's answer is the interesting one: its
+  400KB ceiling constrains the item **as stored**, i.e. gzipped and then
+  base64-encoded, so `Dynamo.fits_item?/1` measures that and not the caller's
+  original byte count — gating on the original routed a 600KB HTML artifact
+  that gzips to 40KB down the (unimplemented) S3 path, where it was discarded.
+  `size_bytes` in the return tuple and in the stored item is still the ORIGINAL
+  uncompressed size; only the routing decision changed.
 
   ## URL Format
 
   - DynamoDB: `dynamo://table_name/artifact_id`
+  - Filesystem: `file:///path/to/artifact`
+  - Memory: `memory://artifact_id`
   - S3: `s3://bucket_name/key` (for artifacts that do not fit a DynamoDB item)
 
-  ## Which bytes the size gate measures
+  ## Tiering is still hard-coded, and Phase 7 replaces it
 
-  DynamoDB's 400KB ceiling constrains the item **as stored**, so the gate is
-  applied to the payload that actually reaches it: gzipped (unless
-  `compress: false`) and then base64-encoded by `Dynamo.put_artifact/6`. It is
-  NOT applied to the caller's original byte count — doing so routed a 600KB HTML
-  artifact that gzips to 40KB down the (unimplemented) S3 path, where it was
-  discarded. `size_bytes` in the return tuple and in the stored item is still the
-  ORIGINAL uncompressed size; only the routing decision changed.
-
-  This module owns the *routing* decision; `Dynamo.fits_item?/1` owns the
-  capacity arithmetic behind it (the item limit, the base64 inflation, the
-  metadata reserve). Keeping the two apart is deliberate — every future artifact
-  adapter answers "does this fit me?" for itself rather than adding a pair of
-  constants here.
+  `store/4` routes oversize payloads to S3 and the read paths recognize an
+  `s3://` URL, but S3 itself is unimplemented — so an oversize artifact is
+  discarded with `{:error, :s3_not_implemented}`, which is why
+  `ALLM.Pipeline.Executor.build_envelope/3` still truncates its LLM envelope in
+  two rounds. Those `s3://` arms are the tier router's residue, not adapter
+  knowledge: `Artifacts.Tiered` (extraction plan §3.6, Phase 7) subsumes both
+  by making the tier list an adapter choice. Every other URL is handed to
+  `Artifacts.impl/0`, which recognizes its own scheme and rejects the rest.
   """
 
-  alias ALLM.Pipeline.Artifacts.Dynamo
+  alias ALLM.Pipeline.Artifacts
 
   @type store_result ::
           {:ok, url :: String.t(), size :: non_neg_integer(), checksum :: String.t()}
@@ -64,102 +78,67 @@ defmodule ALLM.Pipeline.ArtifactStore do
         content
       end
 
-    if Dynamo.fits_item?(content_to_store) do
-      store_in_dynamo(step_id, content_to_store, content_type, original_size, checksum, compress)
-    else
-      store_in_s3(step_id, content_to_store, content_type, original_size, checksum, compress)
+    meta = %{size_bytes: original_size, checksum: checksum, compressed: compress}
+
+    case Artifacts.impl().put(step_id, content_to_store, content_type, meta) do
+      {:ok, url} -> {:ok, url, original_size, checksum}
+      {:error, :too_large} -> store_in_s3()
+      {:error, reason} -> {:error, reason}
     end
   end
 
   @doc """
-  Retrieve artifact content by URL.
+  Retrieve artifact content by URL, decompressed.
+
+  The adapter returns the payload as stored (see
+  `t:ALLM.Pipeline.Artifacts.stored/0`); the gunzip happens here, because
+  compression is this layer's concern.
   """
   @spec fetch(String.t()) :: fetch_result()
-  def fetch("dynamo://" <> rest) do
-    [_table, artifact_id] = String.split(rest, "/", parts: 2)
-    fetch_from_dynamo(artifact_id)
-  end
-
-  def fetch("s3://" <> rest) do
-    [_bucket, key] = String.split(rest, "/", parts: 2)
-    fetch_from_s3(key)
-  end
+  def fetch("s3://" <> _rest), do: fetch_from_s3()
 
   def fetch(url) do
-    {:error, {:invalid_artifact_url, url}}
+    case Artifacts.impl().fetch(url) do
+      {:ok, %{content: content, compressed: true}} -> {:ok, :zlib.gunzip(content)}
+      {:ok, %{content: content}} -> {:ok, content}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
   @doc """
   Delete artifact by URL.
   """
   @spec delete(String.t()) :: :ok | {:error, term()}
-  def delete("dynamo://" <> rest) do
-    [_table, artifact_id] = String.split(rest, "/", parts: 2)
-    Dynamo.delete_artifact(artifact_id)
-  end
-
   def delete("s3://" <> _rest) do
     # TODO: Implement S3 deletion
     {:error, :not_implemented}
   end
 
-  def delete(_url) do
-    {:error, :invalid_url}
-  end
+  def delete(url), do: Artifacts.impl().delete(url)
 
   @doc """
   Check if artifact exists.
   """
   @spec exists?(String.t()) :: boolean()
-  def exists?("dynamo://" <> rest) do
-    [_table, artifact_id] = String.split(rest, "/", parts: 2)
-
-    case Dynamo.get_artifact(artifact_id) do
-      {:ok, _} -> true
-      {:error, :not_found} -> false
-    end
-  end
-
   def exists?("s3://" <> _rest) do
     # TODO: Implement S3 exists check
     false
   end
 
-  def exists?(_url), do: false
+  def exists?(url), do: Artifacts.impl().exists?(url)
 
   # Private functions
 
-  defp store_in_dynamo(step_id, content, content_type, original_size, checksum, compressed) do
-    case Dynamo.put_artifact(step_id, content, content_type, original_size, checksum, compressed) do
-      :ok ->
-        table_name = Dynamo.table_name()
-        url = "dynamo://#{table_name}/#{step_id}"
-        {:ok, url, original_size, checksum}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp store_in_s3(_step_id, _content, _content_type, _original_size, _checksum, _compressed) do
-    # TODO: Implement S3 storage for large artifacts
+  @spec store_in_s3() :: {:error, :s3_not_implemented}
+  defp store_in_s3 do
+    # TODO: Implement S3 storage for large artifacts (Phase 7 — `Artifacts.S3`).
+    # Until then an artifact the configured adapter refuses is DISCARDED, which
+    # is why `Executor.build_envelope/3` truncates rather than relying on this.
     {:error, :s3_not_implemented}
   end
 
-  defp fetch_from_dynamo(artifact_id) do
-    case Dynamo.get_artifact(artifact_id) do
-      {:ok, %{content: content, compressed: true}} ->
-        {:ok, :zlib.gunzip(content)}
-
-      {:ok, %{content: content, compressed: false}} ->
-        {:ok, content}
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp fetch_from_s3(_key) do
+  @spec fetch_from_s3() :: {:error, :s3_not_implemented}
+  defp fetch_from_s3 do
     # TODO: Implement S3 fetch
     {:error, :s3_not_implemented}
   end

@@ -13,9 +13,22 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   - `checksum` (String): SHA-256 hash of original content
   - `size_bytes` (Number): Original uncompressed size
   - `created_at` (String): ISO8601 timestamp
+
+  ## Two surfaces
+
+  `put/4` / `fetch/1` / `delete/1` / `exists?/1` implement
+  `ALLM.Pipeline.Artifacts` and speak in `dynamo://<table>/<id>` URLs — that is
+  what `ALLM.Pipeline.ArtifactStore` calls. The `*_artifact/*` and table-admin
+  functions beneath them are this module's own DynamoDB API, speaking in bare
+  artifact ids; the mix tasks, `DynamoCase` and the eval harness use them
+  directly to inspect and manage the table.
   """
 
+  @behaviour ALLM.Pipeline.Artifacts
+
   require Logger
+
+  alias ALLM.Pipeline.Artifacts
 
   # DynamoDB's hard per-item limit, and the slice of it the item's non-content
   # attributes need. Those attributes are fully enumerable from `put_artifact/6`
@@ -75,13 +88,123 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   def fits_item?(content), do: encoded_size(content) <= @max_payload_bytes
 
   @doc """
-  The largest raw (pre-base64) body `fits_item?/1` admits.
+  The largest **encoded** (post-base64) size `fits_item?/1` admits — i.e. the
+  ceiling `encoded_size/1` is compared against, not a raw byte count.
 
-  Exposed so a boundary test can pin both edges of the metadata allowance
-  without re-deriving the arithmetic.
+  A raw body of exactly this many bytes is therefore REFUSED; the largest
+  admissible raw body is `div(max_payload_bytes(), 4) * 3`. Exposed so a
+  boundary test can pin both edges of the metadata allowance without
+  re-deriving the arithmetic — see `dynamo_test.exs`'s `fits_item?/1` describe,
+  which derives the raw edge exactly that way.
   """
   @spec max_payload_bytes() :: pos_integer()
   def max_payload_bytes, do: @max_payload_bytes
+
+  # ── ALLM.Pipeline.Artifacts ────────────────────────────────────────────────
+
+  @doc """
+  Store an already-encoded payload and return its `dynamo://<table>/<id>` URL.
+
+  The capacity check lives here rather than in the caller: a tier router
+  deciding "DynamoDB or S3?" should not have to know DynamoDB's item ceiling,
+  its base64 inflation, or how much of the item its own metadata consumes. An
+  oversize payload short-circuits to `{:error, :too_large}` **without**
+  contacting the server.
+  """
+  @impl true
+  @spec put(Artifacts.id(), binary(), String.t(), Artifacts.meta()) ::
+          {:ok, Artifacts.url()} | {:error, :too_large} | {:error, term()}
+  def put(id, content, content_type, %{
+        size_bytes: size_bytes,
+        checksum: checksum,
+        compressed: compressed
+      }) do
+    if fits_item?(content) do
+      case put_artifact(id, content, content_type, size_bytes, checksum, compressed) do
+        :ok -> {:ok, "dynamo://#{table_name()}/#{id}"}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, :too_large}
+    end
+  end
+
+  @doc """
+  Fetch the artifact behind a `dynamo://` URL, **as stored** — still gzipped if
+  it was stored gzipped. `ALLM.Pipeline.ArtifactStore` owns decompression.
+  """
+  @impl true
+  @spec fetch(Artifacts.url()) :: {:ok, Artifacts.stored()} | {:error, term()}
+  def fetch("dynamo://" <> rest = url) do
+    case artifact_id(rest) do
+      {:ok, artifact_id} -> get_artifact(artifact_id)
+      :error -> {:error, {:invalid_artifact_url, url}}
+    end
+  end
+
+  def fetch(url), do: {:error, {:invalid_artifact_url, url}}
+
+  @doc "Delete the artifact behind a `dynamo://` URL."
+  @impl true
+  @spec delete(Artifacts.url()) :: :ok | {:error, term()}
+  def delete("dynamo://" <> rest) do
+    case artifact_id(rest) do
+      {:ok, artifact_id} -> delete_artifact(artifact_id)
+      :error -> {:error, :invalid_url}
+    end
+  end
+
+  def delete(_url), do: {:error, :invalid_url}
+
+  @doc """
+  Whether an artifact exists behind a `dynamo://` URL.
+
+  A *transport* failure (as opposed to a missing item) has no clause and
+  raises. That is unchanged pre-existing behaviour, deliberately preserved by
+  the extraction: `exists?` has no way to say "I could not tell", and this
+  phase changes no behaviour. Widening it to `false` would report a reachable
+  artifact as absent whenever DynamoDB blinks. The behaviour's `exists?/1`
+  `@callback` doc names this adapter as the exception it allows.
+
+  A malformed URL is a different case and is NOT a raise — see `artifact_id/1`.
+  """
+  @impl true
+  @spec exists?(Artifacts.url()) :: boolean()
+  def exists?("dynamo://" <> rest) do
+    case artifact_id(rest) do
+      {:ok, artifact_id} ->
+        case get_artifact(artifact_id) do
+          {:ok, _} -> true
+          {:error, :not_found} -> false
+        end
+
+      :error ->
+        false
+    end
+  end
+
+  def exists?(_url), do: false
+
+  # `dynamo://<table>/<id>` — the table segment is informational (the configured
+  # table is authoritative), so only the id is taken.
+  #
+  # A `dynamo://` URL with no `/` after the scheme is not one of ours, and
+  # answers `:error` rather than raising: the `ALLM.Pipeline.Artifacts`
+  # callback docs promise a structured error from `fetch/1` and `delete/1` and
+  # `false` from `exists?/1` for a URL the adapter does not recognize, and this
+  # is the one shape that used to violate all three (a `MatchError` out of
+  # `String.split/3`). No caller can construct such a URL — `step_logs.artifact_url`
+  # is only ever written by `put/4` — so nothing observable changed; the
+  # contract is now honoured by all three adapters rather than two.
+  @spec artifact_id(String.t()) :: {:ok, String.t()} | :error
+  defp artifact_id(rest) do
+    case String.split(rest, "/", parts: 2) do
+      [_table, artifact_id] -> {:ok, artifact_id}
+      _ -> :error
+    end
+  end
+
+  # ── This module's own DynamoDB API ─────────────────────────────────────────
 
   @doc """
   Store an artifact in DynamoDB.
