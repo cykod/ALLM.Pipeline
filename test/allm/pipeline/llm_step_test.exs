@@ -195,6 +195,20 @@ defmodule ALLM.Pipeline.LLMStepTest do
     end
   end
 
+  # An `atom()` field with no vocabulary, which a `json_schema: true` module
+  # cannot declare (`JsonSchema.no_open_atom!/5`). It exists only so
+  # `__coerce__/3`'s vocabulary-less arm has a reachable subject: the arm is
+  # unreachable through any derived Output by construction, and that is the
+  # point — but "unreachable" must not mean "unspecified".
+  defmodule Vocabularyless do
+    @moduledoc false
+    use ALLM.Pipeline.Schema
+
+    schema do
+      field(:kind, atom())
+    end
+  end
+
   defmodule ScorerStep do
     @moduledoc false
     alias ALLM.Pipeline.LLMStepTest.Scorer
@@ -390,6 +404,32 @@ defmodule ALLM.Pipeline.LLMStepTest do
       # would have hidden the defect on that half — so pin the drop there too.
       {:ok, moods} = WidgetStep.coerce(%{"moods" => [nil, "calm"]}, 0)
       assert moods.moods == [:calm]
+
+      # And the same over `[String.t()]` — the element type every ported step
+      # actually declares, and the one this rule did NOT hold for until
+      # 2026-08-19. Before the `coercion/1` widening `tags` collapsed to a bare
+      # `:passthrough`, `map_ok/3` was never reached for it, and the `nil`
+      # survived into the struct. Both halves of the assertion matter: the null
+      # must vanish AND the real members must survive in order.
+      {:ok, tagged} = WidgetStep.coerce(%{"tags" => ["a", nil, "b"], "kind" => "alpha"}, 0)
+      assert tagged.tags == ["a", "b"]
+      refute nil in tagged.tags
+    end
+
+    test "an atom field with no vocabulary is a coercion failure, not a passthrough" do
+      # Unreachable from a module that derives a schema —
+      # `JsonSchema.no_open_atom!/5` refuses to compile one, and since 3.3 a
+      # field-level `json_schema:` literal does not excuse it either. So the
+      # fixture is a NON-deriving schema driven through `__coerce__/3`
+      # directly, which is the only way in.
+      #
+      # It matters because the alternative is silent: passing the raw value
+      # through writes the model's **string** into a field whose generated type
+      # says `atom()`, and neither `struct/2` nor dialyzer can see that.
+      assert {:error, {:coerce, issues}} =
+               ALLM.Pipeline.LLMStep.__coerce__(Vocabularyless, %{"kind" => "alpha"}, 0)
+
+      assert issues == [{:kind, {:no_vocabulary, "alpha"}}]
     end
 
     test "a scalar where the type says list is a coercion failure, not a passthrough" do
@@ -400,6 +440,17 @@ defmodule ALLM.Pipeline.LLMStepTest do
                WidgetStep.coerce(%{"action_types" => "approve", "kind" => "alpha"}, 0)
 
       assert issues == [{:action_types, {:not_a_list, "approve"}}]
+
+      # The same for `[String.t()]`, which is the type this rule did NOT hold
+      # for until the 2026-08-19 `coercion/1` widening: `tags` collapsed to a
+      # bare `:passthrough` and the scalar was STORED as a scalar, leaving a
+      # field the generated type declares `[String.t()] | nil` holding `"x"`.
+      # Asserting the whole issue list (not just membership) also pins that no
+      # OTHER field failed, so the error cannot be coming from somewhere else.
+      assert {:error, {:coerce, tag_issues}} =
+               WidgetStep.coerce(%{"tags" => "solo", "kind" => "alpha"}, 0)
+
+      assert tag_issues == [{:tags, {:not_a_list, "solo"}}]
     end
 
     test "a Date.t() field is parsed, and an unparseable one degrades to nil" do
@@ -627,6 +678,32 @@ defmodule ALLM.Pipeline.LLMStepTest do
       assert String in ALLM.Pipeline.Schema.JsonSchema.__known_scalar_modules__()
       assert ALLM.Pipeline.LLMStep.__coercion__(quote(do: String.t())) == :passthrough
       assert ALLM.Pipeline.LLMStep.__coercion__(quote(do: Date.t())) == :date
+    end
+
+    test "list-ness and element kind are separate axes: EVERY list type is {:list, _}" do
+      # The classifier half of the two behavioural tests above. Until
+      # 2026-08-19 a `[String.t()]` field collapsed to a bare `:passthrough`,
+      # which made `read/3`'s non-list arm and `map_ok/3`'s null-element drop
+      # unreachable for it — so the moduledoc's two list rules were true of
+      # `[atom()]` / `[Date.t()]` and silently false of the one list type every
+      # ported step declares. Pinned here as well as behaviourally because the
+      # element kind is what varies and the list-ness is what must not.
+      coercion = &ALLM.Pipeline.LLMStep.__coercion__/1
+
+      assert coercion.(quote(do: [atom()])) == {:list, :atom}
+      assert coercion.(quote(do: [Date.t()])) == {:list, :date}
+      assert coercion.(quote(do: [String.t()])) == {:list, :passthrough}
+
+      # A nested list resolves to `{:list, :passthrough}` too, and MUST: its
+      # element kind is itself a list, and `coerce_scalar/3` has no `{:list, _}`
+      # clause — a `{:list, {:list, _}}` would raise `FunctionClauseError`
+      # inside `map_ok/3` rather than returning a coercion error.
+      assert coercion.(quote(do: [[String.t()]])) == {:list, :passthrough}
+
+      # Nested schema modules keep the model's raw map (the moduledoc's
+      # "boundary"), but they are still LISTS — this is the shape the ordinance
+      # port's `json_schema:`-hatched fields carry.
+      assert coercion.(quote(do: [KeyProvision.t()])) == {:list, :passthrough}
     end
   end
 

@@ -256,15 +256,50 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
       case Keyword.fetch(opts, :json_schema) do
         # Used verbatim: an author reaching for this has a shape the mapping
         # cannot express, so second-guessing it (including nullability) would
-        # defeat the escape hatch.
-        {:ok, literal} -> literal
-        :error -> mapped!(module, name, type, opts, env)
+        # defeat the escape hatch. The ONE rule the hatch does not excuse is
+        # immediately below.
+        {:ok, literal} ->
+          no_open_atom!(module, name, type, opts, env)
+          literal
+
+        :error ->
+          mapped!(module, name, type, opts, env)
       end
 
     case Keyword.fetch(opts, :description) do
       {:ok, description} -> Map.put(base, "description", description)
       :error -> base
     end
+  end
+
+  # The `json_schema:` literal replaces the type's RENDERING, not the type's
+  # meaning — so the "an `atom()` field must declare a vocabulary" rule survives
+  # it, and this is the only rule that does.
+  #
+  # The reason is on the other side of the wire. `ALLM.Pipeline.LLMStep`'s
+  # `coercion/1` keys off the field's GENERATED TYPE, not off how the property
+  # was rendered, so an `atom()` field reaches `coerce_scalar(:atom, raw, nil)`
+  # whatever subschema was spliced in. Without a vocabulary there is nothing to
+  # match the model's string against, and the raw **string** would land in a
+  # field whose `@type t` says atom — silently, and invisibly to dialyzer, since
+  # the struct is built with `struct/2` from a runtime map. `coerce_scalar/3`
+  # answers `{:error, {:no_vocabulary, _}}` rather than passing it through; this
+  # guard is what makes that arm unreachable from a derived module.
+  @spec no_open_atom!(module(), atom(), Macro.t(), keyword(), Macro.Env.t()) :: :ok
+  defp no_open_atom!(module, name, type, opts, env) do
+    {base_type, _nullable?} = strip_nil(type)
+
+    element =
+      case base_type do
+        [inner] -> elem(strip_nil(inner), 0)
+        other -> other
+      end
+
+    if kind(element, env) == :open_atom and is_nil(Keyword.get(opts, :values)) do
+      raise ArgumentError, open_atom_message(module, name)
+    end
+
+    :ok
   end
 
   @spec mapped!(module(), atom(), Macro.t(), keyword(), Macro.Env.t()) :: map()

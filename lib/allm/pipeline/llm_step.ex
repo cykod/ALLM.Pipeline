@@ -85,7 +85,7 @@ defmodule ALLM.Pipeline.LLMStep do
       struct entirely, so its declared `default:` applies. This is what the
       hand-rolled `response["x"] || false` / `|| []` idioms did at every retired
       call site. A `null` **element** inside an array is dropped from the list
-      for the same reason: absent data must never be reported as a value.
+      for the same reason, for **every** list type (see the table below).
     * **`atom()` with `values:`** — the string is matched against the declared
       vocabulary. Never `String.to_atom/1` or `String.to_existing_atom/1` on
       model output: the vocabulary is the allowlist. An unrecognized string
@@ -104,8 +104,43 @@ defmodule ALLM.Pipeline.LLMStep do
       derivation would otherwise ask the model to invent a count `coerce/2`
       immediately overwrites.
     * **a scalar where the type says list** — a coercion failure
-      (`{:not_a_list, raw}`). Strict mode declares `"type": "array"`, so this
-      is a non-compliant payload, and `coerce/2` is the boundary that says so.
+      (`{:not_a_list, raw}`), again for **every** list type. Strict mode
+      declares `"type": "array"`, so this is a non-compliant payload, and
+      `coerce/2` is the boundary that says so.
+
+  ### Which list types `coerce/2` inspects — all of them
+
+  The two rules above are true of every declared list type. `coercion/1` builds
+  a `{:list, kind}` for **any** element type; the element kind decides only what
+  happens per element. `:atom` and `:date` elements are converted, everything
+  else — `[String.t()]`, a nested schema module, a nested list — is the identity
+  (`coerce_scalar(:passthrough, raw, _)`). The two list-level rules are applied
+  by `read/3` and `map_ok/3` **before** the element kind is consulted, so they
+  do not vary with it. Measured 2026-08-19, not inferred:
+
+  | Declared type | `coercion/1` | `["a", nil, "b"]` | a bare `"a"` |
+  |---|---|---|---|
+  | `[atom()]` with `values:` | `{:list, :atom}` | `[:a, :b]` — `nil` dropped | fails: `{:not_a_list, "a"}` |
+  | `[Date.t()]` | `{:list, :date}` | `[~D[2026-01-01]]` — `nil` dropped | fails: `{:not_a_list, "a"}` |
+  | `[String.t()]` | `{:list, :passthrough}` | `["a", "b"]` — `nil` dropped | fails: `{:not_a_list, "a"}` |
+
+  This uniformity is deliberate and was **widened on 2026-08-19** (a user
+  decision, prompted by the 3.3 review's F3). `[String.t()]` used to collapse to
+  a bare `:passthrough`, which made both rules unreachable for the one list type
+  every ported step actually declares — the doc said "an array" and meant
+  "`[atom()]` or `[Date.t()]`". The tradeoff accepted with it: a malformed
+  payload on a `[String.t()]` field that used to be absorbed silently now fails
+  the step with `{:error, {:coerce, [{field, {:not_a_list, raw}}]}}`.
+
+  **Consequence when porting a step.** A hand-rolled `filter_strings/1`-shaped
+  defense on a list field is no longer load-bearing against `null` elements or a
+  bare scalar — `coerce/2` is the boundary for those, whatever the element type.
+  It may still be doing other work (`OrdinanceTransformer`'s drops any
+  non-string element a `json_schema:`-hatched field could still admit, and its
+  `parse_provisions/1` / `parse_areas/1` rebuild nested structs), and
+  `post_process/2` is **public**, so a caller can hand it a struct `coerce/2`
+  never touched. Keep the clauses; do not delete one merely because the coercion
+  path can no longer reach it.
 
   The struct is built with `struct/2`, not `struct!/2`: a `required: true` field
   that is also `wire: false` (`bill_number`) is legitimately unset at this point
@@ -120,9 +155,18 @@ defmodule ALLM.Pipeline.LLMStep do
   exists — so it cannot tell `KeyProvision` inside a parent from a top-level
   module of that name. Rebuilding the nested struct is therefore the step's
   work, in `post_process/2`, which is where every transformer this replaces
-  already did it (`parse_provisions/1`, `parse_appointment_details/1`). Declare
-  such a field `[String.t()]` where the retired wire contract was an array of
-  strings, and build the struct in `post_process/2`.
+  already did it (`parse_provisions/1`, `parse_appointment_details/1`).
+
+  **Declare the STRUCT type** — `[KeyProvision.t()]` — and pin the wire shape
+  with the per-field `json_schema:` hatch, so the generated `@type t` describes
+  what `post_process/2` returns rather than what the wire carries; the two
+  overlap at `[]`, so declaring the wire type instead is invisible to dialyzer.
+  (This paragraph read "declare such a field `[String.t()]`" until 2026-08-19;
+  the ordinance port measured the hatch byte-identical on the wire and
+  compile-enforced — dropping it is an `ArgumentError`, since the nested struct
+  does not declare `json_schema: true`.) Such a field still classifies
+  `{:list, :passthrough}`, so the LIST-level rules above apply to it and its
+  ELEMENTS still arrive as the model's raw maps.
 
   ## The engine name is the host's vocabulary
 
@@ -355,11 +399,12 @@ defmodule ALLM.Pipeline.LLMStep do
       {:list, inner} when is_list(raw) ->
         map_ok(raw, inner, values)
 
-      # A scalar where the field's generated type says list. Strict mode
-      # declares `"type": "array"`, so a compliant provider cannot send this —
-      # but `coerce/2` IS the boundary against model output, and passing the
-      # value through unchanged writes a bare string into a field typed
-      # `[atom()]` that nothing downstream re-checks.
+      # A scalar where the field's generated type says list — for EVERY list
+      # type, since 2026-08-19 (see the moduledoc's table). Strict mode declares
+      # `"type": "array"`, so a compliant provider cannot send this — but
+      # `coerce/2` IS the boundary against model output, and passing the value
+      # through unchanged writes a bare string into a field typed `[atom()]` or
+      # `[String.t()]` that nothing downstream re-checks.
       {:list, _inner} ->
         {:error, {:not_a_list, raw}}
 
@@ -368,7 +413,7 @@ defmodule ALLM.Pipeline.LLMStep do
     end
   end
 
-  @spec map_ok([term()], :atom | :date, [atom() | String.t()] | nil) ::
+  @spec map_ok([term()], :atom | :date | :passthrough, [atom() | String.t()] | nil) ::
           {:ok, [term()]} | {:error, term()}
   defp map_ok(raw, inner, values) do
     Enum.reduce_while(raw, {:ok, []}, fn
@@ -382,7 +427,10 @@ defmodule ALLM.Pipeline.LLMStep do
       # inner kind has the same shape one clause over (`{:ok, nil}`), writing a
       # `nil` member into a `[Date.t()]` list. Strict mode makes both unlikely
       # (an array's `items` carries no `null` member) but a field-level
-      # `json_schema:` literal can produce exactly this payload.
+      # `json_schema:` literal can produce exactly this payload. For a
+      # `:passthrough` element kind the drop is not a correctness repair but the
+      # rule itself — `coerce_scalar(:passthrough, nil, _)` would happily store
+      # the `nil`, and the moduledoc promises it is dropped.
       nil, {:ok, acc} ->
         {:cont, {:ok, acc}}
 
@@ -400,7 +448,15 @@ defmodule ALLM.Pipeline.LLMStep do
 
   @spec coerce_scalar(:atom | :date | :passthrough, term(), [atom() | String.t()] | nil) ::
           {:ok, term()} | {:error, term()}
-  defp coerce_scalar(:atom, raw, nil), do: {:ok, raw}
+  # Unreachable from a module that derives a JSON schema —
+  # `JsonSchema.no_open_atom!/5` refuses to compile an `atom()` field with no
+  # `values:`, and (since 3.3) a field-level `json_schema:` literal does not
+  # excuse it. Reachable only by calling `__coerce__/3` against a schema module
+  # that never opted in. It is an ERROR, not the passthrough it used to be: with
+  # no vocabulary there is nothing to match the model's string against, and
+  # passing it through writes a raw binary into a field whose generated type
+  # says `atom()` — a lie `struct/2` cannot catch and dialyzer cannot see.
+  defp coerce_scalar(:atom, raw, nil), do: {:error, {:no_vocabulary, raw}}
 
   defp coerce_scalar(:atom, raw, values) when is_binary(raw) or is_atom(raw) do
     string = to_string(raw)
@@ -453,12 +509,15 @@ defmodule ALLM.Pipeline.LLMStep do
   @doc false
   # Exposed for ONE reason: the parity guard in `llm_step_test.exs`. See
   # `coercion/1` below for why that guard exists.
-  @spec __coercion__(Macro.t()) :: :atom | :date | :passthrough | {:list, :atom | :date}
+  @spec __coercion__(Macro.t()) ::
+          :atom | :date | :passthrough | {:list, :atom | :date | :passthrough}
   def __coercion__(type), do: coercion(type)
 
-  # The three coercions the parse path performs, keyed off the field's
+  # The three ELEMENT coercions the parse path performs, keyed off the field's
   # GENERATED type. Everything else — including a nested schema module — passes
-  # through unchanged; see the moduledoc's "The boundary".
+  # through unchanged; see the moduledoc's "The boundary". The list-ness of a
+  # field is a SEPARATE axis: every `[_]` type is `{:list, _}`, and the element
+  # kind inside it only selects the per-element conversion.
   #
   # Runs at runtime over the escaped type AST, so no `Macro.Env` is available
   # and no alias can be expanded: `Date` is matched by its own name, which is
@@ -477,15 +536,25 @@ defmodule ALLM.Pipeline.LLMStep do
   # advertise `"string"` while the value falls through to `:passthrough`.
   # Guarded by "every known scalar module … has a coercion clause" in
   # `llm_step_test.exs`, via `__coercion__/1` above.
-  @spec coercion(Macro.t()) :: :atom | :date | :passthrough | {:list, :atom | :date}
+  @spec coercion(Macro.t()) ::
+          :atom | :date | :passthrough | {:list, :atom | :date | :passthrough}
   defp coercion({:|, _meta, [left, right]}) do
     if is_nil(right), do: coercion(left), else: :passthrough
   end
 
+  # EVERY list type is `{:list, _}` — the element kind only decides what
+  # `map_ok/3` does per element. A `[String.t()]` field used to collapse to a
+  # bare `:passthrough`, which made `read/3`'s non-list arm and `map_ok/3`'s
+  # null-element drop unreachable for it, so the two rules the moduledoc states
+  # held for `[atom()]` / `[Date.t()]` and silently not for the type every
+  # ported step actually declares. A nested list (`[[String.t()]]`) is
+  # `{:list, :passthrough}` too: its elements are lists, and `:passthrough` is
+  # the identity on them — `map_ok/3` never receives a `{:list, _}` inner kind,
+  # for which `coerce_scalar/3` has no clause.
   defp coercion([inner]) do
     case coercion(inner) do
       kind when kind in [:atom, :date] -> {:list, kind}
-      _otherwise -> :passthrough
+      _otherwise -> {:list, :passthrough}
     end
   end
 

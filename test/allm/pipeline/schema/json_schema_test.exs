@@ -379,6 +379,9 @@ defmodule ALLM.Pipeline.Schema.JsonSchemaTest do
       refute Map.has_key?(props["blob"], "additionalProperties")
       refute Map.has_key?(props["blob"], "required")
 
+      # …and the hatch does not excuse a field from the type mapping's ONE
+      # non-rendering rule — see the next test.
+
       # ...while every MAPPED property beside it in the same module still is
       # strict-mode compliant. The hatch is a per-field exception, not a
       # module-wide one.
@@ -387,6 +390,60 @@ defmodule ALLM.Pipeline.Schema.JsonSchemaTest do
         "additionalProperties" => false,
         "required" => Hatched.__allm_schema__(:json_schema)["required"] -- ["blob"]
       })
+    end
+
+    test "the hatch does NOT excuse an `atom()` field from declaring a vocabulary" do
+      # The literal replaces the property's RENDERING, not the type's meaning:
+      # `LLMStep.coercion/1` keys off the generated type, so this field still
+      # reaches the atom coercion path with no vocabulary to match against, and
+      # the model's raw STRING would land in an atom-typed field. Asserted on a
+      # literal that would otherwise look perfectly reasonable.
+      message =
+        assert_raise(ArgumentError, fn ->
+          compile_derived(
+            quote do
+              field(:kind, atom(), json_schema: %{"type" => "string"})
+            end
+          )
+        end).message
+
+      assert message =~ "field :kind"
+      assert message =~ "no `values:`"
+    end
+
+    test "a LIST of open atoms is refused behind the hatch too" do
+      # `[atom()]` reaches `map_ok/3`'s element-wise branch, which calls the
+      # same vocabulary-less clause once per element.
+      message =
+        assert_raise(ArgumentError, fn ->
+          compile_derived(
+            quote do
+              field(:kinds, [atom()],
+                default: [],
+                json_schema: %{"type" => "array", "items" => %{"type" => "string"}}
+              )
+            end
+          )
+        end).message
+
+      assert message =~ "field :kinds"
+    end
+
+    test "a vocabulary satisfies the rule, and the literal is still used verbatim" do
+      # The discriminator against a guard that rejects every `atom()` field
+      # behind the hatch rather than only the vocabulary-less ones.
+      [{module, _}] =
+        compile_derived(
+          quote do
+            field(:kind, atom(),
+              values: [:alpha, :beta],
+              json_schema: %{"type" => "string", "format" => "kind"}
+            )
+          end
+        )
+
+      assert module.__allm_schema__(:json_schema)["properties"]["kind"] ==
+               %{"type" => "string", "format" => "kind"}
     end
   end
 
