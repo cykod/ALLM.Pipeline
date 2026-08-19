@@ -8,7 +8,7 @@ defmodule ALLM.Pipeline.ArtifactsTest do
     1. **The optional callback.** `gc/1` is the one callback an adapter may
        skip, and which two of the three provide. Membership and
        mandatory-callback conformance for the SET of adapters is **not** here —
-       it is pinned once, for all three seams, in `behaviours_test.exs`, which
+       it is pinned once, for every seam, in `behaviours_test.exs`, which
        also discovers adapters the list forgets.
     2. **Round-trip** through `ArtifactStore` for both adapters.
     3. **The compression boundary.** `ArtifactStore` owns gzip; the adapter
@@ -67,7 +67,7 @@ defmodule ALLM.Pipeline.ArtifactsTest do
   end
 
   # `@behaviour` declaration and mandatory-callback conformance for all three
-  # adapters is pinned once, for all three seams, in `behaviours_test.exs`.
+  # adapters is pinned once, for every seam, in `behaviours_test.exs`.
   describe "a URL an adapter does not own" do
     # One rule, three implementations — so pin the SET rather than the
     # instances. `Dynamo` used to satisfy this in one shape and violate it in

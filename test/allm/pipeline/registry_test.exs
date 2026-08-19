@@ -20,9 +20,15 @@ defmodule ALLM.Pipeline.RegistryTest do
 
   use ExUnit.Case, async: false
 
-  alias ALLM.Pipeline.{Artifacts, Config, Lock, Store}
+  alias ALLM.Pipeline.{Artifacts, Config, LLM, Lock, Store}
 
-  @env_keys [:repo, :alert_on_empty, :lock_keys, Store, Artifacts, Lock]
+  # DERIVED, not a fourth hand-written copy of the seam set beside
+  # `@module_keys`, `@optional_module_keys` and `@seam_keys`. A new seam key
+  # joins these loops on its own; the per-seam assertions below stay explicit
+  # because those are the per-member verification, not the set.
+  @seam_keys ALLM.Pipeline.Registry.__seam_keys__()
+  @seam_behaviours Keyword.values(@seam_keys)
+  @env_keys [:repo, :alert_on_empty, :lock_keys] ++ @seam_behaviours
 
   setup do
     originals = Enum.map(@env_keys, &{&1, Application.fetch_env(:amesbury_scraper, &1)})
@@ -46,6 +52,7 @@ defmodule ALLM.Pipeline.RegistryTest do
       store: RegistryTest.Store,
       artifacts: RegistryTest.Artifacts,
       lock: RegistryTest.Lock,
+      llm: RegistryTest.LLM,
       alert_on_empty: ~w(alpha_scrape beta_scrape),
       lock_keys: [beta_refresh: :beta]
   end
@@ -70,7 +77,7 @@ defmodule ALLM.Pipeline.RegistryTest do
     end
 
     test "each seam's impl lands where that seam's impl/0 looks for it" do
-      for behaviour <- [Store, Artifacts, Lock],
+      for behaviour <- @seam_behaviours,
           do: Application.delete_env(:amesbury_scraper, behaviour)
 
       assert :ok = Fixture.install()
@@ -78,6 +85,43 @@ defmodule ALLM.Pipeline.RegistryTest do
       assert Store.impl() == RegistryTest.Store
       assert Artifacts.impl() == RegistryTest.Artifacts
       assert Lock.impl() == RegistryTest.Lock
+      assert LLM.impl() == RegistryTest.LLM
+    end
+
+    test "EVERY declared wiring key is installed under its behaviour" do
+      # The set-producing half of the assertion above, which names its four
+      # members and therefore cannot notice a fifth. A wiring key present in
+      # `@module_keys`/`@optional_module_keys` but missing from `@seam_keys`
+      # validates at compile time and then installs NOTHING — it declares clean
+      # and stays silently unwired, which is the failure mode `optional_module!/3`
+      # relies on deliberately for `:llm`. `registry.ex` also carries a
+      # compile-time assertion over the key list itself; this is the behavioural
+      # half, over the values.
+      for behaviour <- @seam_behaviours,
+          do: Application.delete_env(:amesbury_scraper, behaviour)
+
+      assert :ok = Fixture.install()
+
+      for {key, behaviour} <- @seam_keys do
+        assert Application.get_env(:amesbury_scraper, behaviour)[:impl] ==
+                 Fixture.__registry__(key),
+               "`#{key}:` was declared but no `impl:` reached #{inspect(behaviour)}"
+      end
+    end
+
+    test "an UNDECLARED llm: installs nothing, so the seam stays loudly unwired" do
+      # `llm:` is the one optional wiring key (there is no package adapter to
+      # fall back to). The failure mode a lax implementation buys is not a
+      # crash but a `nil` written into the seam's `impl:`, which then reaches a
+      # step's `call_llm/1` as a `BadFunctionError` naming neither the key nor
+      # the package.
+      Application.delete_env(:amesbury_scraper, LLM)
+
+      assert :ok = MinimalFixture.install()
+
+      assert MinimalFixture.__registry__(:llm) == nil
+      assert Application.get_env(:amesbury_scraper, LLM) == nil
+      assert_raise RuntimeError, ~r/llm:/, fn -> LLM.impl() end
     end
 
     test "the two domain collections land where Config looks for them" do
@@ -173,8 +217,8 @@ defmodule ALLM.Pipeline.RegistryTest do
       refute function_exported?(Fixture, :repo, 0)
     end
 
-    test "no store/0, artifacts/0 or lock/0 either" do
-      for name <- [:store, :artifacts, :lock] do
+    test "no store/0, artifacts/0, lock/0 or llm/0 either" do
+      for name <- [:store, :artifacts, :lock, :llm] do
         refute function_exported?(Fixture, name, 0),
                "the registry generated #{name}/0 — the framework must read every seam " <>
                  "through that seam's own impl/0, not through the host's registry"
@@ -207,6 +251,25 @@ defmodule ALLM.Pipeline.RegistryTest do
         assert message =~ "#{key}:"
         assert message =~ "requires"
       end
+    end
+
+    test "a declared llm: must still be a module — optional is not unvalidated" do
+      # The optional key's validation is the SAME as a mandatory one's once it
+      # is present. Skipping it would write a non-module into the seam at boot,
+      # and the failure would surface at a step's first LLM call.
+      message =
+        assert_raise(ArgumentError, fn ->
+          compile_registry(
+            repo: A.R,
+            store: A.S,
+            artifacts: A.A,
+            lock: A.L,
+            llm: "MyApp.Pipelines.LLM"
+          )
+        end).message
+
+      assert message =~ "llm:"
+      assert message =~ "must be a module"
     end
 
     test "a non-module wiring value is rejected" do

@@ -32,8 +32,8 @@ and do not add a dep to make a reach compile — the reach is the bug.
 Host collaborators resolve at **runtime** instead, through the host's
 `use ALLM.Pipeline.Registry` declaration (`Amesbury.Pipelines`), installed from
 `AmesburyScraper.Application.start/2`. The config namespace is `:amesbury_scraper`
-in Phase 1, hardcoded in `Config`, `Store`, `Artifacts`, `Lock`, `LLMCallLog` and
-`Artifacts.Dynamo`.
+in Phase 1, hardcoded in `Config`, `Store`, `Artifacts`, `Lock`, `LLM`, `LLMCallLog`
+and `Artifacts.Dynamo`.
 
 **`ALLM.Pipeline.Config.repo/0` is the single, permanent host-repo handle** —
 settled as option (b) in batch 1.B, not a Phase-1 shim. Do not add a second
@@ -139,10 +139,15 @@ own?"* — not *"does it compile here?"*. Host-owned values live in
 
 ## 6. `Registry.__install__/1`'s `put_new` / `put` asymmetry is deliberate
 
-The three **seam** keys (`ALLM.Pipeline.Store` / `Artifacts` / `Lock`) are written
-with `Keyword.put_new(existing, :impl, impl)`; `:repo`, `:alert_on_empty` and
-`:lock_keys` are written unconditionally with `Application.put_env`. Do not
-"simplify" it in either direction.
+The **seam** keys (`ALLM.Pipeline.Store` / `Artifacts` / `Lock` / `LLM`) are
+written with `Keyword.put_new(existing, :impl, impl)`; `:repo`,
+`:alert_on_empty` and `:lock_keys` are written unconditionally with
+`Application.put_env`. Do not "simplify" it in either direction.
+
+`llm:` is additionally **optional**, and an undeclared one installs nothing at
+all — that is what leaves `ALLM.Pipeline.LLM.impl/0` raising. It is the only
+seam with no package adapter to default to (there is no provider integration
+the package could ship), so "unwired" must be loud rather than neutral.
 
 Config files are applied before `Application.start/2`, so `install/0` is the last
 writer. `put_new` on the seams keeps an env-specific `config :amesbury_scraper,

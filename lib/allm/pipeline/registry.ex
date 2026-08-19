@@ -9,6 +9,7 @@ defmodule ALLM.Pipeline.Registry do
           store: ALLM.Pipeline.Store.Ecto,
           artifacts: ALLM.Pipeline.Artifacts.Dynamo,
           lock: ALLM.Pipeline.Lock.Noop,
+          llm: MyApp.Pipelines.LLM,
           alert_on_empty: ~w(some_scrape),
           lock_keys: [some_refresh: :some]
       end
@@ -24,6 +25,7 @@ defmodule ALLM.Pipeline.Registry do
   | `store:` | `ALLM.Pipeline.Store` → `impl:` | `ALLM.Pipeline.Store.impl/0` |
   | `artifacts:` | `ALLM.Pipeline.Artifacts` → `impl:` | `ALLM.Pipeline.Artifacts.impl/0` |
   | `lock:` | `ALLM.Pipeline.Lock` → `impl:` | `ALLM.Pipeline.Lock.impl/0` |
+  | `llm:` (optional) | `ALLM.Pipeline.LLM` → `impl:` | `ALLM.Pipeline.LLM.impl/0` |
   | `alert_on_empty:` | `:alert_on_empty` | `ALLM.Pipeline.Config.alert_on_empty/0` |
   | `lock_keys:` | `:lock_keys` | `ALLM.Pipeline.Config.lock_keys/0` |
 
@@ -65,14 +67,14 @@ defmodule ALLM.Pipeline.Registry do
 
   `install/0` is idempotent and safe to call more than once.
 
-  ## Precedence: a config file outranks the declaration for the three seams
+  ## Precedence: a config file outranks the declaration for the seams
 
   Config files are applied before `Application.start/2`, so `install/0` is the
   LAST writer of every key in the table above. That would silently overwrite an
   env-specific adapter override, and two of this package's moduledocs document
   exactly such an override as the supported route (`Artifacts.Filesystem`'s
   "run a fresh clone with zero cloud infrastructure", `Lock`'s "restore the
-  advisory lock"). So the three seam keys are written with **`put_new`**
+  advisory lock"). So the seam keys are written with **`put_new`**
   semantics — the declaration supplies the DEFAULT and an explicit
 
       config :amesbury_scraper, ALLM.Pipeline.Artifacts,
@@ -92,7 +94,7 @@ defmodule ALLM.Pipeline.Registry do
   ## `:amesbury_scraper` is the config namespace in Phase 1
 
   Hardcoded here exactly as it is in `ALLM.Pipeline.Config`,
-  `Store`, `Artifacts`, `Lock`, `LLMCallLog` and `Artifacts.Dynamo`. Renaming
+  `Store`, `Artifacts`, `Lock`, `LLM`, `LLMCallLog` and `Artifacts.Dynamo`. Renaming
   the namespace is a separate change with its own deployment sequencing
   (extraction plan §5.3); doing it here alone would fork the very keys this
   module exists to feed.
@@ -103,17 +105,56 @@ defmodule ALLM.Pipeline.Registry do
   @otp_app :amesbury_scraper
 
   @module_keys [:repo, :store, :artifacts, :lock]
-  @all_keys @module_keys ++ [:alert_on_empty, :lock_keys]
+
+  # `llm:` is the one wiring key a host may legitimately omit: an LLM engine is
+  # needed only by a host that runs `ALLM.Pipeline.LLMStep` steps, and the
+  # package is meant to be extractable. Omitting it leaves
+  # `ALLM.Pipeline.LLM.impl/0` raising, which is the safe direction — there is
+  # no package adapter to fall back to and a silent no-op default would let a
+  # step report success having called no model.
+  @optional_module_keys [:llm]
+  @all_keys @module_keys ++ @optional_module_keys ++ [:alert_on_empty, :lock_keys]
+
+  # Every key whose value is installed under a behaviour module's `impl:`.
+  @seam_keys [
+    store: ALLM.Pipeline.Store,
+    artifacts: ALLM.Pipeline.Artifacts,
+    lock: ALLM.Pipeline.Lock,
+    llm: ALLM.Pipeline.LLM
+  ]
+
+  # MEMBERSHIP GUARD, at compile time, because this is a third hand-mirrored key
+  # list beside `@module_keys` and `@optional_module_keys` and the drift is
+  # SILENT in the dangerous direction: a new mandatory seam added to
+  # `@module_keys` alone validates clean in `__validate__!/2` and then installs
+  # NOTHING in `__install__/1`, leaving the seam's `impl/0` raising at the first
+  # call — the same "declares clean, stays unwired" failure mode
+  # `optional_module!/3` relies on deliberately for `:llm`. `:repo` is the one
+  # exclusion: it is installed under a bare `:repo` key, not under a behaviour
+  # module's `impl:`, because `ALLM.Pipeline.Config.repo/0` reads it directly.
+  @expected_seam_keys (@module_keys -- [:repo]) ++ @optional_module_keys
+
+  if Enum.sort(Keyword.keys(@seam_keys)) != Enum.sort(@expected_seam_keys) do
+    raise CompileError,
+      description:
+        "ALLM.Pipeline.Registry: `@seam_keys` is out of sync with the wiring keys. " <>
+          "Expected #{inspect(Enum.sort(@expected_seam_keys))}, " <>
+          "got #{inspect(Enum.sort(Keyword.keys(@seam_keys)))}. Every wiring key except " <>
+          "`:repo` is installed under its behaviour module's `impl:`; a key missing from " <>
+          "`@seam_keys` validates at compile time and then installs nothing."
+  end
 
   @typedoc """
-  A validated registry declaration: the four wiring modules plus the two domain
-  collections, normalized (`lock_keys` as a map).
+  A validated registry declaration: the four mandatory wiring modules, the
+  optional `llm:` one (`nil` when undeclared), and the two domain collections,
+  normalized (`lock_keys` as a map).
   """
   @type declaration :: %{
           repo: module(),
           store: module(),
           artifacts: module(),
           lock: module(),
+          llm: module() | nil,
           alert_on_empty: [String.t()],
           lock_keys: %{atom() => atom()}
         }
@@ -122,6 +163,7 @@ defmodule ALLM.Pipeline.Registry do
   Declare a host's framework wiring and domain collections.
 
   Options — `:repo`, `:store`, `:artifacts` and `:lock` are required modules;
+  `:llm` (an `ALLM.Pipeline.LLM` adapter) is an optional module;
   `:alert_on_empty` (a list of `PipelineRun.name` **strings**) and `:lock_keys`
   (a keyword list of pipeline atom → canonical atom) default to empty.
 
@@ -163,12 +205,22 @@ defmodule ALLM.Pipeline.Registry do
     end
 
     modules = Map.new(@module_keys, &{&1, fetch_module!(opts, &1, module)})
+    optional = Map.new(@optional_module_keys, &{&1, optional_module!(opts, &1, module)})
 
-    Map.merge(modules, %{
+    modules
+    |> Map.merge(optional)
+    |> Map.merge(%{
       alert_on_empty: validate_alert_on_empty!(opts, module),
       lock_keys: validate_lock_keys!(opts, module)
     })
   end
+
+  @doc false
+  # Exposed so `registry_test.exs` derives its seam loop from THIS declaration
+  # instead of carrying a fourth hand-written copy of the set beside
+  # `@module_keys`, `@optional_module_keys` and `@seam_keys`.
+  @spec __seam_keys__() :: keyword(module())
+  def __seam_keys__, do: @seam_keys
 
   @doc false
   @spec __install__(declaration()) :: :ok
@@ -177,13 +229,11 @@ defmodule ALLM.Pipeline.Registry do
     Application.put_env(@otp_app, :alert_on_empty, declaration.alert_on_empty)
     Application.put_env(@otp_app, :lock_keys, declaration.lock_keys)
 
-    for {key, behaviour} <- [
-          store: ALLM.Pipeline.Store,
-          artifacts: ALLM.Pipeline.Artifacts,
-          lock: ALLM.Pipeline.Lock
-        ] do
+    # The `impl =` generator doubles as the filter: an undeclared optional key
+    # is `nil`, and installing nothing is what leaves `ALLM.Pipeline.LLM.impl/0`
+    # raising rather than resolving to something the host never named.
+    for {key, behaviour} <- @seam_keys, impl = Map.fetch!(declaration, key) do
       existing = Application.get_env(@otp_app, behaviour, [])
-      impl = Map.fetch!(declaration, key)
 
       # `put_new`, NOT `put` — see "Precedence" in the moduledoc. A config file
       # is applied before `Application.start/2`, so `put` here would silently
@@ -219,7 +269,22 @@ defmodule ALLM.Pipeline.Registry do
               "#{inspect(module)}: `use ALLM.Pipeline.Registry` requires `#{key}:`. " <>
                 "All four of #{inspect(@module_keys)} are mandatory — an omitted one would " <>
                 "silently fall back to a package default and leave the host's wiring " <>
-                "unreadable from this declaration."
+                "unreadable from this declaration. #{inspect(@optional_module_keys)} is the " <>
+                "one wiring key a host may omit: the package ships no default for it, so " <>
+                "omitting it raises at the call site rather than degrading."
+    end
+  end
+
+  # An UNDECLARED optional key is `nil` and installs nothing, so the seam's
+  # `impl/0` keeps whatever behaviour it has when unwired. A DECLARED one is
+  # validated exactly as a mandatory key is — the failure mode a lax check
+  # buys is a boot-time write of a non-module that surfaces far away.
+  @spec optional_module!(keyword(), atom(), module()) :: module() | nil
+  defp optional_module!(opts, key, module) do
+    case Keyword.fetch(opts, key) do
+      :error -> nil
+      {:ok, nil} -> nil
+      {:ok, _value} -> fetch_module!(opts, key, module)
     end
   end
 

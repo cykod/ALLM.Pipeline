@@ -663,10 +663,6 @@ defmodule ALLM.Pipeline.SchemaTest do
       for {option, value} <- [
             {:description, :not_a_binary},
             {:description, 1},
-            # `wire: true` is meaningless — the default already is "same name,
-            # present" — and it is the value a reader who assumed a flag would
-            # write
-            {:wire, true},
             {:wire, ""},
             {:wire, :summary},
             {:json_schema, "not a map"}
@@ -680,6 +676,19 @@ defmodule ALLM.Pipeline.SchemaTest do
 
         assert message =~ "field :thing"
       end
+    end
+
+    test "`wire: true` is ACCEPTED — it is the default stated explicitly" do
+      # Corrected by 3.2. This case previously sat in the rejection list above,
+      # on the reasoning that `true` is meaningless because the default already
+      # is "same name, present". It is no longer meaningless: subphase 3.2 made
+      # a `redact: true` field in a `json_schema: true` module declare `wire:`
+      # one way or the other, and `wire: true` is that guard's positive answer.
+      # Without it an author with a legitimately model-produced sensitive field
+      # would have to spell the field's own name as a rename to get past it.
+      assert [{module, _}] = compile_schema(quote do: field(:thing, String.t(), wire: true))
+
+      assert module.__allm_schema__(:wire) == [thing: true]
     end
   end
 

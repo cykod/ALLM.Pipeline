@@ -38,7 +38,7 @@ defmodule ALLM.Pipeline.Schema do
   | `:nilable` | `true` / `false` | overrides the generated-type nilability rule in either direction — see "The narrow nilability rule" below |
   | `:values` | non-empty list of atoms, or of binaries | the enum vocabulary, accepted only on a `String.t()` / `atom()` field or a list of them — see "The LLM-facing options" below |
   | `:description` | binary | the model-facing property description |
-  | `:wire` | `false`, or a binary | `false` excludes the field from the derived schema; a binary names a differing wire property |
+  | `:wire` | `false`, `true`, or a binary | `false` excludes the field from the derived schema; `true` is the default (included, own name) stated explicitly; a binary names a differing wire property |
   | `:json_schema` | map | that field's subschema, used verbatim — the escape hatch from the type mapping |
 
   An unknown field option raises `ArgumentError` at the *using* module's compile
@@ -218,7 +218,7 @@ defmodule ALLM.Pipeline.Schema do
   | `:redacted` | `[atom()]` | `redact: true` |
   | `:nilable` | `[atom()]` | fields declared `nilable: true` — explicit declarations only |
   | `:values` | `[{atom(), [atom()] \\| [String.t()]}]` | declaration order; the vocabulary **as declared**, so the coercion path can tell an atom vocabulary from a string one |
-  | `:wire` | `[{atom(), false \\| String.t()}]` | declaration order; annotated fields only |
+  | `:wire` | `[{atom(), boolean() \\| String.t()}]` | declaration order; annotated fields only |
   | `:json_schema` | `map()` | the derived strict-mode schema — **only** on a module declaring `json_schema: true` |
 
   An unknown key raises `FunctionClauseError`, so a typo fails loudly.
@@ -693,6 +693,11 @@ defmodule ALLM.Pipeline.Schema do
     case Keyword.fetch(opts, :wire) do
       :error -> :ok
       {:ok, false} -> :ok
+      # `true` is the DEFAULT made explicit — "included, under its own name". It
+      # exists so `ALLM.Pipeline.Schema.JsonSchema`'s `redact: true` guard has a
+      # positive answer to demand; without it an author who genuinely wants a
+      # redacted field on the wire has to spell its own name as a rename.
+      {:ok, true} -> :ok
       {:ok, wire} when is_binary(wire) and wire != "" -> :ok
       {:ok, other} -> raise ArgumentError, wire_message(module, name, other)
     end
@@ -850,9 +855,9 @@ defmodule ALLM.Pipeline.Schema do
   @spec wire_message(module(), atom(), term()) :: String.t()
   defp wire_message(module, name, value) do
     "#{inspect(module)}: `field :#{name}` declares `wire: #{inspect(value)}`. `wire:` takes " <>
-      "`false` (the model does not produce this field — exclude it from the schema) or a " <>
-      "non-empty binary naming a differing wire property. Omit the option for the default, " <>
-      "which is the field's own name."
+      "`false` (the model does not produce this field — exclude it from the schema), `true` " <>
+      "(included under its own name — the default, stated explicitly), or a non-empty binary " <>
+      "naming a differing wire property. Omit the option for the default."
   end
 
   @spec non_boolean_option_message(module(), atom(), atom(), term()) :: String.t()

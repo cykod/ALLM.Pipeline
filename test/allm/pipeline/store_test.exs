@@ -87,7 +87,7 @@ defmodule ALLM.Pipeline.StoreTest do
   end
 
   # `impl/0`'s default and runtime resolution, and `Store.Ecto`'s `@behaviour`
-  # declaration + callback conformance, are pinned once for all three seams in
+  # declaration + callback conformance, are pinned once for every seam in
   # `behaviours_test.exs`.
   describe "the behaviour's scope" do
     test "is runs and steps — no metrics, no repo, no lock" do

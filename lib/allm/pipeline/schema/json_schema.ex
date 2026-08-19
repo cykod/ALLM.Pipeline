@@ -62,6 +62,29 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   `is_atom(nil)` is `true` and a bare list-of-atoms check would wave it
   through.
 
+  ## Field inclusion is OPT-OUT, and `redact: true` must say which it means
+
+  Every declared field reaches the derived schema — and therefore the model —
+  unless it declares `wire: false`. That is the opposite of the hand-written
+  schemas this replaces, which were implicit *allowlists*: a field was on the
+  wire because somebody typed it there. The opt-out default is deliberate (a
+  derivation whose default is "exclude" derives nothing, and every omission
+  would be silent), but it moves the failure mode from "a field is missing" to
+  "a field is present that nobody decided to send".
+
+  One flag makes that disagreement likely enough to be worth catching:
+  `redact: true` declares a value too sensitive to appear in a step log, and
+  says nothing about whether it may be sent to a third-party model. The two are
+  independent — a redacted field can legitimately be model-produced — so
+  neither implication is safe to assume. **A `redact: true` field in a module
+  that derives a JSON schema must therefore declare `wire:` explicitly**, one
+  way or the other, or it is a compile error. `wire: false` keeps it off the
+  wire; `wire: true` (or a rename) says the author looked and meant it.
+
+  This costs a `json_schema: true` module one word per redacted field and buys
+  the guarantee that no secret-bearing property reaches OpenAI by omission.
+  Modules that do not derive a schema are untouched.
+
   ## Key casing
 
   The derived map is **string-keyed at every level**, matching the host
@@ -127,7 +150,22 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   # type", a message that points away from the cause. Every member maps to
   # `"string"` today; a member needing a different JSON type must split `kind/2`'s
   # single clause deliberately rather than by omission.
+  #
+  # ⚠️ THE OTHER HALF OF THIS CLASSIFIER IS `ALLM.Pipeline.LLMStep`'s
+  # `coercion/1`. This list decides what the model is ASKED for; that one
+  # decides how the answer is READ BACK into the struct. A module added here
+  # with no matching clause there makes the schema advertise `"string"` while
+  # the raw string is passed through into a field whose generated type says
+  # otherwise — silent, and invisible to dialyzer. Guarded by "every known
+  # scalar module … has a coercion clause" in `llm_step_test.exs`, which reads
+  # this list through `__known_scalar_modules__/0`. Same shape as
+  # `Amesbury.Media.UrlBuilder.@param_order` ⇔ `frontend/src/lib/media_url.ts`.
   @known_scalar_modules [String, Date]
+
+  @doc false
+  # Exposed for the parity guard named above; not part of the derivation's API.
+  @spec __known_scalar_modules__() :: [module()]
+  def __known_scalar_modules__, do: @known_scalar_modules
 
   @doc """
   Derives the strict-mode JSON schema for `module` from its field list.
@@ -140,6 +178,8 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   """
   @spec derive!(module(), [field_spec()], Macro.Env.t()) :: map()
   def derive!(module, fields, env) do
+    no_undecided_redactions!(module, fields)
+
     properties =
       fields
       |> Enum.reject(fn {_name, _type, opts} -> Keyword.get(opts, :wire) == false end)
@@ -158,6 +198,32 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
       # (except inside a `json_schema:` literal — see the moduledoc).
       "required" => Map.keys(properties)
     }
+  end
+
+  # See "Field inclusion is OPT-OUT" in the moduledoc. The pairing of `redact:`
+  # with an unstated `wire:` is the one place where the opt-out default and a
+  # security-relevant flag can disagree with no signal at all, so the author is
+  # made to state which they mean.
+  @spec no_undecided_redactions!(module(), [field_spec()]) :: :ok
+  defp no_undecided_redactions!(module, fields) do
+    undecided =
+      for {name, _type, opts} <- fields,
+          Keyword.get(opts, :redact) == true,
+          not Keyword.has_key?(opts, :wire),
+          do: name
+
+    case undecided do
+      [] ->
+        :ok
+
+      names ->
+        raise ArgumentError,
+              "#{inspect(module)}: #{inspect(names)} declare `redact: true` without a `wire:` " <>
+                "decision. Field inclusion in the derived schema is OPT-OUT, so a redacted " <>
+                "field is sent to the model unless it says otherwise — and `redact:` governs " <>
+                "step-log serialization, not the wire. Add `wire: false` to keep it off the " <>
+                "wire, or `wire: true` (or a wire name) to say the model does produce it."
+    end
   end
 
   @spec property_name(atom(), keyword()) :: String.t()
@@ -317,8 +383,12 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   # `<step>/{input,output}.ex`. Pinned by
   # `test/allm/pipeline/schema/json_schema_cross_file_test.exs`, whose fixtures
   # live in separate files precisely because a same-file fixture cannot fail.
+  @doc false
+  # Public within the package: `ALLM.Pipeline.LLMStep`'s `__before_compile__`
+  # faces the same cross-file arrangement and must not carry a second copy of
+  # the predicate whose WRONG variant is 3.1's runtime F1 and 3.2's mutant M3.
   @spec schema_module?(module()) :: boolean()
-  defp schema_module?(mod) do
+  def schema_module?(mod) do
     match?({:module, _}, Code.ensure_compiled(mod)) and
       function_exported?(mod, :__allm_schema__, 1)
   end

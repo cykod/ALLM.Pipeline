@@ -1,12 +1,13 @@
 defmodule ALLM.Pipeline.BehavioursTest do
   @moduledoc """
-  The membership guard for the package's three seams — `Store`, `Artifacts` and
-  `Lock` — and their adapters.
+  The membership guard for the package's seams — `Store`, `Artifacts` and
+  `Lock`, which ship package adapters, plus the host seam `LLM`, which by
+  design does not — and their adapters.
 
   ## Why one file rather than three per-behaviour checks
 
-  The three behaviours enforce the same two rules in three structurally
-  identical shapes: *an adapter declares `@behaviour` and implements every
+  The adapter behaviours enforce the same two rules in structurally identical
+  shapes: *an adapter declares `@behaviour` and implements every
   mandatory callback*, and *the behaviour resolves its implementation at
   runtime through an `impl/0` that defaults to a shipped adapter*. Root
   `CLAUDE.md`'s rule for a rule enforced in more than one shape is to pin the
@@ -43,7 +44,7 @@ defmodule ALLM.Pipeline.BehavioursTest do
 
   use ExUnit.Case, async: false
 
-  alias ALLM.Pipeline.{Artifacts, Lock, Store}
+  alias ALLM.Pipeline.{Artifacts, LLM, Lock, Store}
 
   # {behaviour, adapters, default impl}
   @seams [
@@ -52,8 +53,23 @@ defmodule ALLM.Pipeline.BehavioursTest do
     {Lock, [Lock.Advisory, Lock.Noop], Lock.Noop}
   ]
 
+  # Seams whose implementation is necessarily HOST-side, so the package ships no
+  # adapter and `impl/0` has nothing to default to. They are seams in every other
+  # respect — a behaviour, a runtime `impl/0`, a registry key — and they are kept
+  # apart from `@seams` only because the "defaults to a shipped adapter"
+  # assertion below is exactly what must NOT hold for them: an LLM adapter is a
+  # provider integration with credentials, a retry policy and logging, none of
+  # which the package can supply, and a silently-neutral default would let a step
+  # report success having called no model.
+  #
+  # Their conformance is asserted on the HOST side, where the adapter lives:
+  # `apps/amesbury_scraper/test/amesbury_scraper/pipelines/llm_test.exs`. This
+  # file's scope is modules inside `:allm_pipeline`, which is why it can see the
+  # behaviour and not its only implementation.
+  @host_seams [LLM]
+
   # Behaviours in this package that are deliberately NOT adapter seams, so the
-  # discovery guard below can tell "a fourth seam landed and nobody registered
+  # discovery guard below can tell "another seam landed and nobody registered
   # it" from "a behaviour exists that was never meant to be one". `Step` is the
   # unit-of-work contract every pipeline step implements — dozens of
   # implementations, no `impl/0`, no swappable default. Adding to this list is
@@ -62,7 +78,7 @@ defmodule ALLM.Pipeline.BehavioursTest do
 
   describe "every seam" do
     test "declares at least one mandatory callback" do
-      for {behaviour, _adapters, _default} <- @seams do
+      for behaviour <- Enum.map(@seams, &elem(&1, 0)) ++ @host_seams do
         Code.ensure_loaded!(behaviour)
 
         mandatory =
@@ -129,7 +145,11 @@ defmodule ALLM.Pipeline.BehavioursTest do
     # the population is derived rather than remembered.
 
     test "every module in the package declaring a seam @behaviour is listed in @seams" do
-      seam_behaviours = Enum.map(@seams, fn {behaviour, _adapters, _default} -> behaviour end)
+      # Host seams join the LEFT side with no adapters on the right, so a package
+      # module that declared `@behaviour ALLM.Pipeline.LLM` — i.e. a package LLM
+      # adapter, the thing `@host_seams` says does not exist — fails here.
+      seam_behaviours =
+        Enum.map(@seams, fn {behaviour, _adapters, _default} -> behaviour end) ++ @host_seams
 
       discovered =
         for module <- package_modules(),
@@ -145,17 +165,19 @@ defmodule ALLM.Pipeline.BehavioursTest do
     end
 
     test "every behaviour the package defines is either a seam or an acknowledged non-seam" do
-      seam_behaviours = Enum.map(@seams, fn {behaviour, _adapters, _default} -> behaviour end)
+      registered =
+        Enum.map(@seams, fn {behaviour, _adapters, _default} -> behaviour end) ++
+          @host_seams ++ @not_seams
 
       discovered = Enum.filter(package_modules(), &behaviour?/1)
 
       # A floor, so a broken enumeration cannot pass by returning nothing —
       # `assert offenders == []` over an empty population is the fail-open shape.
-      assert length(discovered) >= length(seam_behaviours) + length(@not_seams)
+      assert length(discovered) >= length(registered)
 
-      assert Enum.sort(discovered) == Enum.sort(seam_behaviours ++ @not_seams),
-             "a behaviour was added to apps/allm_pipeline without joining @seams or @not_seams — " <>
-               "decide which it is rather than letting it default to unguarded"
+      assert Enum.sort(discovered) == Enum.sort(registered),
+             "a behaviour was added to apps/allm_pipeline without joining @seams, @host_seams " <>
+               "or @not_seams — decide which it is rather than letting it default to unguarded"
     end
   end
 
@@ -191,6 +213,60 @@ defmodule ALLM.Pipeline.BehavioursTest do
         do: behaviour
   end
 
+  describe "a host seam has no package default" do
+    # The inverse of "resolves its implementation at runtime, defaulting to a
+    # shipped adapter". Both halves matter: unwired must RAISE (a neutral
+    # default would let a step report success having called no model), and a
+    # wired one must resolve at runtime rather than at compile time.
+    #
+    # `Amesbury.Pipelines` installs a real `llm:` at boot in this VM, so the
+    # unwired half is only observable by deleting the key and restoring it —
+    # `apps/allm_pipeline/CLAUDE.md` §5.
+    test "impl/0 raises when the host declared none, and resolves one when it did" do
+      for behaviour <- @host_seams do
+        original = Application.get_env(:amesbury_scraper, behaviour)
+
+        try do
+          Application.delete_env(:amesbury_scraper, behaviour)
+
+          message = assert_raise(RuntimeError, fn -> behaviour.impl() end).message
+
+          assert message =~ "llm:",
+                 "#{inspect(behaviour)}.impl/0 raised without naming the registry key that " <>
+                   "fixes it — the message IS the remedy"
+
+          for adapter <- [HostSeam.First, HostSeam.Second] do
+            Application.put_env(:amesbury_scraper, behaviour, impl: adapter)
+            assert behaviour.impl() == adapter
+          end
+        after
+          case original do
+            nil -> Application.delete_env(:amesbury_scraper, behaviour)
+            value -> Application.put_env(:amesbury_scraper, behaviour, value)
+          end
+        end
+      end
+    end
+
+    test "a non-module impl raises rather than reaching a call site" do
+      for behaviour <- @host_seams do
+        original = Application.get_env(:amesbury_scraper, behaviour)
+
+        try do
+          Application.put_env(:amesbury_scraper, behaviour, impl: "MyApp.Pipelines.LLM")
+
+          assert assert_raise(RuntimeError, fn -> behaviour.impl() end).message =~
+                   "must be a module"
+        after
+          case original do
+            nil -> Application.delete_env(:amesbury_scraper, behaviour)
+            value -> Application.put_env(:amesbury_scraper, behaviour, value)
+          end
+        end
+      end
+    end
+  end
+
   describe "the seams stay disjoint" do
     test "no adapter serves two behaviours" do
       all = Enum.flat_map(@seams, fn {_b, adapters, _d} -> adapters end)
@@ -203,7 +279,7 @@ defmodule ALLM.Pipeline.BehavioursTest do
       # `ALLM.Pipeline.Config.repo/0` a package-level handle rather than
       # something `Store` absorbs. A `repo` callback on ANY of the three would
       # quietly create a second resolution path for the repo.
-      for {behaviour, _adapters, _default} <- @seams do
+      for behaviour <- Enum.map(@seams, &elem(&1, 0)) ++ @host_seams do
         names = behaviour.behaviour_info(:callbacks) |> Enum.map(&elem(&1, 0))
 
         refute :repo in names,

@@ -259,6 +259,91 @@ defmodule ALLM.Pipeline.Schema.JsonSchemaTest do
     end
   end
 
+  describe "field inclusion is OPT-OUT, and redact: must decide" do
+    # Closes the 3.1 security review's carry-forward (`.work/HANDOFF.md`,
+    # opened for 3.2). Inclusion stays opt-out — a derivation defaulting to
+    # "exclude" derives nothing — so the one flag that can silently disagree
+    # with it is made to state its intent.
+
+    test "`redact: true` with no `wire:` is a compile error naming the field" do
+      message =
+        assert_raise(ArgumentError, fn ->
+          compile_derived(
+            quote do
+              field(:title, String.t())
+              field(:api_key, String.t(), redact: true)
+            end
+          )
+        end).message
+
+      assert message =~ ":api_key"
+      assert message =~ "wire:"
+      # The message must carry the reason, not just the rule: an author who
+      # reads only "add wire:" will pick whichever is less typing.
+      assert message =~ "OPT-OUT"
+    end
+
+    test "`redact: true, wire: false` compiles and keeps the field off the wire" do
+      [{module, _bin} | _] =
+        compile_derived(
+          quote do
+            field(:title, String.t())
+            field(:api_key, String.t(), redact: true, wire: false)
+          end
+        )
+
+      schema = module.__allm_schema__(:json_schema)
+
+      refute Map.has_key?(schema["properties"], "api_key")
+      refute "api_key" in schema["required"]
+      assert module.__allm_schema__(:redacted) == [:api_key]
+    end
+
+    test "`redact: true, wire: true` compiles and DOES put the field on the wire" do
+      # The positive answer has to exist, or the guard is a one-way door and an
+      # author with a legitimately model-produced sensitive field has to spell
+      # the field's own name as a rename to get past it.
+      [{module, _bin} | _] =
+        compile_derived(
+          quote do
+            field(:api_key, String.t(), redact: true, wire: true)
+          end
+        )
+
+      schema = module.__allm_schema__(:json_schema)
+
+      assert Map.has_key?(schema["properties"], "api_key")
+      assert "api_key" in schema["required"]
+    end
+
+    test "an un-annotated field still reaches the wire — the default is unchanged" do
+      # The guard is scoped to `redact:`. Widening it to "every field must
+      # declare `wire:`" would make the derivation ceremony, and is not what
+      # was decided.
+      assert Map.has_key?(Flat.__allm_schema__(:json_schema)["properties"], "title")
+    end
+
+    test "a module WITHOUT the derivation is untouched by the rule" do
+      # The guard lives in the derivation, so a `redact: true` field on an
+      # ordinary schema — every existing one in this tree — still compiles.
+      name =
+        :"Elixir.ALLM.Pipeline.Schema.JsonSchemaTest.Undecided#{System.unique_integer([:positive])}"
+
+      assert [{_module, _bin} | _] =
+               Code.compile_quoted(
+                 quote do
+                   defmodule unquote(name) do
+                     use ALLM.Pipeline.Schema
+
+                     schema do
+                       field(:api_key, String.t(), redact: true)
+                     end
+                   end
+                 end
+               )
+    end
+  end
+
   describe "description: and the json_schema: escape hatch" do
     test "a computed description reaches the property" do
       # The computed case is the real one (`ScaleBands.scale_description/0`);
