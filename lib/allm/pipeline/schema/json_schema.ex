@@ -139,8 +139,12 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   pointing at a nested module that was perfectly correct.
   """
 
-  @typedoc "One declared field: its name, its **generated** type AST, and its options."
-  @type field_spec :: {atom(), Macro.t(), keyword()}
+  # `ALLM.Pipeline.Schema.field_spec()` is referenced across the module boundary
+  # rather than restated: the type is DEFINED by the producer
+  # (`Schema.process_fields/1` builds these tuples, and its `@typedoc` carries
+  # the declared-vs-generated distinction this module depends on). Moved there
+  # 2026-08-19 (code review 3.1 F8) — it had been defined here while `schema.ex`
+  # spelled the tuple out five times.
 
   # The modules whose `T.t()` maps to a JSON scalar rather than to a nested
   # object. ONE list, read by BOTH `resolve_module/2` (which must accept the
@@ -176,7 +180,7 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   Raises `ArgumentError` naming the module and field when a type cannot be
   mapped, or when two fields resolve to the same wire property name.
   """
-  @spec derive!(module(), [field_spec()], Macro.Env.t()) :: map()
+  @spec derive!(module(), [ALLM.Pipeline.Schema.field_spec()], Macro.Env.t()) :: map()
   def derive!(module, fields, env) do
     no_undecided_redactions!(module, fields)
 
@@ -204,7 +208,7 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   # with an unstated `wire:` is the one place where the opt-out default and a
   # security-relevant flag can disagree with no signal at all, so the author is
   # made to state which they mean.
-  @spec no_undecided_redactions!(module(), [field_spec()]) :: :ok
+  @spec no_undecided_redactions!(module(), [ALLM.Pipeline.Schema.field_spec()]) :: :ok
   defp no_undecided_redactions!(module, fields) do
     undecided =
       for {name, _type, opts} <- fields,
@@ -450,7 +454,18 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
 
   defp apply_nullability(schema, true) do
     schema
-    |> Map.update("type", ["null"], fn type -> [type, "null"] end)
+    # `Map.update!/3`, not `Map.update/4`: every one of `base!/5`'s four
+    # outcomes sets `"type"` (the two `with_enum` string nodes, the bare
+    # `%{"type" => scalar}`, the array node, and `nested_schema!/3`'s derived
+    # map, which `derive!/3` always stamps `"type" => "object"`), and the one
+    # path where an author-supplied map might genuinely lack it — a field-level
+    # `json_schema:` literal — is returned verbatim by `property!/5` and never
+    # reaches here. A `["null"]` default could therefore only fire on a broken
+    # invariant, and would emit a property whose sole permitted type is `null`,
+    # silently. `Map.update!/3` raises a `KeyError` naming the key instead,
+    # which is the honest answer for a compile-time derivation. (Code review
+    # 3.1 F7, 2026-08-19.)
+    |> Map.update!("type", fn type -> [type, "null"] end)
     |> then(fn nullable ->
       Map.replace_lazy(nullable, "enum", fn values -> values ++ [nil] end)
     end)

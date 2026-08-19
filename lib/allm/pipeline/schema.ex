@@ -295,9 +295,21 @@ defmodule ALLM.Pipeline.Schema do
           {atom() | String.t(),
            :missing | :unknown_field | :wrong_struct | :not_castable | :duplicate_key}
 
+  @typedoc """
+  One declared field: its name, its type AST and its options.
+
+  The AST is the **declared** type in `process_fields/1`'s argument and the
+  **generated** one (the narrow nilability rule's `| nil` tail already applied)
+  everywhere downstream — `introspection_clauses/3`, `flagged/3`, `optioned/2`,
+  `json_schema_clause/3` and `ALLM.Pipeline.Schema.JsonSchema.derive!/3` all
+  receive the generated form. The distinction matters: the nullable-union
+  decision in the derived JSON schema is read off that tail.
+  """
+  @type field_spec :: {atom(), Macro.t(), keyword()}
+
   @doc false
   defmacro __using__(opts) do
-    __validate_use__!(__CALLER__.module, opts)
+    validate_use!(__CALLER__.module, opts)
 
     json = Keyword.get(opts, :json, false)
     json_schema = Keyword.get(opts, :json_schema, false)
@@ -312,9 +324,13 @@ defmodule ALLM.Pipeline.Schema do
     end
   end
 
-  @doc false
-  @spec __validate_use__!(module(), keyword()) :: :ok
-  def __validate_use__!(module, opts) do
+  # Private, and `@spec`'d, for the same reason `process_fields/1` is: it is
+  # called from exactly one place — `__using__/1`'s macro body, above — and
+  # never from generated code, so unlike `__validate_field__!/3` (which
+  # `field/3`'s `quote` emits a call to) it needs no public visibility. Was
+  # `def __validate_use__!/2` until 2026-08-19 (code review 3.1 F6).
+  @spec validate_use!(module(), keyword()) :: :ok
+  defp validate_use!(module, opts) do
     unless Keyword.keyword?(opts) do
       raise ArgumentError,
             "#{inspect(module)}: `use ALLM.Pipeline.Schema` takes a keyword list, " <>
@@ -471,7 +487,7 @@ defmodule ALLM.Pipeline.Schema do
   # the `@spec` immediately below and the `defp` head (2026-08-14). Counted after
   # the `@spec` landed — it supplies its own match, so a `2` written before the
   # edit would read as a regression forever.
-  @spec process_fields([{atom(), Macro.t(), keyword()}]) ::
+  @spec process_fields([field_spec()]) ::
           {[atom()], [atom() | {atom(), term()}], [{atom(), Macro.t()}]}
   defp process_fields(fields) do
     Enum.reduce(fields, {[], [], []}, fn {name, type, opts}, {required, struct_def, type_def} ->
@@ -871,7 +887,7 @@ defmodule ALLM.Pipeline.Schema do
   # Builds the `__allm_schema__/1` clauses. Every value is a compile-time
   # constant, so introspection costs one function call and no work at runtime.
   @spec introspection_clauses(
-          [{atom(), Macro.t(), keyword()}],
+          [field_spec()],
           keyword(),
           [atom()],
           Macro.Env.t()
@@ -915,7 +931,7 @@ defmodule ALLM.Pipeline.Schema do
     end
   end
 
-  @spec flagged([{atom(), Macro.t(), keyword()}], atom(), boolean()) :: [atom()]
+  @spec flagged([field_spec()], atom(), boolean()) :: [atom()]
   defp flagged(fields, option, value \\ true) do
     for {name, _type, opts} <- fields, Keyword.get(opts, option) == value, do: name
   end
@@ -924,7 +940,7 @@ defmodule ALLM.Pipeline.Schema do
   # A keyword list rather than a map, because declaration order is the contract
   # (`Map.keys/1` would sort) and because the coercion path in
   # `ALLM.Pipeline.LLMStep` walks it.
-  @spec optioned([{atom(), Macro.t(), keyword()}], atom()) :: keyword()
+  @spec optioned([field_spec()], atom()) :: keyword()
   defp optioned(fields, option) do
     for {name, _type, opts} <- fields, Keyword.has_key?(opts, option) do
       {name, Keyword.fetch!(opts, option)}
@@ -942,7 +958,7 @@ defmodule ALLM.Pipeline.Schema do
   # strict-mode nullable-union decision, and `__allm_schema__(:nilable)`
   # reports only explicit `nilable: true` declarations, so neither of the other
   # two keys can answer this question.
-  @spec json_schema_clause([{atom(), Macro.t(), keyword()}], keyword(), Macro.Env.t()) ::
+  @spec json_schema_clause([field_spec()], keyword(), Macro.Env.t()) ::
           Macro.t()
   defp json_schema_clause(fields, generated_types, env) do
     if Module.get_attribute(env.module, :schema_json_schema) do

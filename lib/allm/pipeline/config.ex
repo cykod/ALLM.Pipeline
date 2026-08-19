@@ -119,7 +119,10 @@ defmodule ALLM.Pipeline.Config do
             config :amesbury_scraper, repo: MyApp.Repo
         """
 
-      repo when is_atom(repo) ->
+      # `not is_boolean/1`: `is_atom(true)` is `true`, so `repo: true` would
+      # otherwise be returned as a "module". Same guard, same reason, as
+      # `ALLM.Pipeline.LLM.impl/0` (code review 3.2 F6, 2026-08-19).
+      repo when is_atom(repo) and not is_boolean(repo) ->
         repo
 
       other ->

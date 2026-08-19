@@ -174,7 +174,7 @@ defmodule ALLM.Pipeline.Registry do
   """
   defmacro __using__(opts) do
     quote bind_quoted: [opts: opts] do
-      @allm_pipeline_registry ALLM.Pipeline.Registry.__validate__!(opts, __MODULE__)
+      @allm_pipeline_registry ALLM.Pipeline.Registry.__validate__!(__MODULE__, opts)
 
       @doc """
       Install this registry's declarations into the application environment.
@@ -191,8 +191,14 @@ defmodule ALLM.Pipeline.Registry do
   end
 
   @doc false
-  @spec __validate__!(keyword(), module()) :: declaration()
-  def __validate__!(opts, module) do
+  # Parameter order is `(module, opts)`, matching `LLMStep.__validate__!/2`,
+  # `Schema.__validate_field__!/3` and `Schema`'s own `validate_use!/2` — the
+  # package's shape for a compile-time validator is "the module being validated
+  # first". Flipped here 2026-08-19 (code review 3.2 F6): two same-named
+  # `__validate__!/2` functions in one package with opposite signatures is a
+  # footgun for the next porter, and this one was the outlier 1-of-4.
+  @spec __validate__!(module(), keyword()) :: declaration()
+  def __validate__!(module, opts) do
     unless Keyword.keyword?(opts) do
       raise ArgumentError,
             "#{inspect(module)}: `use ALLM.Pipeline.Registry` takes a keyword list, " <>

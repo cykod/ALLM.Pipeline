@@ -115,7 +115,13 @@ defmodule ALLM.Pipeline.LLM do
     |> Application.get_env(__MODULE__, [])
     |> Keyword.get(:impl)
     |> case do
-      impl when is_atom(impl) and not is_nil(impl) ->
+      # `not is_boolean/1` as well as `not is_nil/1`: `is_atom(true)` is `true`,
+      # so `impl: true` would otherwise resolve as a "module" and surface as an
+      # `UndefinedFunctionError` on `true.resolve_engine/1` naming neither this
+      # key nor this package. `Registry.fetch_module!/3` already excludes
+      # booleans, so a DECLARED `llm:` was protected; this closes the direct
+      # `config/` override. (Code review 3.2 F6, 2026-08-19.)
+      impl when is_atom(impl) and not is_nil(impl) and not is_boolean(impl) ->
         impl
 
       nil ->
