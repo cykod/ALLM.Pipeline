@@ -331,6 +331,15 @@ defmodule ALLM.Pipeline.LLMStep do
         # Logged here rather than at every call site: the ~20 error arms this
         # replaces all logged, and all phrased the same fact in domain terms.
         # The module name plus the schema name is that fact without the copy.
+        #
+        # ⚠️ What it deliberately DROPS is the entity identifier the retired
+        # per-step arms carried ("LLM error for project at #{input.address}",
+        # "...scoring meeting importance #{input.meeting_id}"). These steps run
+        # under `Task.async_stream` fan-out, so one failure in a batch of fifty
+        # is identified here only by step type. It is a triage cost, not a data
+        # loss: recover the entity from the step's `step_logs.input_data`. Giving
+        # the macro an overridable `log_context/1` is routed to Phase 4 rather
+        # than re-introducing a per-step error arm (code review F10, 2026-08-19).
         Logger.error(
           "LLM error in #{inspect(module)} (schema #{declaration.schema_name}): " <>
             inspect(reason)
