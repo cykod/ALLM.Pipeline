@@ -49,7 +49,7 @@ defmodule Mix.Tasks.AllmPipeline.NilabilityTest do
       field(:defaulted, integer(), default: 0)
       # `default: nil` is NOT a default for this rule — the task must agree with
       # the macro by delegating to `__allm_schema__(:defaults)`, which
-      # `introspection_clauses/3` already builds by rejecting nil. That
+      # `introspection_clauses/4` already builds by rejecting nil. That
       # delegation is the thing this field pins: a future change to `:defaults`'
       # nil handling would flip the task's category with nothing else failing.
       field(:nil_default, term(), default: nil)
@@ -73,6 +73,33 @@ defmodule Mix.Tasks.AllmPipeline.NilabilityTest do
     @moduledoc false
     def __allm_schema__(:generated_types), do: Applied.__allm_schema__(:types)
     def __allm_schema__(key), do: Applied.__allm_schema__(key)
+  end
+
+  # The nilable-tail rule's FOURTH copy is
+  # `ALLM.Pipeline.Schema.JsonSchema.strip_nil/1` (see the ⚠️ block above
+  # `Schema.nilable_tail?/1`). It cannot be run over `Applied` — that fixture
+  # carries `map()` / `term()` / a two-member union on purpose, none of which
+  # has a strict-mode JSON rendering — so this is the same branch table
+  # rewritten in mappable types, and it is read through the derived schema's
+  # null union. Keep it in step with `Applied` when either grows a branch.
+  #
+  # `union_tail` has no counterpart here and cannot get one: every multi-member
+  # union is unmappable by design, so the derivation's reading of a DEEP nilable
+  # tail is observable only as the compile error it raises, which
+  # `json_schema_test.exs` owns.
+  defmodule DerivedApplied do
+    @moduledoc false
+    use ALLM.Pipeline.Schema, json_schema: true
+
+    schema do
+      field(:bare, String.t())
+      field(:req, String.t(), required: true)
+      field(:defaulted, integer(), default: 0)
+      field(:nil_default, String.t(), default: nil)
+      field(:false_default, boolean(), default: false)
+      field(:hand_written, String.t() | nil)
+      field(:forced_on, String.t(), required: true, nilable: true)
+    end
   end
 
   describe "nilable_tail?/1" do
@@ -187,6 +214,36 @@ defmodule Mix.Tasks.AllmPipeline.NilabilityTest do
                "drift on #{inspect(field)}: macro widened=#{macro_says}, " <>
                  "task pending=#{task_says}"
       end
+    end
+
+    test "the derivation's `strip_nil/1` widens exactly the fields the rule marks nilable" do
+      # The FOURTH copy of the rule. `JsonSchema.strip_nil/1` decides whether a
+      # derived property gets the `["string", "null"]` union; `nilable_tail?/1`
+      # decides whether the macro appended the `| nil` it reads. They must agree
+      # or a field the runtime can leave `nil` ships a schema forbidding `null`
+      # — a live 400 on the model's response, not a compile error, and nothing
+      # else in the suite would see it.
+      #
+      # Neither implementation is called by the other: the reference side here
+      # is the TASK's public copy of `nilable_tail?/1`, run over the generated
+      # type AST; the subject side is the derived JSON `type`.
+      generated = DerivedApplied.__allm_schema__(:generated_types)
+      props = DerivedApplied.__allm_schema__(:json_schema)["properties"]
+
+      derived_nullable =
+        for {name, prop} <- props,
+            is_list(prop["type"]) and "null" in prop["type"],
+            do: String.to_existing_atom(name)
+
+      rule_nilable =
+        for {field, type} <- generated, Nilability.nilable_tail?(type), do: field
+
+      assert Enum.sort(derived_nullable) == Enum.sort(rule_nilable)
+
+      # Non-vacuity: empty-vs-empty would pass against a derivation that never
+      # emits a null union AND a rule that never fires. Pin the membership so
+      # the agreement is over a real, mixed set — three of seven widen.
+      assert Enum.sort(rule_nilable) == [:bare, :forced_on, :hand_written, :nil_default]
     end
 
     test "nilable_tail?/1 is byte-identical across the two copies" do

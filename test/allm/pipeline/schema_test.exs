@@ -37,7 +37,7 @@ defmodule ALLM.Pipeline.SchemaTest do
       field(:api_key, String.t(), redact: true)
       field(:maybe, map(), nilable: true)
       # `false` is a real default, NOT "no default": `process_fields/1` and
-      # `introspection_clauses/3` both reject only on nil. Pinned here because
+      # `introspection_clauses/4` both reject only on nil. Pinned here because
       # 26 DSL declarations in the tree carry `default: false` (2026-08-14;
       # `python3 scripts/refsweep.py '^\s*field\(' apps --include '*.ex'
       # --format hits | grep -c 'default: false'`).
@@ -119,7 +119,7 @@ defmodule ALLM.Pipeline.SchemaTest do
 
     test "`default: false` is a real default, not \"no default\"" do
       # Discriminator: both producers reject only on nil (`default != nil` in
-      # `process_fields/1`, `is_nil/1` in `introspection_clauses/3`), and
+      # `process_fields/1`, `is_nil/1` in `introspection_clauses/4`), and
       # `false != nil` is true. An implementation that treated falsiness as
       # "unset" would drop this entry AND leave the struct default `nil`.
       assert {:flagfalse, false} in Everything.__allm_schema__(:defaults)
@@ -556,6 +556,137 @@ defmodule ALLM.Pipeline.SchemaTest do
       assert module.__allm_schema__(:redacted) == [:c]
       assert module.__allm_schema__(:nilable) == [:d]
     end
+  end
+
+  describe "the LLM-facing field options" do
+    test "they compile on an ordinary schema" do
+      # The regression `@boolean_field_options` would cause. None of the four
+      # is a flag, so adding any of them to that list makes every declaration
+      # using it fail with "takes a literal `true` or `false`" — a failure this
+      # file's other tests would not see, because they never declare one.
+      assert [{module, _}] =
+               compile_schema(
+                 quote do
+                   field(:scale, String.t(), values: ["small", "large"])
+                   field(:summary, String.t(), description: "what it does")
+                   field(:tokens_used, integer(), wire: false)
+                   field(:body, String.t(), wire: "content")
+                   field(:blob, map(), json_schema: %{"type" => "object"})
+                 end
+               )
+
+      assert module.__allm_schema__(:values) == [scale: ["small", "large"]]
+      assert module.__allm_schema__(:wire) == [tokens_used: false, body: "content"]
+    end
+
+    test "`values:` takes a compile-time EXPRESSION, not only a literal" do
+      # The real vocabularies are accessor calls with a single owner
+      # (`Schemas.Ordinance.fiscal_impacts/0`). `field/3` `unquote`s its
+      # options, so the call is evaluated at the using module's compile time —
+      # which is what keeps `values:` from prescribing a copy of a list that
+      # already has an owner.
+      assert [{module, _}] =
+               compile_schema(
+                 quote do
+                   field(:scale, String.t(),
+                     values: ALLM.Pipeline.SchemaTest.Vocabulary.scale_values()
+                   )
+                 end
+               )
+
+      assert module.__allm_schema__(:values) == [scale: ["small", "large", "very_large"]]
+    end
+
+    test "a malformed `values:` is rejected, and the message names module and field" do
+      for values <- [
+            # empty — passes a bare `is_list/1` check, which is the point
+            [],
+            # not a list at all
+            :accept,
+            "small",
+            # `is_atom(nil)` is `true`, so a bare list-of-atoms check would
+            # wave this through — and a `null` enum member is DERIVED from the
+            # field's nilability, never declared
+            [:small, nil],
+            ["small", nil],
+            # mixed: atom coercion keys off the declared type, so there is no
+            # single reading of a half-atom vocabulary
+            ["small", :large],
+            # elements that are neither
+            [1, 2]
+          ] do
+        message =
+          assert_raise(ArgumentError, fn ->
+            compile_schema(quote do: field(:scale, String.t(), values: unquote(values)))
+          end).message
+
+        assert message =~ "field :scale"
+        assert message =~ "values: #{inspect(values)}"
+        assert message =~ "ALLM.Pipeline.SchemaTest.Generated"
+      end
+    end
+
+    test "each `values:` defect reports its OWN reason, not a neighbouring one" do
+      # The loop above asserts only the module/field prefix, so it passes
+      # against an implementation that collapses every defect into one message.
+      # A vocabulary of integers is neither atoms nor binaries — reporting it as
+      # a *homogeneity* failure ("all atoms, or all binaries") sends the author
+      # looking for a mixed list they do not have.
+      messages =
+        for values <- [[], :accept, [:small, nil], [1, 2], ["small", :large]] do
+          assert_raise(ArgumentError, fn ->
+            compile_schema(quote do: field(:scale, String.t(), values: unquote(values)))
+          end).message
+        end
+
+      [empty, not_a_list, has_nil, wrong_element_type, mixed] = messages
+
+      assert empty =~ "non-empty list"
+      assert not_a_list =~ "non-empty list"
+      assert has_nil =~ "may not contain `nil`"
+      assert wrong_element_type =~ "only atoms or binaries"
+      refute wrong_element_type =~ "homogeneous"
+      assert mixed =~ "homogeneous"
+    end
+
+    test "a single-element vocabulary is accepted" do
+      # Degenerate but legal, and not this macro's business to forbid: the
+      # guard above rejects EMPTY, not SHORT. Without this case, "reject any
+      # list shorter than two" would pass the rejection test.
+      assert [{module, _}] =
+               compile_schema(quote do: field(:scale, String.t(), values: ["small"]))
+
+      assert module.__allm_schema__(:values) == [scale: ["small"]]
+    end
+
+    test "a malformed `description:` or `wire:` is rejected" do
+      for {option, value} <- [
+            {:description, :not_a_binary},
+            {:description, 1},
+            # `wire: true` is meaningless — the default already is "same name,
+            # present" — and it is the value a reader who assumed a flag would
+            # write
+            {:wire, true},
+            {:wire, ""},
+            {:wire, :summary},
+            {:json_schema, "not a map"}
+          ] do
+        message =
+          assert_raise(ArgumentError, fn ->
+            compile_schema(
+              quote do: field(:thing, String.t(), [{unquote(option), unquote(value)}])
+            )
+          end).message
+
+        assert message =~ "field :thing"
+      end
+    end
+  end
+
+  defmodule Vocabulary do
+    @moduledoc false
+    @spec scale_values() :: [String.t()]
+    def scale_values, do: ["small", "large", "very_large"]
   end
 
   # Compile a throwaway schema so a rejection is proven where it actually

@@ -20,6 +20,11 @@ defmodule ALLM.Pipeline.Schema do
   ## Options
 
   - `json: true` - Adds `@derive Jason.Encoder` to make the struct JSON-encodable
+  - `json_schema: true` - Derives `__allm_schema__(:json_schema)` — see
+    "The derived JSON schema is opt-in" below
+
+  An unknown `use` option raises `ArgumentError`, so `json_schmea: true` fails
+  loudly rather than silently leaving the schema underived.
 
   ## Field Options
 
@@ -31,11 +36,52 @@ defmodule ALLM.Pipeline.Schema do
   | `:artifact` | `true` | implies `log: false`, and lists the field in `__allm_schema__(:artifact)` |
   | `:redact` | `true` | value replaced by `"[REDACTED]"` at serialization |
   | `:nilable` | `true` / `false` | overrides the generated-type nilability rule in either direction — see "The narrow nilability rule" below |
+  | `:values` | non-empty list of atoms, or of binaries | the enum vocabulary, accepted only on a `String.t()` / `atom()` field or a list of them — see "The LLM-facing options" below |
+  | `:description` | binary | the model-facing property description |
+  | `:wire` | `false`, or a binary | `false` excludes the field from the derived schema; a binary names a differing wire property |
+  | `:json_schema` | map | that field's subschema, used verbatim — the escape hatch from the type mapping |
 
   An unknown field option raises `ArgumentError` at the *using* module's compile
   time, naming the option and the field. So does a non-boolean **value** on any
-  of the five boolean options (everything except `default:`): `redact: "true"`
-  is a compile error rather than a silently-unredacted field.
+  of the five boolean options (everything except `default:` and the four
+  LLM-facing options): `redact: "true"` is a compile error rather than a
+  silently-unredacted field.
+
+  ### The LLM-facing options
+
+  `values:`, `description:`, `wire:` and `json_schema:` exist to make the
+  OpenAI strict-mode JSON schema a *derived artifact* of the declaration rather
+  than a second hand-maintained description of the same shape. They generate
+  nothing on their own; `ALLM.Pipeline.Schema.JsonSchema` reads them.
+
+  `values:` takes a compile-time **expression**, not only a literal list —
+  `field/3` `unquote`s its options, so `values: Schemas.Ordinance.fiscal_impacts()`
+  is evaluated at the using module's compile time and validated as the resolved
+  list. That is deliberate: the real vocabularies in this project are accessor
+  calls with a single owner, and requiring a literal would prescribe a copy of
+  a list that already has one. The list must be non-empty and homogeneous —
+  all atoms or all binaries — and may not contain `nil`, because a `null`
+  member is **derived** from the field's nilability, never declared
+  (`is_atom(nil)` is `true`, so a bare list-of-atoms check would wave it
+  through).
+
+  Strings are the common case: `projects.scale` is a string column, so its
+  field is `String.t()` with a string `values:` and no atom coercion. Atom
+  coercion is a property of the declared **type** (`atom()`), not of `values:`.
+
+  `wire: false` marks a field the harness populates rather than the model — a
+  `tokens_used` read off the response envelope, or a key copied from the Input.
+  Demanding it in the schema's `required` would ask the model to invent it.
+
+  ### The derived JSON schema is opt-in
+
+  `__allm_schema__(:json_schema)` exists only on a module declaring
+  `json_schema: true`; on any other schema the key raises `FunctionClauseError`
+  like any unknown key. The opt-in is not ceremony: an unmappable type is a
+  **compile error** (an open `map()` / `term()` / bare `list()` has no closed
+  strict-mode rendering), and most schemas in this tree legitimately carry such
+  fields because they never cross a wire. Deriving for every schema would turn
+  each of those into a build failure.
 
   ### The narrow nilability rule
 
@@ -171,6 +217,9 @@ defmodule ALLM.Pipeline.Schema do
   | `:artifact` | `[atom()]` | `artifact: true` |
   | `:redacted` | `[atom()]` | `redact: true` |
   | `:nilable` | `[atom()]` | fields declared `nilable: true` — explicit declarations only |
+  | `:values` | `[{atom(), [atom()] \\| [String.t()]}]` | declaration order; the vocabulary **as declared**, so the coercion path can tell an atom vocabulary from a string one |
+  | `:wire` | `[{atom(), false \\| String.t()}]` | declaration order; annotated fields only |
+  | `:json_schema` | `map()` | the derived strict-mode schema — **only** on a module declaring `json_schema: true` |
 
   An unknown key raises `FunctionClauseError`, so a typo fails loudly.
 
@@ -189,23 +238,41 @@ defmodule ALLM.Pipeline.Schema do
 
   ## Not implemented here
 
-  `values:` (an enum vocabulary) and `__allm_schema__(:json_schema)` are
-  deliberately **not** part of this DSL yet. Both exist to feed the strict-mode
-  JSON schema generator, whose only honest gate is a live LLM eval; they land
-  together with that generator (extraction plan Phase 3). `__allm_schema__/1` is
-  shaped so `:json_schema` arrives as a new key rather than as a rework.
+  The coercion half of `values:` and `wire:` — reading a model's parsed
+  payload back into this struct — belongs to `ALLM.Pipeline.LLMStep`
+  (extraction plan Phase 3.2), which reads `__allm_schema__(:values)` and
+  `__allm_schema__(:wire)`. This module records the declaration; it never
+  parses a payload.
   """
 
-  @field_options [:required, :default, :log, :artifact, :redact, :nilable]
+  @use_options [:json, :json_schema]
 
-  # Every field option except `default:` (which takes an arbitrary term) is a
-  # flag, and its value must be a literal boolean. This is validated rather than
-  # coerced because the readers below test for `true` exactly: without it,
-  # `redact: "true"` compiles clean and means NOT redacted — a silent
-  # degradation on the one flag that exists for secrets. Validating the value
-  # is also what makes the two reader styles in this module equivalent
-  # (`flagged/3`'s `== value` and `process_fields/1`'s `== true`), so neither
-  # has to be the odd one out.
+  @field_options [
+    :required,
+    :default,
+    :log,
+    :artifact,
+    :redact,
+    :nilable,
+    :values,
+    :description,
+    :wire,
+    :json_schema
+  ]
+
+  # Every field option that is a FLAG must carry a literal boolean, and that is
+  # validated rather than coerced because the readers below test for `true`
+  # exactly: without it, `redact: "true"` compiles clean and means NOT redacted
+  # — a silent degradation on the one flag that exists for secrets. Validating
+  # the value is also what makes the two reader styles in this module
+  # equivalent (`flagged/3`'s `== value` and `process_fields/1`'s `== true`),
+  # so neither has to be the odd one out.
+  #
+  # `default:` (an arbitrary term) and the four LLM-facing options
+  # (`values:`, `description:`, `wire:`, `json_schema:`) are NOT flags and must
+  # stay out of this list — adding one here makes every declaration using it
+  # fail to compile with "takes a literal `true` or `false`". They carry their
+  # own shape validation in `__validate_field__!/3` instead.
   @boolean_field_options [:required, :log, :artifact, :redact, :nilable]
 
   @typedoc """
@@ -230,14 +297,38 @@ defmodule ALLM.Pipeline.Schema do
 
   @doc false
   defmacro __using__(opts) do
+    __validate_use__!(__CALLER__.module, opts)
+
     json = Keyword.get(opts, :json, false)
+    json_schema = Keyword.get(opts, :json_schema, false)
 
     quote do
       import ALLM.Pipeline.Schema, only: [schema: 1, field: 2, field: 3]
       Module.register_attribute(__MODULE__, :schema_fields, accumulate: true)
       Module.put_attribute(__MODULE__, :schema_json, unquote(json))
+      Module.put_attribute(__MODULE__, :schema_json_schema, unquote(json_schema))
 
       @before_compile ALLM.Pipeline.Schema
+    end
+  end
+
+  @doc false
+  @spec __validate_use__!(module(), keyword()) :: :ok
+  def __validate_use__!(module, opts) do
+    unless Keyword.keyword?(opts) do
+      raise ArgumentError,
+            "#{inspect(module)}: `use ALLM.Pipeline.Schema` takes a keyword list, " <>
+              "got: #{inspect(opts)}"
+    end
+
+    case Keyword.keys(opts) -- @use_options do
+      [] ->
+        :ok
+
+      unknown ->
+        raise ArgumentError,
+              "#{inspect(module)}: unknown option(s) #{inspect(unknown)} on " <>
+                "`use ALLM.Pipeline.Schema`. Known options: #{inspect(@use_options)}."
     end
   end
 
@@ -356,7 +447,7 @@ defmodule ALLM.Pipeline.Schema do
         def cast(input), do: ALLM.Pipeline.Schema.__cast__(__MODULE__, input)
       end
 
-    introspection = introspection_clauses(fields, type_fields, required_fields)
+    introspection = introspection_clauses(fields, type_fields, required_fields, env)
 
     quote do
       unquote(json_derive)
@@ -373,7 +464,7 @@ defmodule ALLM.Pipeline.Schema do
   # Private, and `@spec`'d, since 2.4's follow-up: it is called from exactly one
   # place — `__before_compile__/1`, in this module's own compile-time body — and
   # never from generated code, so unlike `__cast__/2` it needs no public
-  # visibility. `introspection_clauses/3`, invoked two lines away, is `defp` for
+  # visibility. `introspection_clauses/4`, invoked two lines away, is `defp` for
   # the same reason. Re-derive with
   # `python3 scripts/refsweep.py 'process_fields\(' apps --include '*.ex' --include '*.exs' --format hits`
   # → **3** hits, all in this file, of which exactly ONE is a call: `:280`, plus
@@ -465,7 +556,14 @@ defmodule ALLM.Pipeline.Schema do
   # `Mix.Tasks.AllmPipeline.Nilability.nilable_tail?/1`, and `generated_type/4`
   # + `nilable?/3` above are mirrored there as `categorize/4` +
   # `rule_says_nilable?/2`. A third copy lives in
-  # `scripts/nilability_predict.py`. **Do not extract a shared helper.** The
+  # `scripts/nilability_predict.py`. A FOURTH walk of the same right spine is
+  # `ALLM.Pipeline.Schema.JsonSchema.strip_nil/1`, which decides whether the
+  # derived JSON property gets the `["string", "null"]` union — it must agree
+  # with this function or a field the runtime can leave `nil` gets a schema
+  # forbidding `null`, i.e. a live 400 on the model's response rather than a
+  # compile error. The invariant is `elem(strip_nil(t), 1) == nilable_tail?(t)`
+  # for every `t`, and it is guarded by the same drift-guard describe named
+  # below. **Do not extract a shared helper.** The
   # task exists to falsify this implementation: if it called into here, its
   # `0 pending` result would be the macro agreeing with itself and would verify
   # nothing. Same house shape as `Amesbury.Media.UrlBuilder.@param_order` ⇔
@@ -476,7 +574,8 @@ defmodule ALLM.Pipeline.Schema do
   # "drift guard: the macro's rule and the task's copy" describe — it runs both
   # implementations over one shared fixture (`Applied`) and asserts they agree
   # field for field, neither calling the other. Change the rule here and that
-  # test reds until the task's copy is changed to match.
+  # test reds until the task's copy — and `JsonSchema.strip_nil/1`, pinned by the
+  # same describe — is changed to match.
   @spec nilable_tail?(Macro.t()) :: boolean()
   defp nilable_tail?({:|, _meta, [_left, right]}), do: nilable_tail?(right)
   defp nilable_tail?(nil), do: true
@@ -509,7 +608,110 @@ defmodule ALLM.Pipeline.Schema do
               "opposite intents and the serializer's drop set would be contradictory."
     end
 
+    validate_values!(module, name, opts)
+    validate_description!(module, name, opts)
+    validate_wire!(module, name, opts)
+    validate_json_schema!(module, name, opts)
+
     :ok
+  end
+
+  # `values:` arrives already EVALUATED — `field/3` `unquote`s its options, so
+  # `values: Schemas.Ordinance.fiscal_impacts()` reaches here as the resolved
+  # list. That is what lets a vocabulary keep its single owner instead of being
+  # copied into the declaration, and it is why this validates a list rather
+  # than an AST.
+  @spec validate_values!(module(), atom(), keyword()) :: :ok
+  defp validate_values!(module, name, opts) do
+    case Keyword.fetch(opts, :values) do
+      :error ->
+        :ok
+
+      {:ok, values} ->
+        unless is_list(values) and values != [] do
+          raise ArgumentError, values_message(module, name, values, "must be a non-empty list")
+        end
+
+        if Enum.any?(values, &is_nil/1) do
+          raise ArgumentError,
+                values_message(
+                  module,
+                  name,
+                  values,
+                  "may not contain `nil`. A `null` enum member is DERIVED from the field's " <>
+                    "nilability, never declared — and `is_atom(nil)` is `true`, so a bare " <>
+                    "list-of-atoms check would wave it through"
+                )
+        end
+
+        unless Enum.all?(values, &(is_atom(&1) or is_binary(&1))) do
+          raise ArgumentError,
+                values_message(
+                  module,
+                  name,
+                  values,
+                  "may contain only atoms or binaries. A vocabulary is emitted as a JSON " <>
+                    "`enum` of strings, and there is no reading of an integer or a tuple " <>
+                    "member that survives that round trip"
+                )
+        end
+
+        unless Enum.all?(values, &is_atom/1) or Enum.all?(values, &is_binary/1) do
+          raise ArgumentError,
+                values_message(
+                  module,
+                  name,
+                  values,
+                  "must be homogeneous — all atoms, or all binaries. Atom coercion keys off " <>
+                    "the declared TYPE, so a mixed vocabulary has no single reading"
+                )
+        end
+
+        :ok
+    end
+  end
+
+  @spec validate_description!(module(), atom(), keyword()) :: :ok
+  defp validate_description!(module, name, opts) do
+    case Keyword.fetch(opts, :description) do
+      :error ->
+        :ok
+
+      {:ok, description} when is_binary(description) ->
+        :ok
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "#{inspect(module)}: `field :#{name}` declares `description: #{inspect(other)}`, " <>
+                "but description takes a binary (a literal, or any compile-time expression " <>
+                "returning one)."
+    end
+  end
+
+  @spec validate_wire!(module(), atom(), keyword()) :: :ok
+  defp validate_wire!(module, name, opts) do
+    case Keyword.fetch(opts, :wire) do
+      :error -> :ok
+      {:ok, false} -> :ok
+      {:ok, wire} when is_binary(wire) and wire != "" -> :ok
+      {:ok, other} -> raise ArgumentError, wire_message(module, name, other)
+    end
+  end
+
+  @spec validate_json_schema!(module(), atom(), keyword()) :: :ok
+  defp validate_json_schema!(module, name, opts) do
+    case Keyword.fetch(opts, :json_schema) do
+      :error ->
+        :ok
+
+      {:ok, literal} when is_map(literal) ->
+        :ok
+
+      {:ok, other} ->
+        raise ArgumentError,
+              "#{inspect(module)}: `field :#{name}` declares `json_schema: #{inspect(other)}`, " <>
+                "but it takes a map used verbatim as that field's subschema."
+    end
   end
 
   @doc false
@@ -639,6 +841,20 @@ defmodule ALLM.Pipeline.Schema do
       "instead of raising."
   end
 
+  @spec values_message(module(), atom(), term(), String.t()) :: String.t()
+  defp values_message(module, name, values, reason) do
+    "#{inspect(module)}: `field :#{name}` declares `values: #{inspect(values)}`, which " <>
+      reason <> "."
+  end
+
+  @spec wire_message(module(), atom(), term()) :: String.t()
+  defp wire_message(module, name, value) do
+    "#{inspect(module)}: `field :#{name}` declares `wire: #{inspect(value)}`. `wire:` takes " <>
+      "`false` (the model does not produce this field — exclude it from the schema) or a " <>
+      "non-empty binary naming a differing wire property. Omit the option for the default, " <>
+      "which is the field's own name."
+  end
+
   @spec non_boolean_option_message(module(), atom(), atom(), term()) :: String.t()
   defp non_boolean_option_message(module, name, option, value) do
     "#{inspect(module)}: `field :#{name}` declares `#{option}: #{inspect(value)}`, but " <>
@@ -649,10 +865,20 @@ defmodule ALLM.Pipeline.Schema do
 
   # Builds the `__allm_schema__/1` clauses. Every value is a compile-time
   # constant, so introspection costs one function call and no work at runtime.
-  @spec introspection_clauses([{atom(), Macro.t(), keyword()}], keyword(), [atom()]) :: Macro.t()
-  defp introspection_clauses(fields, generated_types, required) do
+  @spec introspection_clauses(
+          [{atom(), Macro.t(), keyword()}],
+          keyword(),
+          [atom()],
+          Macro.Env.t()
+        ) ::
+          Macro.t()
+  defp introspection_clauses(fields, generated_types, required, env) do
     names = Enum.map(fields, fn {name, _type, _opts} -> name end)
     declared_types = Enum.map(fields, fn {name, type, _opts} -> {name, type} end)
+
+    values = optioned(fields, :values)
+    wire = optioned(fields, :wire)
+    json_schema_clause = json_schema_clause(fields, generated_types, env)
 
     defaults =
       fields
@@ -678,11 +904,56 @@ defmodule ALLM.Pipeline.Schema do
       def __allm_schema__(:artifact), do: unquote(artifact)
       def __allm_schema__(:redacted), do: unquote(flagged(fields, :redact))
       def __allm_schema__(:nilable), do: unquote(flagged(fields, :nilable))
+      def __allm_schema__(:values), do: unquote(Macro.escape(values))
+      def __allm_schema__(:wire), do: unquote(Macro.escape(wire))
+      unquote(json_schema_clause)
     end
   end
 
   @spec flagged([{atom(), Macro.t(), keyword()}], atom(), boolean()) :: [atom()]
   defp flagged(fields, option, value \\ true) do
     for {name, _type, opts} <- fields, Keyword.get(opts, option) == value, do: name
+  end
+
+  # Declaration-ordered `{field, value}` pairs for the fields carrying `option`.
+  # A keyword list rather than a map, because declaration order is the contract
+  # (`Map.keys/1` would sort) and because the coercion path in
+  # `ALLM.Pipeline.LLMStep` walks it.
+  @spec optioned([{atom(), Macro.t(), keyword()}], atom()) :: keyword()
+  defp optioned(fields, option) do
+    for {name, _type, opts} <- fields, Keyword.has_key?(opts, option) do
+      {name, Keyword.fetch!(opts, option)}
+    end
+  end
+
+  # The derivation is opt-in (`use ALLM.Pipeline.Schema, json_schema: true`).
+  # Without the opt-in this emits nothing at all, so `:json_schema` raises
+  # `FunctionClauseError` exactly like any other unknown key — the alternative,
+  # deriving unconditionally, would make every schema in the tree carrying a
+  # `map()` / `term()` / bare `list()` field fail to compile.
+  #
+  # The derivation reads the GENERATED types, never the declared ones: the
+  # `| nil` tail the narrow nilability rule appends is precisely the
+  # strict-mode nullable-union decision, and `__allm_schema__(:nilable)`
+  # reports only explicit `nilable: true` declarations, so neither of the other
+  # two keys can answer this question.
+  @spec json_schema_clause([{atom(), Macro.t(), keyword()}], keyword(), Macro.Env.t()) ::
+          Macro.t()
+  defp json_schema_clause(fields, generated_types, env) do
+    if Module.get_attribute(env.module, :schema_json_schema) do
+      specs =
+        Enum.map(fields, fn {name, _declared, opts} ->
+          {name, Keyword.fetch!(generated_types, name), opts}
+        end)
+
+      derived = ALLM.Pipeline.Schema.JsonSchema.derive!(env.module, specs, env)
+
+      quote do
+        def __allm_schema__(:json_schema), do: unquote(Macro.escape(derived))
+      end
+    else
+      quote do
+      end
+    end
   end
 end

@@ -39,7 +39,10 @@ defmodule Mix.Tasks.AllmPipeline.Nilability do
   `nilable_tail?/1` below is **byte-identical** to
   `ALLM.Pipeline.Schema`'s private copy, and `categorize/4` +
   `rule_says_nilable?/2` mirror its `generated_type/4` + `nilable?/3`. A third
-  copy lives in `scripts/nilability_predict.py`. This duplication is
+  copy lives in `scripts/nilability_predict.py`, and a fourth — of
+  `nilable_tail?/1` only — is `ALLM.Pipeline.Schema.JsonSchema.strip_nil/1`,
+  which reads the same right spine to decide whether a derived JSON property
+  gets its `["string", "null"]` union. This duplication is
   deliberate and must not be deduplicated: this task's job is to be able to
   **falsify** the macro, so if it delegated to the macro's helper, "0 pending"
   would be the macro asked whether it agrees with itself — criterion 2 would
@@ -52,7 +55,10 @@ defmodule Mix.Tasks.AllmPipeline.Nilability do
   *pinned*. The pin is the "drift guard" describe in
   `test/mix/tasks/allm_pipeline_nilability_test.exs`, which runs both
   implementations over one shared fixture and asserts they agree field for
-  field — catching drift without either implementation calling the other.
+  field — catching drift without either implementation calling the other. The
+  same describe carries the `strip_nil/1` parity test, over a fixture written in
+  mappable types (`Applied`'s `map()` / `term()` / two-member union have no
+  strict-mode JSON rendering, so the derivation cannot read that one).
 
   ## Why the predicate is `__allm_schema__/1`
 
