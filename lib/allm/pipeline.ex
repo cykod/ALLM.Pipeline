@@ -11,6 +11,10 @@ defmodule ALLM.Pipeline do
   no path, `run_step` calls passing `nil` for lineage, orchestrators with no
   `rescue` at all.
 
+  The example below is the declaration `meeting_agenda` **actually ships** as of
+  Phase 4.2 — the first production port — not a sketch. Two of its choices are
+  the ones that cost the port the most thought, and both are annotated.
+
       defmodule MeetingAgendaPipeline do
         use ALLM.Pipeline,
           name: "meeting_agenda_scrape",
@@ -22,25 +26,54 @@ defmodule ALLM.Pipeline do
         stage :committee_cache, fn _ctx, _prev -> {:ok, ensure_committee_cache()} end
         stage :list, MeetingListScraper, input: :build_list_input
 
+        # NO `gate:` — see "A `gate:` is SILENT" below.
         fan_out :meeting,
           over: :meetings_from,
           section: :section_title,
-          gate: :meeting_decision,
           parent: :source_stage,
           delay: [ms: {:opt, :delay_ms, 2000}, when: :processed],
           body: :process_single_meeting
+
+        # Run-level counters folded into the accumulator AFTER the fan-out, because
+        # `complete_metadata:` is handed the ACCUMULATOR, not what `summarize`
+        # returned. An escape-hatch stage writes no step log and does not move the
+        # lineage parent, so a structural-identity gate does not see it.
+        stage :tally, :tally_run
 
         metrics "meetings", from: :funnel
         summarize :finalize
       end
 
+  ## A `gate:` is SILENT — a body that must count its own skips declares none
+
+  This is the single most transferable lesson the first port produced, and it is
+  easy to get backwards: `gate:` looks like the declarative way to express "skip
+  this item", so the obvious move is to reach for it.
+
+  A gated-out item writes **no step log** (D8, below) and, more importantly, the
+  accumulator's **only** write channel is the body's `{item_result, acc}` return.
+  So the DSL cannot increment a counter on a gated-out item's behalf. If the
+  pipeline reports a skip count anywhere — its `metrics` funnel's `skipped:`,
+  `pipeline_runs.metadata`, its own `summarize` return — declaring `gate:` zeroes
+  it, silently and in every one of those places at once.
+
+  Rule: **`gate:` is for a skip nothing downstream needs to count.** When the
+  skip must be recorded, keep the decision inside the body and return
+  `{{:skipped, payload}, updated_acc}`. `meeting_agenda` does exactly that;
+  the reasoning is `steering/2026-08-20_ALLM_PIPELINE_PHASE_4_RECORDS.md` → 4.2
+  Deviations D-8 and D-9.
+
   ## The scope is the SKELETON, not the body
 
   The DSL owns run creation, the lineage parent, fan-out, sections, skips,
   politeness delays, metrics and the terminal write. It wraps a per-item body
-  that stays an **ordinary Elixir function** — `meeting_agenda`'s ~600-line
-  `process_single_meeting/2`, with its runtime Step-module selection by
-  committee name, is untouched by the port. That is the design working, not a
+  that stays an **ordinary Elixir function** — `meeting_agenda`'s
+  `process_single_meeting/2` and the call graph under it, the largest body in the
+  tree, with its runtime Step-module selection by committee name, is untouched by
+  the port. (This read "~600-line" until 2026-08-20; the real figure was ~750 and
+  the number had already been copied once into the host's own moduledoc. A count
+  of a HOST file cannot be re-derived from this package, so it is not written
+  here.) That is the design working, not a
   shortfall: an honest read of eight orchestrators against a *full* declarative
   construct set found 2 of 8 expressible.
 

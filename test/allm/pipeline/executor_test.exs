@@ -844,6 +844,31 @@ defmodule ALLM.Pipeline.ExecutorTest do
 
       assert section.input_step_id == parent_step.id
     end
+
+    test "scrubs a NUL byte out of the title instead of failing the insert with 22P05" do
+      {:ok, pipeline_run} = Executor.create_pipeline_run("test_pipeline")
+
+      # The title is the one field on this row that comes from OUTSIDE — the
+      # DSL's `section:` hook derives it from a scraped or OCR'd item — and
+      # Postgres rejects a NUL in a text column with `22P05`, which would abort
+      # a fan-out mid-run for a value that is only ever displayed. The
+      # round-trip is the assertion: `changeset.changes` would pass even if the
+      # insert then died.
+      assert {:ok, section} =
+               Executor.log_section(pipeline_run, "Planning Board" <> <<0>> <> " - Agenda")
+
+      reloaded = ALLM.Pipeline.StepLog.get(section.id)
+      assert reloaded.input_data == %{"title" => "Planning Board - Agenda"}
+    end
+
+    test "drops an invalid UTF-8 sequence from the title" do
+      {:ok, pipeline_run} = Executor.create_pipeline_run("test_pipeline")
+
+      assert {:ok, section} = Executor.log_section(pipeline_run, <<"Zoning ", 0xFF, " Board">>)
+
+      reloaded = ALLM.Pipeline.StepLog.get(section.id)
+      assert reloaded.input_data == %{"title" => "Zoning  Board"}
+    end
   end
 
   describe "complete_pipeline_run/3" do

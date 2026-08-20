@@ -95,6 +95,7 @@ defmodule ALLM.Pipeline.StepLog do
 
   alias ALLM.Pipeline.Encodable
   alias ALLM.Pipeline.PipelineRun
+  alias ALLM.Pipeline.Text
 
   @type status :: :pending | :running | :success | :failed | :skipped
   @type t :: %__MODULE__{
@@ -318,6 +319,13 @@ defmodule ALLM.Pipeline.StepLog do
 
   Creates a step_log with step_type "section" that serves as a visual divider
   in the pipeline review interface. Sections are excluded from pipeline stats.
+
+  The title is `ALLM.Pipeline.Text.scrub/1`-ed. It is the one field on this row
+  that comes from OUTSIDE — the DSL's `section:` hook derives it from a scraped
+  or OCR'd item — and a NUL byte or an invalid UTF-8 sequence in it fails the
+  insert with Postgres `22P05`, aborting a fan-out mid-run for a value that is
+  only ever displayed. Same treatment `ALLM.Pipeline.Encodable.encode/1` gives
+  run metadata.
   """
   @spec log_section(Ecto.UUID.t(), String.t(), Ecto.UUID.t() | nil) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
@@ -333,7 +341,7 @@ defmodule ALLM.Pipeline.StepLog do
       completed_at: now,
       duration_ms: 0,
       input_step_id: input_step_id,
-      input_data: %{"title" => title}
+      input_data: %{"title" => Text.scrub(title)}
     })
     |> repo().insert()
   end

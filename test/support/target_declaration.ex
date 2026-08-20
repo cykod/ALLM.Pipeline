@@ -3,10 +3,19 @@ defmodule ALLM.Pipeline.TestSupport.TargetDeclaration do
   **The acceptance spec for Phase 4.1, transcribed as a compiling module.**
 
   This is `steering/2026-08-20_ALLM_PIPELINE_PHASE_4.md` §"The target
-  declaration" — what 4.2 will write for `MeetingAgendaPipeline` — against stub
-  Steps. It exists so the hardest pipeline in the tree drives the construct set
-  **before** any of it is written, and so a construct silently dropped from the
-  DSL fails a test in this package rather than surfacing during the port.
+  declaration" — what **4.1 specified** for `MeetingAgendaPipeline` — against
+  stub Steps. It exists so the hardest pipeline in the tree drives the construct
+  set **before** any of it is written, and so a construct silently dropped from
+  the DSL fails a test in this package rather than surfacing during the port.
+
+  ⚠️ **It is 4.1's SPEC, not a transcript of the shipped port.** 4.2 shipped a
+  declaration that diverges in two places — no `gate: :meeting_decision`, and a
+  fourth `stage :tally` after the fan-out — for reasons recorded as
+  `…PHASE_4_RECORDS.md` → "4.2 — Deviations" D-8 and D-9, and summarised in
+  `ALLM.Pipeline`'s moduledoc under "A `gate:` is SILENT". Do **not** read the
+  declaration below as the canonical usage, and do **not** "fix" it to match the
+  port: its `gate:` is the only compile-time exercise of that construct anywhere
+  in the tree, which is the job this fixture exists to do.
 
   It is a **fixture, not the port**. It runs nothing; `dsl_test.exs` only reads
   its `__pipeline__/1`. Two consequences to keep in mind when editing it:
