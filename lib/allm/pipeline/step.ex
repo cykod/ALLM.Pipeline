@@ -53,10 +53,16 @@ defmodule ALLM.Pipeline.Step do
       end
   """
 
-  @type context :: %{
-          pipeline_run: ALLM.Pipeline.PipelineRun.t(),
-          step_log: ALLM.Pipeline.StepLog.t()
-        }
+  @typedoc """
+  What a step receives as its first argument: an `ALLM.Pipeline.Context` struct.
+
+  Widened from a bare map in Phase 4 (D5). It always WAS that struct —
+  `ALLM.Pipeline.Executor.run_with_step_log/5` has only ever built one — but the
+  type said `%{pipeline_run: …, step_log: …}`, which is both weaker and, since
+  `step_log` became nilable for escape-hatch bodies, wrong. A struct is a map,
+  so this narrows nothing at runtime and is dialyzer-visible only.
+  """
+  @type context :: ALLM.Pipeline.Context.t()
   @type execute_result :: {:ok, output :: struct()} | {:error, reason :: term()}
 
   @doc "The step type identifier (e.g., :scrape_committee_list)"

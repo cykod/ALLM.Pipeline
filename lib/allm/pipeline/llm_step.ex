@@ -267,7 +267,7 @@ defmodule ALLM.Pipeline.LLMStep do
       def post_process(output, _input), do: output
 
       @impl ALLM.Pipeline.Step
-      @spec execute(map(), struct()) :: {:ok, struct()} | {:error, term()}
+      @spec execute(ALLM.Pipeline.Context.t(), struct()) :: {:ok, struct()} | {:error, term()}
       def execute(_context, input) do
         with {:ok, parsed, tokens} <- call_llm(input),
              {:ok, output} <- coerce(parsed, tokens) do
