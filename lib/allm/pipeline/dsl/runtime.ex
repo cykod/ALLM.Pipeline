@@ -67,7 +67,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   require Logger
 
   @typedoc "The value a `fan_out` body or escape-hatch `stage` returns, once normalized."
-  @type item_result :: Item.result() | {:ok, term(), StepLog.t()}
+  @type item_result :: FanOut.item_result()
 
   @typedoc "Whether a body wrote the accumulator."
   @type acc_update :: :keep | {:update, term()}
@@ -486,14 +486,16 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   defp guarded_item(stage, run, opts, state, item, source_parent, false),
     do: run_item(stage, run, opts, state, item, source_parent)
 
+  # The always-on `catch kind, reason` lives in `FanOut.guard/3` — the single
+  # home shared with `FanOut.reduce/5`, so the two paths cannot diverge on one
+  # kind. `rescue` alone would miss the exit a Playwright/`GenServer.call`
+  # teardown arrives as.
   defp guarded_item(stage, run, opts, state, item, source_parent, true) do
-    run_item(stage, run, opts, state, item, source_parent)
-  catch
-    # `catch kind, reason`, never `rescue`: an exit is not an exception, and
-    # Playwright teardowns and `GenServer.call` timeouts arrive as exits.
-    kind, reason ->
-      tagged = FanOut.tag_uncaught(item_label(stage, item), kind, reason, __STACKTRACE__)
-      {%Item{input: item, result: {:error, tagged}}, :keep}
+    FanOut.guard(
+      item_label(stage, item),
+      fn -> run_item(stage, run, opts, state, item, source_parent) end,
+      fn tagged -> {%Item{input: item, result: {:error, tagged}}, :keep} end
+    )
   end
 
   @spec run_item(Stage.t(), PipelineRun.t(), keyword(), state(), term(), Ecto.UUID.t() | nil) ::
@@ -521,7 +523,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
           {Item.t(), acc_update()}
   defp run_item_body(stage, run, ctx, item, parent) do
     {result, acc_update} = run_target(stage, run, ctx, item, parent)
-    {to_item(item, result), acc_update}
+    {FanOut.to_item(item, result), acc_update}
   end
 
   # The ONE place a stage's target is invoked, for both kinds. `:stage` and
@@ -676,12 +678,6 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
             "`{:ok, value}`, `{:skipped, reason}` or `{:error, reason}`."
   end
 
-  @spec to_item(term(), item_result()) :: Item.t()
-  defp to_item(item, {:ok, value, %StepLog{} = log}),
-    do: %Item{input: item, result: {:ok, value}, step_log: log}
-
-  defp to_item(item, result), do: %Item{input: item, result: result}
-
   # ── Result handling ───────────────────────────────────────────────────────
 
   @spec apply_result(Stage.t(), state(), item_result()) :: {:ok, state()} | {:error, term()}
@@ -784,18 +780,11 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   defp put_decision(carry, nil), do: carry
   defp put_decision(carry, decision), do: Map.put(carry, :gate, decision)
 
+  # Delegates to `FanOut.item_parent/3`, the single home shared with
+  # `FanOut.reduce/5` — the re-parent-or-raise rule is written once.
   @spec item_parent(Stage.t(), term(), Ecto.UUID.t() | nil) :: Ecto.UUID.t() | nil
-  defp item_parent(%Stage{parent: :per_item}, %Item{step_log: %StepLog{id: id}}, _source), do: id
-
-  defp item_parent(%Stage{parent: :per_item, name: name}, item, _source) do
-    raise ArgumentError,
-          "fan_out :#{name} declares `parent: :per_item`, so each item must carry its own " <>
-            "producing step log — but `over:` returned #{inspect(item)}. Filter the previous " <>
-            "fan-out's output with `ALLM.Pipeline.Dsl.Item.ok_items/1` (which keeps the " <>
-            "wrapper) rather than unwrapping it with `ok_values/1`."
-  end
-
-  defp item_parent(_stage, _item, source_parent), do: source_parent
+  defp item_parent(%Stage{parent: parent}, item, source_parent),
+    do: FanOut.item_parent(parent, item, source_parent)
 
   @spec maybe_delay(Stage.t(), keyword(), Item.result()) :: :ok
   defp maybe_delay(%Stage{delay: nil}, _opts, _result), do: :ok

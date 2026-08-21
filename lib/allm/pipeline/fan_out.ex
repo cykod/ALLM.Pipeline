@@ -64,11 +64,27 @@ defmodule ALLM.Pipeline.FanOut do
 
   require Logger
 
+  alias ALLM.Pipeline.{Context, StepLog}
+  alias ALLM.Pipeline.Dsl.Item
+
   @typedoc """
   A per-item failure that escaped every named error path. Persisted through the
   caller's own error shape; `inspect`ed to a string before it reaches jsonb.
   """
   @type uncaught :: {:uncaught, kind :: atom(), reason :: term()}
+
+  @typedoc """
+  The value a per-item body returns, before it is wrapped into an `Item`. A
+  3-tuple `{:ok, value, %StepLog{}}` nominates a producing step log; every other
+  shape leaves `Item.step_log` `nil`.
+  """
+  @type item_result :: Item.result() | {:ok, term(), StepLog.t()}
+
+  @typedoc "The fold accumulator threaded through `reduce/5`."
+  @type acc :: term()
+
+  @typedoc "How each item's steps are parented — see `reduce/5`."
+  @type parent_mode :: :source_stage | :per_item
 
   @doc """
   Log an uncaught per-item failure with its stacktrace and return a tagged tuple.
@@ -90,4 +106,131 @@ defmodule ALLM.Pipeline.FanOut do
 
     {:uncaught, kind, reason}
   end
+
+  @doc """
+  Fold a body over a list of items, sequentially, with per-item link safety.
+
+  This is the FUNCTION form of a `body:`-mode `fan_out`: an ordinary `stage`
+  body calls it instead of declaring the mode. It owns exactly the properties
+  §8.3 of the DSL review found genuinely need centralising — the always-on
+  link-safe catch, the `%Item{}` wrapping with its producing-step-log capture,
+  and per-item lineage — and pushes `section:`/`delay:`/`over:` back to the
+  caller as ordinary code.
+
+  Runs `fun.(ctx, item, acc)` for each item, threading `acc` **sequentially**
+  (a fold), and returns the list of `%Item{}` in input order plus the final
+  accumulator.
+
+    * Each `fun` call runs under an always-on `catch kind, reason` wrapper (link
+      safety — see this module's moduledoc). An uncaught `raise`/`exit`/`throw`
+      becomes `%Item{result: {:error, {:uncaught, kind, reason}}}` and **leaves
+      `acc` unchanged for that item**. It is `catch`, never `rescue`: an exit is
+      not an exception, and Playwright/`GenServer` teardowns arrive as exits.
+    * `fun`'s `item_result` is wrapped into `%Item{}`: a 3-tuple
+      `{:ok, value, %StepLog{}}` carries the producing step log onto
+      `%Item{step_log: …}`; every other shape leaves it `nil`.
+    * `reduce/5` is **sequential only** — it folds a changing accumulator, and a
+      concurrent fold has undefined order (`Dsl.Runtime`'s
+      `assert_no_concurrent_fold!/2` exists to reject that very shape). A
+      concurrency-capable non-folding sibling is deliberately not provided
+      (Phase 4.5 Alternatives).
+
+  ## Options
+
+    * `parent:` — `:source_stage` (default) hangs every item's steps off
+      `Context.input_step_id(ctx)`; `:per_item` re-parents each item's context
+      to its OWN producing step log, which requires the items to be `%Item{}`
+      wrappers (filter a previous fan-out with
+      `ALLM.Pipeline.Dsl.Item.ok_items/1`), and raises otherwise.
+
+  `section:` and `delay:` are **not** options here — the caller inlines them
+  (`Executor.log_section/3` and `Process.sleep/1`). That split is the whole
+  point: it keeps this function from re-accepting the costume Phase 4.5 removed.
+  """
+  @spec reduce(
+          Context.t(),
+          Enumerable.t(),
+          acc(),
+          (Context.t(), term(), acc() -> {item_result(), acc()}),
+          keyword()
+        ) :: {[Item.t()], acc()}
+  def reduce(ctx, items, acc, fun, opts \\ []) do
+    parent_mode = Keyword.get(opts, :parent, :source_stage)
+    source_parent = Context.input_step_id(ctx)
+
+    {reversed, final_acc} =
+      Enum.reduce(items, {[], acc}, fn item, {done, acc} ->
+        # The per-item parent is resolved OUTSIDE the guard: a `:per_item` input
+        # that is not an `%Item{}` is a usage error and must raise loudly, not be
+        # degraded into an uncaught per-item failure.
+        item_ctx = %{ctx | input_step_id: item_parent(parent_mode, item, source_parent)}
+
+        {item_result, next_acc} =
+          guard(item_label(item), fn -> fun.(item_ctx, item, acc) end, fn tagged ->
+            # Link-safe degrade: the raising item leaves the RUNNING acc — the one
+            # bound in this closure — unchanged (`:keep`).
+            {{:error, tagged}, acc}
+          end)
+
+        {[to_item(item, item_result) | done], next_acc}
+      end)
+
+    {Enum.reverse(reversed), final_acc}
+  end
+
+  @doc """
+  Run a per-item body closure under the always-on link-safe catch.
+
+  `catch kind, reason`, never `rescue`: an exit is not an exception, and
+  `Task.async_stream` links its children, so an uncaught exit kills the caller.
+  `on_uncaught` builds the caller's own fallback pair from the tagged failure,
+  because the two consumers — `reduce/5` here and
+  `Dsl.Runtime.guarded_item/7` — degrade to different shapes. This is the single
+  home of the catch: writing it a second time is how the two paths silently
+  diverge on one kind (package `CLAUDE.md` §7).
+  """
+  @spec guard(String.t(), (-> result), (uncaught() -> result)) :: result when result: var
+  def guard(label, fun, on_uncaught) do
+    fun.()
+  catch
+    kind, reason ->
+      on_uncaught.(tag_uncaught(label, kind, reason, __STACKTRACE__))
+  end
+
+  @doc """
+  The lineage parent for one item of a fan-out.
+
+  Under `:source_stage`, `source_parent` — every item's steps hang off the
+  source stage's step log. Under `:per_item`, the item's OWN producing step log,
+  which requires the item to be an `%Item{}` wrapper (`ok_items/1` keeps it),
+  and raises otherwise.
+  """
+  @spec item_parent(parent_mode(), term(), Ecto.UUID.t() | nil) :: Ecto.UUID.t() | nil
+  def item_parent(:per_item, %Item{step_log: %StepLog{id: id}}, _source), do: id
+
+  def item_parent(:per_item, item, _source) do
+    raise ArgumentError,
+          "a fan-out under `parent: :per_item` — each item must carry its own producing " <>
+            "step log, but got #{inspect(item)}. Filter the previous fan-out's output with " <>
+            "`ALLM.Pipeline.Dsl.Item.ok_items/1` (which keeps the wrapper) rather than " <>
+            "unwrapping it with `ok_values/1`."
+  end
+
+  def item_parent(_mode, _item, source_parent), do: source_parent
+
+  @doc """
+  Wrap a per-item body's `item_result` into an `%Item{}`.
+
+  A 3-tuple `{:ok, value, %StepLog{}}` moves its log onto `step_log` and keeps
+  `{:ok, value}` as the result; every other shape leaves `step_log` `nil` (the
+  two-element `{:ok, value}` form nominates no new parent — Phase 4 D2).
+  """
+  @spec to_item(term(), item_result()) :: Item.t()
+  def to_item(item, {:ok, value, %StepLog{} = log}),
+    do: %Item{input: item, result: {:ok, value}, step_log: log}
+
+  def to_item(item, result), do: %Item{input: item, result: result}
+
+  @spec item_label(term()) :: String.t()
+  defp item_label(item), do: "fan_out item #{inspect(item, limit: 3, printable_limit: 64)}"
 end
