@@ -347,3 +347,16 @@ deliberately: a construct silently dropped from the DSL becomes a **compile**
 failure, which is the strongest gate available. Its module name is a package
 name because this app names no host module (§1); the shape is what is proven,
 not the names.
+
+**An option that accepts the `{:opt, key, default}` form must be exercised by a
+compile-time test declaring it at EVERY splice level, in one module.** The form
+is spliced back into a `quote`, so a validator returning the real 3-tuple
+instead of the quoted one produces `invalid quoted expression` — and a fix
+applied at one splice site leaves the other broken. `concurrency:` shipped dead
+at both levels for three subphases with its own sibling comment asserting the
+opposite; the first production declaration is what found it, not the tests.
+Corollary for closing a subphase: record per construct whether a **production**
+declaration exists.
+`grep -rn '<option>:' apps --include '*.ex' | grep -v /test/` returning `0` is a
+finding to state, not a pass — four constructs shipped green here because
+nothing consumed them.
