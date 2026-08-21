@@ -373,6 +373,28 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
     stage(:only, fn _ctx, _prev -> {:ok, :done} end)
   end
 
+  # 4.5.6 (§9.2): `metrics from:` reads the ACCUMULATOR, never the `summarize`
+  # return. This fixture is the discriminator both ported pipelines can't be —
+  # its `summarize` returns a value DIFFERENT from the accumulator, so `from:`'s
+  # input is observable. `to_metric/1` reports what it was handed (it runs in the
+  # synchronous run's process, i.e. the test process) and returns a valid funnel.
+  defmodule MetricsFromAccumulator do
+    @moduledoc false
+    use ALLM.Pipeline, name: "dsl_metrics_from_acc", init: :init_acc
+
+    stage(:only, fn _ctx, _prev -> {:ok, :done} end)
+    metrics("widgets", from: :to_metric)
+    summarize(:to_summary)
+
+    defp init_acc, do: %{marker: :accumulator}
+    defp to_summary(_acc, _ctx), do: %{marker: :summary}
+
+    defp to_metric(received) do
+      send(self(), {:metrics_from_received, received})
+      %{found: 1, processed: 1}
+    end
+  end
+
   defmodule OwnershipProbe do
     @moduledoc false
     use ALLM.Pipeline, name: "dsl_ownership"
@@ -720,6 +742,18 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       [metric] = metric_rows(only_run("dsl_counting").id)
       assert metric.pipeline_name == "dsl_counting"
       assert Metrics.status(metric) == :ok
+    end
+
+    # §9.2: one contract for `from:` — it reads the accumulator, even when
+    # `summarize` is declared and transforms it. HEAD passes `summary` (the
+    # summarize return) here, so this fails red-first. The run return is still
+    # the summary (§4.11's three-distinct-values), which the first assertion
+    # pins so the fix did not collapse the two.
+    test "from: receives the accumulator, not the summarize return" do
+      assert {:ok, %{marker: :summary}} = MetricsFromAccumulator.run()
+
+      assert_received {:metrics_from_received, %{marker: :accumulator}}
+      refute_received {:metrics_from_received, %{marker: :summary}}
     end
   end
 

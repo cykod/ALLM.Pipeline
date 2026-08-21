@@ -256,7 +256,11 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
       {:ok, state} ->
         ctx = context(run, opts, state, state.parent)
         summary = call(hooks.summarize, [state.acc, ctx], state.acc)
-        record_metrics(metrics_module, run, summary)
+        # `from:` reads the ACCUMULATOR, one contract — NOT `summary`, which
+        # would silently change its input shape depending on whether the
+        # unrelated `summarize` construct is declared (§9.2). A pipeline wanting
+        # the summary calls its own `summarize` hook from within `from:`.
+        record_metrics(metrics_module, run, state.acc)
         {:ok, summary, as_map(call(hooks.complete_metadata, [state.acc], state.acc), :result)}
 
       {:error, reason} ->
@@ -310,15 +314,15 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   end
 
   @spec record_metrics(module() | nil, PipelineRun.t(), term()) :: :ok
-  defp record_metrics(nil, _run, _summary), do: :ok
+  defp record_metrics(nil, _run, _acc), do: :ok
 
-  defp record_metrics(module, run, summary) do
+  defp record_metrics(module, run, acc) do
     case module.__pipeline__(:metrics) do
       nil ->
         :ok
 
       %{entity_type: entity_type, from: from} ->
-        Metrics.record(run, entity_type, from.(summary))
+        Metrics.record(run, entity_type, from.(acc))
         :ok
     end
   end
@@ -345,8 +349,12 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
     if skip?(stage.skip_when, context(run, opts, state, state.parent)) do
       # D8: a skip writes NO step log in Phase 4, and is lineage-transparent —
       # `state` (and therefore `parent`) is returned untouched, so the next
-      # stage parents to the last successfully EXECUTED step.
-      Logger.info("[#{stage.name}] skipped (skip_when)")
+      # stage parents to the last successfully EXECUTED step. It is also
+      # subject-transparent — `prev` is left as the stage BEFORE this one
+      # produced — so the log names what `prev` carries (§9.1), which is the
+      # diagnostic that makes a downstream `FunctionClauseError` traceable to
+      # the stage that was skipped. A detector, not a gate: the run proceeds.
+      Logger.info("[#{stage.name}] skipped (skip_when); prev holds #{prev_label(state.prev)}")
       {:ok, state}
     else
       do_stage(stage, run, opts, state, default_concurrency)
@@ -672,13 +680,23 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   defp apply_result(stage, state, {:ok, value, %StepLog{id: id}}),
     do: {:ok, %{state | prev: value, parent: id, carry: capture(stage, state.carry, value)}}
 
+  # Both branches leave `prev` untouched, so the next stage receives what the
+  # stage BEFORE this one produced. Name it (§9.1) so a downstream mismatch is
+  # one line above the crash. Neither changes control flow or the return.
   defp apply_result(stage, state, {:skipped, reason}) do
-    Logger.info("[#{stage.name}] skipped: #{inspect(reason)}")
+    Logger.info(
+      "[#{stage.name}] skipped: #{inspect(reason)}; prev holds #{prev_label(state.prev)}"
+    )
+
     {:ok, state}
   end
 
   defp apply_result(%Stage{on_error: :continue, name: name}, state, {:error, reason}) do
-    Logger.warning("[#{name}] failed, continuing (on_error: :continue): #{inspect(reason)}")
+    Logger.warning(
+      "[#{name}] failed, continuing (on_error: :continue): #{inspect(reason)}; " <>
+        "prev holds #{prev_label(state.prev)}"
+    )
+
     {:ok, state}
   end
 
@@ -770,6 +788,24 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
       end
     end)
   end
+
+  # Names what `state.prev` is carrying at a skip point (§9.1). A `fan_out`'s
+  # output is a `[%Item{}]`, so the diagnostic that matters is the payload struct
+  # ONE item carries (the type a downstream `input:` hook would be handed), not
+  # "a list" — `committee`'s `--skip-transform` leaves `prev` holding the DETAIL
+  # items, and `loader_input/2` would then be handed a `CommitteeDetailScraper.
+  # Output` where a transformer output is declared. Delegates the scalar case to
+  # `subject_label/1`.
+  @spec prev_label(term()) :: String.t()
+  defp prev_label([%Item{result: {:ok, payload}} | _] = items),
+    do: "#{length(items)} item(s), each carrying #{subject_label(payload)}"
+
+  defp prev_label([%Item{result: result} | _] = items),
+    do: "#{length(items)} item(s), first result #{inspect(result, limit: 2)}"
+
+  defp prev_label([]), do: "an empty list"
+
+  defp prev_label(other), do: subject_label(other)
 
   @spec subject_label(term()) :: String.t()
   defp subject_label(%module{}), do: "a #{inspect(module)}"

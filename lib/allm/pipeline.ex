@@ -125,6 +125,12 @@ defmodule ALLM.Pipeline do
   therefore structurally cannot produce the completed `%PipelineRun{}` — that is
   what `returns: :run` is for.
 
+  Those three hooks stay distinct, but `metrics from:` has **one** input
+  contract: it receives the **accumulator**, always — never the `summarize`
+  return. So declaring (or not declaring) `summarize` never changes `from:`'s
+  input shape. A pipeline that wants the summary in its funnel calls its own
+  `summarize` hook from within `from:`.
+
   ## Generated functions
 
       @spec run(keyword()) :: {:ok, term()} | {:error, term()}
@@ -181,6 +187,15 @@ defmodule ALLM.Pipeline do
     last *successfully executed* step's log id. A skip writes no step log in
     Phase 4 (D8) — `StepLog.log_skipped/2` exists with no framework caller, and
     promoting it is a behaviour change a structural-identity gate cannot absorb.
+    A skip is also **subject-transparent**: `prev` stays whatever the stage
+    BEFORE the skip produced, so the next stage silently receives it. Three
+    paths do this — `skip_when:` fired, a body returning `{:skipped, _}`, and
+    `on_error: :continue` swallowing an error — and each **names the struct
+    `prev` is carrying in its skip log line** (§9.1), so a downstream
+    `FunctionClauseError` in an `input:` hook is one line below the name of the
+    stage that was skipped. It is a **detector, not a gate**: it does not
+    prevent the type mismatch (that would need a declared `skip_to:`
+    pass-through, deferred to Phase 5) — it only makes it diagnosable.
   * `section:` emits a **sibling leaf and is never the lineage parent**.
     `Executor.log_section/3` writes a real `step_logs` row, so the natural
     reading of "per item: section → gate → body" would make it the item's parent
