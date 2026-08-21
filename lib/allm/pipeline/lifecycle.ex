@@ -126,11 +126,17 @@ defmodule ALLM.Pipeline.Lifecycle do
   """
   @spec settle(String.t(), PipelineRun.t(), settlement(), [Resource.teardown_error()]) ::
           {:ok, term(), PipelineRun.t()} | {:error, term()}
-  def settle(label, owning, settlement, teardown_errors \\ [])
-
-  def settle(label, owning, {:ok, value, metadata}, teardown_errors) do
-    metadata = if is_map(metadata), do: metadata, else: %{result: metadata}
-
+  def settle(label, owning, {:ok, value, metadata}, teardown_errors) when is_map(metadata) do
+    # `PipelineRun.complete/2` DIRECTLY, while the two failure clauses below reach
+    # their write through `Executor.fail_pipeline_run/2` and therefore through
+    # `Store.impl()`. The asymmetry is deliberate and load-bearing: the DSL's
+    # whole claim is that a ported pipeline calls what a hand-written one calls,
+    # and every hand-written orchestrator in this tree completes its run this way
+    # (the design doc's "it calls what a hand-written orchestrator calls"
+    # contract). `Store.Ecto.complete_run/2` is a `defdelegate` to this same
+    # function, so the default adapter is unaffected either way. Do not "fix" the
+    # asymmetry into a `store().complete_run(...)` without deciding that question
+    # deliberately — code review 4.1 F8.
     case PipelineRun.complete(owning, merge_teardown(metadata, teardown_errors)) do
       {:ok, run} ->
         {:ok, value, run}

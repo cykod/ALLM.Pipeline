@@ -343,6 +343,16 @@ defmodule ALLM.Pipeline.Dsl do
   def __hook_arities__, do: @hook_arities
 
   @doc false
+  # The `use ALLM.Pipeline` option vocabulary. Same reason as
+  # `__hook_arities__/0` above: `@use_options` and `ALLM.Pipeline`'s
+  # `## \`use\` options` moduledoc table are two hand-maintained copies of one
+  # vocabulary, and this is what lets `dsl_test.exs` pin that they agree rather
+  # than leaving the third of the DSL's three mirrored vocabularies eye-checked
+  # (code review 4.3 F8).
+  @spec __use_options__() :: [atom()]
+  def __use_options__, do: @use_options
+
+  @doc false
   # Every atom hook a declaration named, checked against what the module
   # actually defines. Runs from `__before_compile__`, which is the earliest
   # point at which `Module.defines?/2` can answer.

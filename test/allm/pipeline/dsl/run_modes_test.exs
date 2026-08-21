@@ -77,9 +77,18 @@ defmodule ALLM.Pipeline.Dsl.RunModesTest do
     # The assertion that actually fails before the ownership guard: a body able
     # to complete its own parent run would stamp the umbrella `:success`
     # mid-loop. Here it must be refused, and the refusal recorded.
+    #
+    # `Process.put/2` is how the test OBSERVES the refusal value. `:probe` is the
+    # last stage, so its `prev` reaches no later stage and the accumulator is an
+    # integer four other tests assert on — there is no return channel out. This
+    # pipeline runs at the default concurrency 1 and a plain `stage` runs inline,
+    # so this is the test's own process dictionary. Before this existed the
+    # comment above claimed the return value was the refusal and nothing read it
+    # (code review 4.3 F10).
     stage(:probe, fn ctx, _prev ->
-      {{:ok, PipelineRun.complete(ctx.pipeline_run, %{clobbered: true})},
-       Context.accumulator(ctx) + 1}
+      refusal = PipelineRun.complete(ctx.pipeline_run, %{clobbered: true})
+      Process.put(:run_modes_probe_refusal, refusal)
+      {{:ok, refusal}, Context.accumulator(ctx) + 1}
     end)
 
     metrics("inner_things", from: :funnel)
@@ -222,7 +231,11 @@ defmodule ALLM.Pipeline.Dsl.RunModesTest do
 
       {:ok, _acc} = Inner.run(pipeline_run: umbrella)
 
-      # The probe stage's return value IS the refusal.
+      # The REFUSAL VALUE, not merely its absence of effect. `complete/2` on a
+      # borrowed handle must return `{:error, :not_run_owner}` — a silent
+      # no-op would satisfy both assertions below just as well.
+      assert Process.get(:run_modes_probe_refusal) == {:error, :not_run_owner}
+
       [_echo] = steps(umbrella.id)
       assert Config.repo().get!(PipelineRun, umbrella.id).status == :running
     end

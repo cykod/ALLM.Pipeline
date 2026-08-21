@@ -4,8 +4,8 @@ defmodule ALLM.Pipeline.Dsl.Item do
 
   A `fan_out` stage's OUTPUT is a `[t()]` — one entry per element `over:`
   produced, in declaration order. The next stage's `over:` hook receives that
-  list, which is why `committee`'s `ok_details/1` and `ok_transforms/1` are
-  ordinary filters over these.
+  list, which is why `committee`'s shared `ok_items/1` hook is an ordinary
+  filter over these.
 
   ## Why the step log rides on the item
 

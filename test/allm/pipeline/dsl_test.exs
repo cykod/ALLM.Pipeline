@@ -144,6 +144,59 @@ defmodule ALLM.Pipeline.DslTest do
 
       assert Keyword.keys(arities) == Enum.uniq(Keyword.keys(arities))
     end
+
+    # (d) The `use` option vocabulary — the THIRD mirrored vocabulary, and the
+    # one that was still eye-checked after (a) and (c) got guards (code review
+    # 4.3 F8). `@use_options` is what `use ALLM.Pipeline` accepts; the
+    # `## `use` options` table in `ALLM.Pipeline`'s moduledoc is what a reader
+    # is told it accepts. An option added to one and not the other is either an
+    # undocumented feature or a documented one that raises `ArgumentError`.
+    test "every `use` option has a moduledoc table row, and the table is non-empty" do
+      options = Dsl.__use_options__()
+
+      assert length(options) >= 9,
+             "__use_options__/0 reports only #{length(options)} options — the attribute was " <>
+               "truncated, and the row check below would pass vacuously."
+
+      # Scoped to THIS ONE TABLE, not the whole moduledoc and not every table in
+      # it. Two ways a looser scope fails open, both measured: `returns:`,
+      # `concurrency:` and `dry_run:` are discussed in prose sections further
+      # down, so a whole-doc `=~` reports a row for an option that has none; and
+      # the `--dry-run` semantics table 200 lines below carries `dry_run:` in
+      # four of its own rows, so filtering the whole moduledoc for lines
+      # starting `|` let a deleted `use`-options row survive (verified by
+      # mutation: that mutant lived until this scoping landed).
+      rows =
+        ALLM.Pipeline
+        |> Code.fetch_docs()
+        |> then(fn {:docs_v1, _, _, _, %{"en" => doc}, _, _} -> doc end)
+        |> String.split("\n")
+        |> Enum.drop_while(&(String.trim(&1) != "## `use` options"))
+        |> Enum.drop(1)
+        |> Enum.take_while(&(not String.starts_with?(String.trim_leading(&1), "## ")))
+        |> Enum.filter(&String.starts_with?(String.trim_leading(&1), "|"))
+
+      # POSITIVE CONTROL: the section AND its table were found. Floor sits at
+      # header + separator + one row, WELL below the live count — not at
+      # `length(options) + 2`, which would trip first when a row is deleted and
+      # report "the guard stopped reading the table" instead of naming the
+      # option that lost its row (the diagnosis-ordering trap `fan_out_test.exs`
+      # documents at its own `>= 4`; verified by mutation, which reached the
+      # wrong assertion until this floor came down).
+      assert length(rows) >= 3,
+             "found only #{length(rows)} rows in ALLM.Pipeline's `## `use` options` table — " <>
+               "the heading was renamed or the table moved, and this guard is no longer " <>
+               "reading it."
+
+      table = Enum.join(rows, "\n")
+
+      missing = Enum.reject(options, &(table =~ "`#{&1}:`"))
+
+      assert missing == [],
+             "these `use` options have no row in ALLM.Pipeline's `## `use` options` table: " <>
+               "#{inspect(missing)}. Add the row — the table is the only place a caller " <>
+               "learns the option exists."
+    end
   end
 
   describe "stage/3's two forms are told apart by AST SHAPE" do
