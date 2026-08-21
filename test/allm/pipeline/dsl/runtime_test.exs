@@ -444,6 +444,18 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
     stage(:boom, fn _ctx, _prev -> raise("deliberate") end)
   end
 
+  # A self-owned pipeline (no `borrowed_run:`), so `run/1` goes through
+  # `Runtime.run_owned/3`, which lifts `opts[:parent_run_id]` into
+  # `create_pipeline_run/3`'s ATTRS — the queryable FK column, not metadata.
+  # This is the DIRECT regression coverage for that lift; the lift's only prior
+  # coverage rode through `run_modes_test.exs`, which Phase 5.10 deletes.
+  defmodule ParentLinkable do
+    @moduledoc false
+    use ALLM.Pipeline, name: "dsl_parent_linkable"
+
+    stage(:only, fn _ctx, _prev -> {:ok, :done} end)
+  end
+
   # ── Helpers ───────────────────────────────────────────────────────────────
 
   defp steps(run_id) do
@@ -527,6 +539,28 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       run = only_run("dsl_raising_uncaught")
       assert run.status == :failed
       assert run.completed_at
+    end
+  end
+
+  describe "self-owned parent_run_id lift" do
+    # The direct regression coverage for `run_owned/3`'s
+    # `Keyword.take(opts, [:parent_run_id])`. Its only prior coverage rode
+    # through `run_modes_test.exs`, which Phase 5.10 deletes. Asserts the FK
+    # COLUMN — the queryable link — not a metadata key: removing the lift reds
+    # this.
+    test "run(parent_run_id: id) sets the pipeline_runs.parent_run_id column" do
+      {:ok, parent} = ALLM.Pipeline.Executor.create_pipeline_run("dsl_parent_of_linkable")
+
+      assert {:ok, _summary} = ParentLinkable.run(parent_run_id: parent.id)
+
+      run = only_run("dsl_parent_linkable")
+      assert run.parent_run_id == parent.id
+    end
+
+    test "run/1 with no parent_run_id leaves the column nil" do
+      assert {:ok, _summary} = ParentLinkable.run()
+
+      assert only_run("dsl_parent_linkable").parent_run_id == nil
     end
   end
 
