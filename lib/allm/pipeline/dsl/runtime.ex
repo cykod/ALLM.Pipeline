@@ -794,11 +794,12 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   # ONE item carries (the type a downstream `input:` hook would be handed), not
   # "a list" — `committee`'s `--skip-transform` leaves `prev` holding the DETAIL
   # items, and `loader_input/2` would then be handed a `CommitteeDetailScraper.
-  # Output` where a transformer output is declared. Delegates the scalar case to
-  # `subject_label/1`.
+  # Output` where a transformer output is declared. Says "first carrying" because
+  # only the head item is inspected — it does not verify the list is homogeneous.
+  # Delegates the scalar case to `subject_label/1`.
   @spec prev_label(term()) :: String.t()
   defp prev_label([%Item{result: {:ok, payload}} | _] = items),
-    do: "#{length(items)} item(s), each carrying #{subject_label(payload)}"
+    do: "#{length(items)} item(s), first carrying #{subject_label(payload)}"
 
   defp prev_label([%Item{result: result} | _] = items),
     do: "#{length(items)} item(s), first result #{inspect(result, limit: 2)}"

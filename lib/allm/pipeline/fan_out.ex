@@ -108,7 +108,7 @@ defmodule ALLM.Pipeline.FanOut do
   end
 
   @doc """
-  Fold a body over a list of items, sequentially, with per-item link safety.
+  Fold a body over a list of items, sequentially, with per-item failure isolation.
 
   This is the FUNCTION form of a `body:`-mode `fan_out`: an ordinary `stage`
   body calls it instead of declaring the mode. It owns exactly the properties
@@ -121,11 +121,17 @@ defmodule ALLM.Pipeline.FanOut do
   (a fold), and returns the list of `%Item{}` in input order plus the final
   accumulator.
 
-    * Each `fun` call runs under an always-on `catch kind, reason` wrapper (link
-      safety — see this module's moduledoc). An uncaught `raise`/`exit`/`throw`
+    * Each `fun` call runs under an always-on `catch kind, reason` wrapper whose
+      job here is **per-item failure isolation**: an uncaught `raise`/`exit`/`throw`
       becomes `%Item{result: {:error, {:uncaught, kind, reason}}}` and **leaves
-      `acc` unchanged for that item**. It is `catch`, never `rescue`: an exit is
-      not an exception, and Playwright/`GenServer` teardowns arrive as exits.
+      `acc` unchanged for that item**, so the fold degrades one item and keeps
+      folding rather than aborting the run. This is `reduce/5`'s own reason — a
+      sequential fold has no link hazard (the moduledoc's `ProjectRefreshPipeline`
+      sibling makes the same point) — and it also keeps `reduce/5` behaviourally
+      equivalent to the concurrent fan-out's always-on catch. It is `catch`,
+      never `rescue`: an exit is not an exception, and Playwright/`GenServer`
+      teardowns arrive as exits. (Link safety proper applies only to the
+      `Task.async_stream` path in `Dsl.Runtime.run_concurrent/7`.)
     * `fun`'s `item_result` is wrapped into `%Item{}`: a 3-tuple
       `{:ok, value, %StepLog{}}` carries the producing step log onto
       `%Item{step_log: …}`; every other shape leaves it `nil`.

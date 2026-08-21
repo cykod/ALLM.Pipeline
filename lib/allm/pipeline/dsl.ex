@@ -697,18 +697,19 @@ defmodule ALLM.Pipeline.Dsl do
 
   defp validate_skip_when!(module, label, value) do
     if opt_ref?(value) do
-      {validate_opt_ref!(module, label, value, fn _default -> true end, skip_when_opt_message()),
-       []}
+      # Message inlined at the call site, matching `concurrency:`'s form (4.5.5 F2).
+      {validate_opt_ref!(
+         module,
+         label,
+         value,
+         fn _default -> true end,
+         "`skip_when:` must be a 1-arity `(ctx)` hook (a bare atom naming one, or an " <>
+           "`fn ctx -> … end`) or the data form `{:opt, key, default}` (Phase 4.5.5 removed " <>
+           "the 2-tuple `{:opt, key}`: one notation, one meaning)"
+       ), []}
     else
       hook(value, :skip_when)
     end
-  end
-
-  @spec skip_when_opt_message() :: String.t()
-  defp skip_when_opt_message do
-    "`skip_when:` must be a 1-arity `(ctx)` hook (a bare atom naming one, or an " <>
-      "`fn ctx -> … end`) or the data form `{:opt, key, default}` (Phase 4.5.5 removed the " <>
-      "2-tuple `{:opt, key}`: one notation, one meaning)"
   end
 
   @spec validate_carry!(module(), String.t(), Macro.t()) :: Macro.t()
@@ -925,19 +926,25 @@ defmodule ALLM.Pipeline.Dsl do
   # rejected — the compile-time signal `skip_when:` lacked before 4.5.5.
   @spec validate_opt_ref!(module(), String.t(), Macro.t(), (term() -> boolean()), String.t()) ::
           Macro.t()
-  defp validate_opt_ref!(module, label, {:{}, _, [:opt, key, default]} = value, default_ok?, base)
+  defp validate_opt_ref!(
+         module,
+         label,
+         {:{}, _, [:opt, key, default]} = value,
+         default_ok?,
+         base_message
+       )
        when is_atom(key) do
     if default_ok?.(default) do
       value
     else
       raise ArgumentError,
-            "#{inspect(module)}: `#{label}`'s #{base}, got: #{Macro.to_string(value)}"
+            "#{inspect(module)}: `#{label}`'s #{base_message}, got: #{Macro.to_string(value)}"
     end
   end
 
-  defp validate_opt_ref!(module, label, other, _default_ok?, base) do
+  defp validate_opt_ref!(module, label, other, _default_ok?, base_message) do
     raise ArgumentError,
-          "#{inspect(module)}: `#{label}`'s #{base}, got: #{Macro.to_string(other)}"
+          "#{inspect(module)}: `#{label}`'s #{base_message}, got: #{Macro.to_string(other)}"
   end
 
   @spec fetch_name!(module(), Macro.t()) :: String.t()
