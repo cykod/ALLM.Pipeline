@@ -113,7 +113,9 @@ defmodule ALLM.Pipeline.FanOut do
   This is the FUNCTION form of a `body:`-mode `fan_out`: an ordinary `stage`
   body calls it instead of declaring the mode. It owns exactly the properties
   §8.3 of the DSL review found genuinely need centralising — the always-on
-  link-safe catch, the `%Item{}` wrapping with its producing-step-log capture,
+  per-item catch (failure isolation, not link safety — `reduce/5` is
+  sequential; see the bullet below), the `%Item{}` wrapping with its
+  producing-step-log capture,
   and per-item lineage — and pushes `section:`/`delay:`/`over:` back to the
   caller as ordinary code.
 
