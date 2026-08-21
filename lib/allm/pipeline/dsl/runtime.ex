@@ -738,7 +738,6 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
 
   @spec skip?(Stage.skip_spec() | nil, Context.t()) :: boolean()
   defp skip?(nil, _ctx), do: false
-  defp skip?({:opt, key}, ctx), do: !!Context.get_opt(ctx, key)
   defp skip?({:opt, key, default}, ctx), do: !!Context.get_opt(ctx, key, default)
   defp skip?(fun, ctx) when is_function(fun, 1), do: !!fun.(ctx)
 
@@ -800,7 +799,6 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   defp resolve_opt({:opt, key, default}, opts) when is_atom(key),
     do: Keyword.get(opts, key, default)
 
-  defp resolve_opt({:opt, key}, opts) when is_atom(key), do: Keyword.get(opts, key)
   defp resolve_opt(value, _opts), do: value
 
   @spec context(PipelineRun.t(), keyword(), state(), Ecto.UUID.t() | nil) :: Context.t()

@@ -275,7 +275,7 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
     alias ALLM.Pipeline.Dsl.RuntimeTest.{EchoStep, SecondStep}
 
     stage(:first, EchoStep, input: :first_input, carry: [:value])
-    stage(:middle, SecondStep, input: :middle_input, skip_when: {:opt, :skip_middle})
+    stage(:middle, SecondStep, input: :middle_input, skip_when: {:opt, :skip_middle, false})
     stage(:last, SecondStep, input: :last_input)
 
     defp first_input(_ctx, _prev), do: %EchoStep.Input{value: "carried"}

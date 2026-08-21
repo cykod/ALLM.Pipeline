@@ -37,7 +37,7 @@ defmodule ALLM.Pipeline.Dsl do
   | `input:` | `(ctx, subject)` |
   | `over:` | `(previous_stage_output)` |
   | `body:` / escape-hatch stage | `(ctx, subject)` |
-  | `skip_when:` | `(ctx)` — or the data form `{:opt, key}` / `{:opt, key, default}` |
+  | `skip_when:` | `(ctx)` — or the data form `{:opt, key, default}` |
   | `metrics …, from:` | `(summary)` |
   | `summarize` | `(acc, ctx)` |
   | `resource …, start:` | `(ctx)` |
@@ -663,7 +663,7 @@ defmodule ALLM.Pipeline.Dsl do
         {:ok, value} -> validate_concurrency!(module, value, label)
       end
 
-    {skip_when, skip_atoms} = validate_skip_when!(Keyword.get(opts, :skip_when))
+    {skip_when, skip_atoms} = validate_skip_when!(module, label, Keyword.get(opts, :skip_when))
 
     scalars = [
       skip_when: skip_when,
@@ -684,9 +684,32 @@ defmodule ALLM.Pipeline.Dsl do
     {scalars, skip_atoms}
   end
 
-  @spec validate_skip_when!(Macro.t() | nil) :: {Macro.t() | nil, [{atom(), atom(), arity()}]}
-  defp validate_skip_when!(nil), do: {nil, []}
-  defp validate_skip_when!(value), do: hook(value, :skip_when)
+  # `skip_when:` is either a 1-arity `(ctx)` hook (a bare atom naming one, or an
+  # `fn`) — routed through `hook/2` as any hook — OR the `{:opt, key, default}`
+  # data form, which since Phase 4.5.5 is validated by the SAME
+  # `validate_opt_ref!/5` that backs `concurrency:` (one notation, one meaning).
+  # An `{:opt, …}`-shaped value in any other arity (the old 2-tuple `{:opt, key}`,
+  # a 4-tuple, …) is a compile error naming the stage, rather than the silent
+  # runtime `FunctionClauseError` it used to be in `skip?/2`.
+  @spec validate_skip_when!(module(), String.t(), Macro.t() | nil) ::
+          {Macro.t() | nil, [{atom(), atom(), arity()}]}
+  defp validate_skip_when!(_module, _label, nil), do: {nil, []}
+
+  defp validate_skip_when!(module, label, value) do
+    if opt_ref?(value) do
+      {validate_opt_ref!(module, label, value, fn _default -> true end, skip_when_opt_message()),
+       []}
+    else
+      hook(value, :skip_when)
+    end
+  end
+
+  @spec skip_when_opt_message() :: String.t()
+  defp skip_when_opt_message do
+    "`skip_when:` must be a 1-arity `(ctx)` hook (a bare atom naming one, or an " <>
+      "`fn ctx -> … end`) or the data form `{:opt, key, default}` (Phase 4.5.5 removed the " <>
+      "2-tuple `{:opt, key}`: one notation, one meaning)"
+  end
 
   @spec validate_carry!(module(), String.t(), Macro.t()) :: Macro.t()
   defp validate_carry!(module, label, value) do
@@ -859,36 +882,62 @@ defmodule ALLM.Pipeline.Dsl do
           "#{inspect(module)}: `#{label}`'s `concurrency:` must be a positive integer, got: #{n}"
   end
 
-  # A 3-element tuple is `{:{}, meta, elements}` in quoted form — which is the
-  # ONLY shape `{:opt, key, default}` can arrive in here, since `__validate__!/2`
-  # is handed quoted opts. (`Runtime.resolve_opt/2`, which sees the RUNTIME
-  # value, matches the real tuple; the two are different sides of the same
-  # `unquote`.) Validated directly rather than by recursing on a reconstructed
-  # tuple: the recursion could only ever reach the raising catch-all, which
-  # dialyzer reports as `call … will not succeed`.
-  #
-  # Returned as the QUOTED tuple it arrived as (the shared rule for every
-  # `{:opt, …}`-shaped option — `validate_ms!/3` was its sibling until Phase 4.5
-  # removed `delay:`): BOTH of this value's splice sites put
-  # it back inside a `quote`, where a real 3-element tuple is not a valid AST
-  # node — `__stage_ast__/1`'s `{:%{}, [], fields}` and
-  # `ALLM.Pipeline.__before_compile__/1`'s `def __pipeline__(:concurrency)`.
-  # This clause returned the REAL tuple until Phase 4.4, under a comment
-  # asserting that `Macro.escape/1` covered it; `accumulate/1`'s escape runs
-  # BEFORE the splice (it round-trips the spec through a module attribute) and
-  # therefore does not. The whole `{:opt, …}` concurrency form was a compile
-  # error — `** (CompileError) invalid quoted expression: {:opt, :concurrency, 2}`
-  # — and unreachable for any consumer, which is why `committee`'s port is the
-  # first thing to hit it.
-  defp validate_concurrency!(_module, {:{}, _, [:opt, key, default]} = value, _label)
-       when is_atom(key) and is_integer(default) and default > 0,
-       do: value
-
+  # Anything non-integer is either the `{:opt, key, default}` data form or a
+  # mistake; both are handled by the shared `validate_opt_ref!/5`, whose default
+  # predicate here demands a positive integer default so a resolved
+  # `--concurrency` still yields a valid concurrency.
   defp validate_concurrency!(module, other, label) do
+    validate_opt_ref!(
+      module,
+      label,
+      other,
+      &(is_integer(&1) and &1 > 0),
+      "`concurrency:` must be a positive integer or `{:opt, key, default}` " <>
+        "(so a CLI flag can still reach it)"
+    )
+  end
+
+  # Is this quoted value an `{:opt, …}` reference in ANY arity? Both the
+  # self-quoting 2-tuple `{:opt, key}` (2-tuples quote to themselves) and the
+  # escaped n-tuple `{:{}, _, [:opt | _]}`. Used to route only opt-shaped values
+  # to `validate_opt_ref!/5`, so a `skip_when:` hook atom or `fn` still passes
+  # through `hook/2` untouched.
+  @spec opt_ref?(Macro.t()) :: boolean()
+  defp opt_ref?({:opt, _}), do: true
+  defp opt_ref?({:{}, _, [:opt | _]}), do: true
+  defp opt_ref?(_), do: false
+
+  # The ONE validator for the `{:opt, key, default}` data form, shared by
+  # `concurrency:` and `skip_when:` since Phase 4.5.5 collapsed the mini-language
+  # to this single 3-tuple shape. It accepts ONLY the quoted 3-tuple
+  # `{:{}, _, [:opt, key, default]}` with an atom key and a `default_ok?` default,
+  # and RETURNS the quoted tuple it arrived as — BOTH consumers splice the result
+  # back inside a `quote`, where a real 3-element tuple is not a valid AST node
+  # (package `CLAUDE.md` §7): `__stage_ast__/1`'s `{:%{}, [], fields}` and
+  # `ALLM.Pipeline.__before_compile__/1`'s `def __pipeline__(:concurrency)`. The
+  # escaped `{:{}, _, [...]}` is already the form the splice needs; returning the
+  # REAL tuple (as `validate_concurrency!` did until Phase 4.4) is
+  # `** (CompileError) invalid quoted expression` at the using module, naming
+  # neither the option nor this file. `default_ok?` is the option-specific
+  # predicate on the default; `base_message` describes the accepted forms for the
+  # rejection, which names the declaration's `label` (its stage). The 2-tuple
+  # `{:opt, key}` and any other arity fall to the catch-all clause and are
+  # rejected — the compile-time signal `skip_when:` lacked before 4.5.5.
+  @spec validate_opt_ref!(module(), String.t(), Macro.t(), (term() -> boolean()), String.t()) ::
+          Macro.t()
+  defp validate_opt_ref!(module, label, {:{}, _, [:opt, key, default]} = value, default_ok?, base)
+       when is_atom(key) do
+    if default_ok?.(default) do
+      value
+    else
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}`'s #{base}, got: #{Macro.to_string(value)}"
+    end
+  end
+
+  defp validate_opt_ref!(module, label, other, _default_ok?, base) do
     raise ArgumentError,
-          "#{inspect(module)}: `#{label}`'s `concurrency:` must be a positive integer or " <>
-            "`{:opt, key, default}` (so a CLI flag can still reach it), " <>
-            "got: #{Macro.to_string(other)}"
+          "#{inspect(module)}: `#{label}`'s #{base}, got: #{Macro.to_string(other)}"
   end
 
   @spec fetch_name!(module(), Macro.t()) :: String.t()

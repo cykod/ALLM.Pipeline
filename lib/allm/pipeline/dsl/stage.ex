@@ -23,7 +23,7 @@ defmodule ALLM.Pipeline.Dsl.Stage do
   | `body` | the escape-hatch / per-item body, arity 2 `(ctx, subject)`, or `nil` |
   | `input` | arity-2 `(ctx, subject)` hook building the Step's input struct |
   | `over` | `fan_out` only: arity-1 `(prev_output)` hook returning the item list |
-  | `skip_when` | `{:opt, key}` / `{:opt, key, default}` / arity-1 `(ctx)` hook, or `nil` |
+  | `skip_when` | `{:opt, key, default}` / arity-1 `(ctx)` hook, or `nil` |
   | `carry` | field names captured into the context's carry map — `stage` and `child_pipeline` only, see below |
   | `parent` | `:source_stage` (default) or `:per_item` — see the moduledoc of `ALLM.Pipeline` |
   | `concurrency` | `nil` (inherit the pipeline's), a `pos_integer()`, or `{:opt, key, default}` |
@@ -69,8 +69,7 @@ defmodule ALLM.Pipeline.Dsl.Stage do
 
   @type concurrency_spec :: pos_integer() | {:opt, atom(), pos_integer()}
   @type skip_spec ::
-          {:opt, atom()}
-          | {:opt, atom(), term()}
+          {:opt, atom(), term()}
           | (ALLM.Pipeline.Context.t() -> as_boolean(term()))
 
   @typedoc """

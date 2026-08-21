@@ -269,6 +269,34 @@ defmodule ALLM.Pipeline.DslTest do
     end
   end
 
+  describe "`skip_when: {:opt, …}`" do
+    # Phase 4.5.5 collapsed the `{:opt, …}` mini-language to ONE 3-tuple shape,
+    # validated by the SAME `validate_opt_ref!/5` that backs `concurrency:`.
+    # Before this, `skip_when:` routed straight through `hook/2` with NO tuple
+    # validation, so a malformed 2-tuple `{:opt, key}` compiled silently and
+    # only blew up at runtime inside `skip?/2`, naming no stage. This is the
+    # discriminating red-first test: at HEAD the 2-tuple compiles clean.
+    test "a 2-tuple `{:opt, key}` is a compile error naming the stage" do
+      assert_raise ArgumentError, ~r/stage :s.*skip_when:/s, fn ->
+        compile!("""
+        use ALLM.Pipeline, name: "x"
+        stage :s, (fn _, _ -> {:ok, 1} end), skip_when: {:opt, :flag}
+        """)
+      end
+    end
+
+    test "the 3-tuple `{:opt, key, default}` compiles and reaches the stage struct" do
+      {{:module, module, _bin, _exports}, _bindings} =
+        compile!("""
+        use ALLM.Pipeline, name: "x"
+        stage :s, (fn _, _ -> {:ok, 1} end), skip_when: {:opt, :flag, false}
+        """)
+
+      [stage] = module.__pipeline__(:stages)
+      assert stage.skip_when == {:opt, :flag, false}
+    end
+  end
+
   describe "compile-time rejections" do
     test "an unknown `use` option" do
       assert_raise ArgumentError, ~r/unknown `use ALLM.Pipeline` option\(s\) \[:registry\]/, fn ->
