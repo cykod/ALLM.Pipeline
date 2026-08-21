@@ -12,8 +12,10 @@ defmodule ALLM.Pipeline do
   `rescue` at all.
 
   The example below is the declaration `meeting_agenda` **actually ships** as of
-  Phase 4.2 — the first production port — not a sketch. Two of its choices are
-  the ones that cost the port the most thought, and both are annotated.
+  Phase 4.5 — not a sketch. Its per-meeting fan-out is a plain `stage` whose body
+  calls `ALLM.Pipeline.FanOut.reduce/5`: Phase 4.5 retired `body:`-mode `fan_out`
+  (and its `section:`/`delay:` sub-surface) in favour of ordinary code, keeping
+  declarative `fan_out` for Step-module targets only.
 
       defmodule MeetingAgendaPipeline do
         use ALLM.Pipeline,
@@ -21,18 +23,17 @@ defmodule ALLM.Pipeline do
           metadata: :run_metadata,
           complete_metadata: :serialize_metrics,
           init: :init_metrics,
-          concurrency: 1
+          concurrency: 1,
+          summary_type: :stats
 
         stage :committee_cache, fn _ctx, _prev -> {:ok, ensure_committee_cache()} end
         stage :list, MeetingListScraper, input: :build_list_input
 
-        # NO `gate:` — see "A `gate:` is SILENT" below.
-        fan_out :meeting,
-          over: :meetings_from,
-          section: :section_title,
-          parent: :source_stage,
-          delay: [ms: {:opt, :delay_ms, 2000}, when: :processed],
-          body: :process_single_meeting
+        # The per-meeting fan-out is a plain `stage` whose body calls
+        # `FanOut.reduce/5`. The framework owns the link-safe catch, the `%Item{}`
+        # wrapping and per-item lineage; the section log and the politeness delay
+        # are ordinary code in the body below.
+        stage :meeting, :fan_out_meetings
 
         # Run-level counters folded into the accumulator AFTER the fan-out, because
         # `complete_metadata:` is handed the ACCUMULATOR, not what `summarize`
@@ -44,30 +45,40 @@ defmodule ALLM.Pipeline do
         summarize :finalize
       end
 
-  ## A `gate:` is SILENT — a body that must count its own skips declares none
+      # The `:meeting` stage body. `FanOut.reduce/5` folds `fold_one/3` over the
+      # scraped meetings, threading the accumulator; the outer 2-tuple `{:ok, items}`
+      # is lineage-transparent, so `:tally` still receives the `[Item.t()]` list.
+      defp fan_out_meetings(ctx, prev) do
+        {items, acc} =
+          FanOut.reduce(ctx, prev.meetings, Context.accumulator(ctx), &fold_one/3,
+            parent: :source_stage)
 
-  This is the single most transferable lesson the first port produced, and it is
-  easy to get backwards: `gate:` looks like the declarative way to express "skip
-  this item", so the obvious move is to reach for it.
+        {{:ok, items}, acc}
+      end
 
-  A gated-out item writes **no step log** (D8, below) and, more importantly, the
-  accumulator's **only** write channel is the body's `{item_result, acc}` return.
-  So the DSL cannot increment a counter on a gated-out item's behalf. If the
-  pipeline reports a skip count anywhere — its `metrics` funnel's `skipped:`,
-  `pipeline_runs.metadata`, its own `summarize` return — declaring `gate:` zeroes
-  it, silently and in every one of those places at once.
+  ## Counting a skip — the accumulator's only write channel
 
-  Rule: **`gate:` is for a skip nothing downstream needs to count.** When the
-  skip must be recorded, keep the decision inside the body and return
-  `{{:skipped, payload}, updated_acc}`. `meeting_agenda` does exactly that;
-  the reasoning is `steering/2026-08-20_ALLM_PIPELINE_PHASE_4_RECORDS.md` → 4.2
-  Deviations D-8 and D-9.
+  The accumulator's **only** write channel is a body's `{item_result, acc}`
+  return. So a skip the pipeline needs to COUNT — in its `metrics` funnel's
+  `skipped:`, in `pipeline_runs.metadata`, in its own `summarize` return — must
+  keep the decision **inside the body** and return `{{:skipped, payload},
+  updated_acc}`. `meeting_agenda` does exactly that; the reasoning is
+  `steering/2026-08-20_ALLM_PIPELINE_PHASE_4_RECORDS.md` → 4.2 Deviations D-8 and
+  D-9.
+
+  (Phase 4 had a declarative `gate:` fan_out option that looked like the way to
+  express "skip this item". It wrote **no step log** and could not touch the
+  accumulator, so declaring it zeroed any skip count silently and in every place
+  at once. It was removed in Phase 4.5.3 for exactly that reason —
+  `steering/ALLM_PIPELINE_DSL.md` §4.2 carries the lesson.)
 
   ## The scope is the SKELETON, not the body
 
-  The DSL owns run creation, the lineage parent, fan-out, sections, skips,
-  politeness delays, metrics and the terminal write. It wraps a per-item body
-  that stays an **ordinary Elixir function** — `meeting_agenda`'s
+  The DSL owns run creation, the lineage parent, fan-out, skips, metrics and the
+  terminal write. It wraps a per-item body that stays an **ordinary Elixir
+  function** — and a section log and a politeness delay are now ordinary calls in
+  that body, not `section:`/`delay:` options (removed in Phase 4.5.2). So
+  `meeting_agenda`'s
   `process_single_meeting/2` and the call graph under it, the largest body in the
   tree, with its runtime Step-module selection by committee name, is untouched by
   the port. (This read "~600-line" until 2026-08-20; the real figure was ~750 and
@@ -97,9 +108,8 @@ defmodule ALLM.Pipeline do
          └─ the OWNING handle never leaves the generated run/1
       2. run stages in declaration order      ─┐
            stage    → Executor.run_step        │
-           fan_out  → per item: section? gate? │  try / rescue / catch
-                      skip? body, then delay?  │
-           stage/fn → escape hatch             │
+           fan_out  → per item: run the Step   │  try / rescue / catch
+           stage/fn → escape hatch (a body)    │
       3. summarize_hook.(acc, ctx)             │
       4. Metrics.record(run, entity, funnel)   │
       5. terminal write: complete/2 or fail/2 ─┘
@@ -155,7 +165,8 @@ defmodule ALLM.Pipeline do
 
   ## The item-result contract
 
-  Every `fan_out` body and every escape-hatch `stage` returns one of:
+  Every escape-hatch `stage` body returns one of (a `fan_out` targets a Step
+  module and has no body — its item results come from the Step's `execute/2`):
 
       {:ok, term()}                                # lineage-transparent
       {:ok, term(), ALLM.Pipeline.StepLog.t()}     # nominate a new lineage parent
@@ -196,10 +207,13 @@ defmodule ALLM.Pipeline do
     stage that was skipped. It is a **detector, not a gate**: it does not
     prevent the type mismatch (that would need a declared `skip_to:`
     pass-through, deferred to Phase 5) — it only makes it diagnosable.
-  * `section:` emits a **sibling leaf and is never the lineage parent**.
-    `Executor.log_section/3` writes a real `step_logs` row, so the natural
-    reading of "per item: section → gate → body" would make it the item's parent
-    and change every edge under it. It does not.
+  * A **section log is a sibling leaf, never the lineage parent**. A body that
+    groups its items calls `Executor.log_section(run, title,
+    Context.input_step_id(ctx))` — passing the *source* parent, not the section's
+    own id — so the real `step_logs` row it writes never becomes the parent of
+    the steps under it. (Phase 4 had a `section:` fan_out option that did this
+    automatically; 4.5.2 removed it, so a section is now an ordinary call in the
+    body — `meeting_agenda`'s `fold_one/3` is the worked example.)
   * `fan_out`'s `parent:` has two modes and both ports need a different one:
     `:source_stage` (default) parents every item's steps to the fan-out's source
     stage — `meeting_agenda`'s flat tree — while `:per_item` takes
@@ -245,6 +259,11 @@ defmodule ALLM.Pipeline do
   teardown after the write could not record a failure anywhere, because the row
   is already terminal. Full contract: `ALLM.Pipeline.Dsl.Resource`.
 
+  > **No production consumer as of Phase 4.5 — deadlined to Phase 5.** `resource`
+  > is wired into a named Phase 5 port that consumes it, or removed (§8.6 Rec 3;
+  > `.work/HANDOFF.md`). Kept, not deleted, because Phase 5's browser/session
+  > ports are its intended consumers.
+
   ## `child_pipeline` — invoke another pipeline, linked
 
       child_pipeline :enrich, OtherPipeline, :run, args: :enrich_args
@@ -263,6 +282,11 @@ defmodule ALLM.Pipeline do
   points before writing the atom. A DSL-declared child lifts that opt into
   `create_pipeline_run/3`'s attrs, so it lands in the `parent_run_id` COLUMN and
   stays SQL/GraphQL-filterable rather than becoming a metadata key.
+
+  > **No production consumer as of Phase 4.5 — deadlined to Phase 5.**
+  > `child_pipeline` is wired into a named Phase 5 port that consumes it, or
+  > removed (§8.6 Rec 3; `.work/HANDOFF.md`). Kept, not deleted, because Phase 5's
+  > umbrella ports are its intended consumers.
 
   ## Running under a borrowed run
 
@@ -326,7 +350,7 @@ defmodule ALLM.Pipeline do
 
   The accepted cost: a pipeline cannot be dry-runnable when self-owned **and**
   lendable otherwise. A pipeline needing both splits into two declarations, or
-  keeps a `skip_when: {:opt, :dry_run}` on its write stage (the second meaning
+  keeps a `skip_when: {:opt, :dry_run, false}` on its write stage (the second meaning
   below), which composes with `borrowed_run:` freely.
 
   **`--dry-run` means two different things in the four hand-written host
@@ -338,8 +362,8 @@ defmodule ALLM.Pipeline do
   |---|---|---|
   | `PoiThumbnailPipeline` (`run_dry/2`) | **Skip everything.** Resolve the working set, log a section per item, complete. No step runs. | `dry_run:` |
   | `ProjectRefreshPipeline` | **Skip everything.** Compute the cohorts, log the summary, invoke no sub-pipeline. | `dry_run:` |
-  | `VideoPipeline` | **Skip only the WRITE.** The LLM match step still runs and still spends tokens; only `apply_assignments/1` is skipped. | a `skip_when: {:opt, :dry_run}` on the write stage |
-  | `RvcsPipeline` | **Skip only the WRITE.** Agenda and minutes are still fetched and transformed; only the loader is skipped. It also increments `meetings_processed` on the dry path, which the framework version does not. | a `skip_when: {:opt, :dry_run}` on the write stage |
+  | `VideoPipeline` | **Skip only the WRITE.** The LLM match step still runs and still spends tokens; only `apply_assignments/1` is skipped. | a `skip_when: {:opt, :dry_run, false}` on the write stage |
+  | `RvcsPipeline` | **Skip only the WRITE.** Agenda and minutes are still fetched and transformed; only the loader is skipped. It also increments `meetings_processed` on the dry path, which the framework version does not. | a `skip_when: {:opt, :dry_run, false}` on the write stage |
 
   A pipeline wanting the second meaning does **not** declare `dry_run:`; it
   keeps a `skip_when:` on its write stage, which is already expressible and
@@ -367,12 +391,18 @@ defmodule ALLM.Pipeline do
   attempt's `{item_result, acc}` is the one that survives, and every attempt
   sees the same context.
 
+  > **No production consumer as of Phase 4.5 — deadlined to Phase 5.** No pipeline
+  > declares `retry:` (nor `catch_item_failures:`); both are wired into a named
+  > Phase 5 port that consumes them, or removed (§8.6 Rec 3; `.work/HANDOFF.md`).
+  > Kept, not deleted, because Phase 5's rate-limited LLM ports are their intended
+  > consumers.
+
   ## Ownership
 
   The generated `run/1` obtains its handle from
   `Executor.create_pipeline_run/3` and **the owning handle never leaves
   `Dsl.Runtime`** — not to a hook, and not through a return value. Every stage
-  body, `gate:`, `section:`, `over:`, `input:`, `skip_when:` and `summarize`
+  body, `over:`, `input:`, `skip_when:` and `summarize`
   hook sees the borrowed projection (`PipelineRun.borrow/1`), so a body
   observing `ctx.pipeline_run` cannot complete its own parent run; and
   `returns: :run` hands back the completed run **borrowed**, because

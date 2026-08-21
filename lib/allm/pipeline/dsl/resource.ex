@@ -40,6 +40,11 @@ defmodule ALLM.Pipeline.Dsl.Resource do
 
   `release/2` releases in **reverse** declaration order (LIFO), which is what a
   resource declared *after* another and depending on it needs.
+
+  > **No production consumer as of Phase 4.5 — deadlined to Phase 5.** No pipeline
+  > declares a `resource` yet; it is wired into a named Phase 5 port that consumes
+  > it, or removed (§8.6 Rec 3; `.work/HANDOFF.md`). Kept, tested, and not deleted
+  > because Phase 5's browser/session ports are its intended consumers.
   """
 
   alias ALLM.Pipeline.{Context, Encodable}

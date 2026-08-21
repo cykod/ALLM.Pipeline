@@ -33,7 +33,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   and is passed to no hook and to no return value. (`run_borrowed/4` never sees
   one: on that path the umbrella owns the run and this pipeline terminates
   nothing.) Re-derive rather than trusting the list:
-  `grep -n 'owning' apps/allm_pipeline/lib/allm/pipeline/dsl/runtime.ex`. Every `Context` a stage body, `gate:`, `section:`, `over:`,
+  `grep -n 'owning' apps/allm_pipeline/lib/allm/pipeline/dsl/runtime.ex`. Every `Context` a stage body, `over:`,
   `input:`, `skip_when:` or `summarize` hook receives is built from
   `PipelineRun.borrow/1`'s projection, so a body reading `ctx.pipeline_run`
   cannot complete its own parent run. `returns: :run` hands back the completed
@@ -66,7 +66,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
 
   require Logger
 
-  @typedoc "The value a `fan_out` body or escape-hatch `stage` returns, once normalized."
+  @typedoc "The value a `FanOut.reduce/5` fold function or escape-hatch `stage` body returns, once normalized."
   @type item_result :: FanOut.item_result()
 
   @typedoc "Whether a body wrote the accumulator."
@@ -740,7 +740,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
 
   defp assert_no_concurrent_fold!(%Stage{name: name}, {:update, _acc}) do
     raise ArgumentError,
-          "fan_out :#{name} runs at concurrency > 1 and its body returned the " <>
+          "fan_out :#{name} runs at concurrency > 1 and its fold returned the " <>
             "`{item_result, accumulator}` form. The two do not compose — the fold order is " <>
             "undefined. Return a bare item result and aggregate in `summarize`, or declare " <>
             "`concurrency: 1`."

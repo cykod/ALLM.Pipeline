@@ -1,7 +1,7 @@
 defmodule ALLM.Pipeline.Context do
   @moduledoc """
   Pipeline execution context passed to each step — and, since Phase 4, to every
-  `ALLM.Pipeline` escape-hatch body and `fan_out` body as well.
+  `ALLM.Pipeline` escape-hatch body and `FanOut.reduce/5` fold function as well.
 
   Contains the current pipeline run and step log, allowing steps to access
   pipeline-level information and log additional data.
@@ -146,8 +146,8 @@ defmodule ALLM.Pipeline.Context do
   @doc """
   The lineage parent this unit was invoked under.
 
-  For a step, the step log's own `input_step_id`. For an escape-hatch or
-  `fan_out` body, the id of the last successfully executed step's log — which
+  For a step, the step log's own `input_step_id`. For an escape-hatch body or
+  `FanOut.reduce/5` fold function, the id of the last successfully executed step's log — which
   the body threads to its own `ALLM.Pipeline.Executor.run_step/5` calls exactly
   as hand-written orchestrator code does today. Lineage **in** is free; lineage
   **out** is by hand (Phase 4 D2).

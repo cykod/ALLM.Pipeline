@@ -187,7 +187,7 @@ accumulates a spec containing AST onto `@allm_pipeline_stages`, and
   and why the arity in `Dsl.__hook_arities__/0` is load-bearing twice over: it
   is what the capture is built at AND what `Dsl.__assert_hooks_defined__!/2`
   checks the module defines. Change one and you have silently changed the
-  other. That attribute is the **single source** for every hook arity — 16
+  other. That attribute is the **single source** for every hook arity — 13
   (`MIX_ENV=test mix run --no-start -e 'IO.puts(length(ALLM.Pipeline.Dsl.__hook_arities__()))'`);
   do not restate one at a call site or in a doc table (`hook/2` looks it up),
   and `dsl_test.exs`'s "every hook option has exactly one declared arity" pins
@@ -220,12 +220,6 @@ leaves the other a compile error.
 every Step module as a hook — and the failure is a `FunctionClauseError` at the
 first live run, not a compile error. `dsl_test.exs`'s "an alias is the Step
 form, never a hook" pins it.
-
-**Two literals are reserved inside `delay: [when: …]`** — `:processed` and
-`:always`. Every *other* atom there is a hook name. Without that carve-out an
-implementer writing `when: :processed` would get a capture of a `processed/1`
-the module does not define, and the error would name a function they never
-wrote.
 
 **Validator argument order is `(module, opts)`.** `Dsl.__validate__!/2` matches
 `Registry.__validate__!/2`, `LLMStep.__validate__!/2` and `Schema`'s
