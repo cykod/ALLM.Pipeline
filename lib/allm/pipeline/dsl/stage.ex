@@ -23,11 +23,9 @@ defmodule ALLM.Pipeline.Dsl.Stage do
   | `body` | the escape-hatch / per-item body, arity 2 `(ctx, subject)`, or `nil` |
   | `input` | arity-2 `(ctx, subject)` hook building the Step's input struct |
   | `over` | `fan_out` only: arity-1 `(prev_output)` hook returning the item list |
-  | `section` | arity-1 `(item)` hook returning a section title, or `nil` |
   | `gate` | arity-2 `(item, opts)` hook; its result is bound into the item context's `carry` under `:gate` |
   | `skip_when` | `{:opt, key}` / `{:opt, key, default}` / arity-1 `(ctx)` hook, or `nil` |
   | `carry` | field names captured into the context's carry map — **scope differs by kind, see below** |
-  | `delay` | `nil`, or `%{ms: ms_spec, when: :processed \\| :always \\| fun}` |
   | `parent` | `:source_stage` (default) or `:per_item` — see the moduledoc of `ALLM.Pipeline` |
   | `concurrency` | `nil` (inherit the pipeline's), a `pos_integer()`, or `{:opt, key, default}` |
   | `catch_item_failures` | sequential `fan_out` only; a concurrent one is always wrapped (D7) |
@@ -69,16 +67,11 @@ defmodule ALLM.Pipeline.Dsl.Stage do
   / `step_log` and no domain fields at all.
   """
 
-  @type ms_spec :: non_neg_integer() | {:opt, atom(), non_neg_integer()}
   @type concurrency_spec :: pos_integer() | {:opt, atom(), pos_integer()}
   @type skip_spec ::
           {:opt, atom()}
           | {:opt, atom(), term()}
           | (ALLM.Pipeline.Context.t() -> as_boolean(term()))
-  @type delay_spec :: %{
-          ms: ms_spec(),
-          when: :processed | :always | (term() -> as_boolean(term()))
-        }
 
   @typedoc """
   A validated `retry:` declaration. `on: :any` retries every `{:error, _}`; a
@@ -107,11 +100,9 @@ defmodule ALLM.Pipeline.Dsl.Stage do
           body: (ALLM.Pipeline.Context.t(), term() -> term()) | nil,
           input: (ALLM.Pipeline.Context.t(), term() -> struct()) | nil,
           over: (term() -> [term()]) | nil,
-          section: (term() -> String.t()) | nil,
           gate: (term(), keyword() -> term()) | nil,
           skip_when: skip_spec() | nil,
           carry: [atom()],
-          delay: delay_spec() | nil,
           parent: :source_stage | :per_item,
           concurrency: concurrency_spec() | nil,
           catch_item_failures: boolean(),
@@ -128,10 +119,8 @@ defmodule ALLM.Pipeline.Dsl.Stage do
     :body,
     :input,
     :over,
-    :section,
     :gate,
     :skip_when,
-    :delay,
     :concurrency,
     :retry,
     :child,

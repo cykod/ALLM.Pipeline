@@ -18,7 +18,7 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
   import Ecto.Query
   import ExUnit.CaptureLog
 
-  alias ALLM.Pipeline.{Config, Context, Metrics, PipelineMetric, PipelineRun, StepLog}
+  alias ALLM.Pipeline.{Config, Context, FanOut, Metrics, PipelineMetric, PipelineRun, StepLog}
   alias ALLM.Pipeline.Dsl.Item
 
   setup tags do
@@ -144,6 +144,45 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
     def execute(_context, %Input{}), do: {:error, :deliberate}
   end
 
+  defmodule ExitingStep do
+    @moduledoc false
+    @behaviour ALLM.Pipeline.Step
+
+    defmodule Input do
+      @moduledoc false
+      use Ecto.Schema
+      @primary_key false
+      embedded_schema do
+        field(:value, :string)
+      end
+    end
+
+    defmodule Output do
+      @moduledoc false
+      use Ecto.Schema
+      @primary_key false
+      embedded_schema do
+        field(:value, :string)
+      end
+    end
+
+    @impl true
+    def step_type, do: :dsl_exiting
+
+    @impl true
+    def input_schema, do: Input
+
+    @impl true
+    def output_schema, do: Output
+
+    # An EXIT, not an exception: `Executor.run_step/5`'s `try/rescue` does NOT
+    # catch it, so it propagates to the concurrent fan-out's always-on
+    # `FanOut.guard`, which is the link-safety this step exercises.
+    @impl true
+    def execute(_context, %Input{value: "boom"}), do: exit(:deliberate)
+    def execute(_context, %Input{value: value}), do: {:ok, %Output{value: value}}
+  end
+
   # ── Pipeline fixtures ─────────────────────────────────────────────────────
 
   defmodule TwoStages do
@@ -166,12 +205,11 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
     alias ALLM.Pipeline.Dsl.RuntimeTest.{EchoStep, SecondStep}
 
     stage(:root, EchoStep, input: :root_input)
-    fan_out(:items, SecondStep, over: :three, input: :item_input, section: :title)
+    fan_out(:items, SecondStep, over: :three, input: :item_input)
 
     defp root_input(_ctx, _prev), do: %EchoStep.Input{value: "root"}
     defp three(_prev), do: ["a", "b", "c"]
     defp item_input(_ctx, item), do: %SecondStep.Input{value: item}
-    defp title(item), do: "section #{item}"
   end
 
   defmodule PerItemFanOut do
@@ -205,17 +243,25 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       init: :zero,
       complete_metadata: :as_metadata
 
-    fan_out(:items, over: :three, body: :count_one)
+    # An escape-hatch `stage` body folds the accumulator through
+    # `FanOut.reduce/5` — the function form that replaced body-mode `fan_out`
+    # (Phase 4.5.1). The accumulator's ONLY write channel is the body's
+    # `{item_result, acc}` return, and this pins that it reaches metrics AND
+    # `complete/2`.
+    stage(:items, :count_all)
     metrics("things", from: :funnel)
     summarize(:passthrough)
 
     defp zero, do: 0
-    defp three(_prev), do: [:a, :b, :c]
 
-    # The accumulator's ONLY write channel is this second element. The value it
-    # increments is read back off the context, which is what makes the channel
-    # a round trip rather than a write-only sink.
-    defp count_one(ctx, item), do: {{:ok, item}, Context.accumulator(ctx) + 1}
+    defp count_all(ctx, _prev) do
+      {items, acc} =
+        FanOut.reduce(ctx, [:a, :b, :c], Context.accumulator(ctx), fn _ctx, item, acc ->
+          {{:ok, item}, acc + 1}
+        end)
+
+      {{:ok, items}, acc}
+    end
 
     defp funnel(summary), do: %{found: 3, processed: summary}
     defp passthrough(acc, _ctx), do: acc
@@ -372,141 +418,55 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
     @moduledoc false
     use ALLM.Pipeline, name: "dsl_concurrent_exit"
 
-    fan_out(:items, over: :three, body: :maybe_exit, concurrency: 2)
+    alias ALLM.Pipeline.Dsl.RuntimeTest.ExitingStep
+
+    # A concurrent STEP-target fan_out (body-mode was removed in 4.5.2): an item
+    # whose Step EXITS must fail only itself, because `Task.async_stream` links
+    # its children and the concurrent path wraps each item in the always-on
+    # `FanOut.guard` (`guarded_item/7` passes `true`).
+    fan_out(:items, ExitingStep, over: :three, input: :item_input, concurrency: 2)
 
     # A `fan_out`'s output is its `[Dsl.Item.t()]`, which `summarize` (taking
     # `(acc, ctx)`) cannot see — so a following sequential escape hatch moves it
-    # onto the accumulator. Sequential, so the fold order is defined.
+    # onto the accumulator.
     stage(:collect, fn _ctx, items -> {{:ok, items}, items} end)
 
     summarize(:passthrough)
 
-    defp three(_prev), do: [:a, :boom, :c]
-    defp maybe_exit(_ctx, :boom), do: exit(:deliberate)
-    defp maybe_exit(_ctx, item), do: {:ok, item}
+    defp three(_prev), do: ["a", "boom", "c"]
+    defp item_input(_ctx, item), do: %ExitingStep.Input{value: item}
     defp passthrough(acc, _ctx), do: acc
   end
 
-  defmodule ConcurrentFolding do
-    @moduledoc false
-    use ALLM.Pipeline, name: "dsl_concurrent_folding", init: :zero
-
-    fan_out(:items, over: :three, body: :fold, concurrency: 2)
-
-    defp zero, do: 0
-    defp three(_prev), do: [:a, :b, :c]
-    defp fold(_ctx, item), do: {{:ok, item}, 1}
-  end
-
-  defmodule RaisingUncaught do
+  # The surviving construct that can raise UNCAUGHT is an escape-hatch `stage`
+  # body — a `fan_out`'s Step raise is rescued by `Executor`, and body-mode
+  # `fan_out` was removed. Proves the generated `run/1` still writes a terminal
+  # status on a raise (the orphan-run defect Phase 4 closed).
+  defmodule RaisingBody do
     @moduledoc false
     use ALLM.Pipeline, name: "dsl_raising_uncaught"
 
-    fan_out(:items, over: :three, body: :maybe_raise)
-
-    defp three(_prev), do: [:a, :boom, :c]
-    defp maybe_raise(_ctx, :boom), do: raise("deliberate")
-    defp maybe_raise(_ctx, item), do: {:ok, item}
+    stage(:boom, fn _ctx, _prev -> raise("deliberate") end)
   end
 
-  defmodule RaisingCaught do
-    @moduledoc false
-    use ALLM.Pipeline, name: "dsl_raising_caught", init: :empty
-
-    fan_out(:items, over: :three, body: :maybe_raise, catch_item_failures: true)
-    stage(:collect, fn _ctx, items -> {{:ok, items}, items} end)
-    summarize(:passthrough)
-
-    defp empty, do: []
-    defp three(_prev), do: [:a, :boom, :c]
-    defp maybe_raise(_ctx, :boom), do: raise("deliberate")
-    defp maybe_raise(_ctx, item), do: {:ok, item}
-
-    defp passthrough(acc, _ctx), do: acc
-  end
-
+  # A Step-target fan_out with a `gate:` (Phase 4.5.2 removed body-mode; `gate:`
+  # itself is removed in 4.5.3). The gate skips `:b` and binds each surviving
+  # item's decision into the item context's carry under `:gate`, which the input
+  # hook reads back.
   defmodule GatedFanOut do
     @moduledoc false
-    use ALLM.Pipeline, name: "dsl_gated", init: :empty
+    use ALLM.Pipeline, name: "dsl_gated"
 
-    fan_out(:items, over: :three, gate: :decide, body: :record)
-    summarize(:passthrough)
+    alias ALLM.Pipeline.Dsl.RuntimeTest.SecondStep
 
-    defp empty, do: []
+    fan_out(:items, SecondStep, over: :three, gate: :decide, input: :gated_input)
+
     defp three(_prev), do: [:a, :b, :c]
     defp decide(:b, _opts), do: %{should_process: false, reason: :not_due}
     defp decide(_item, _opts), do: %{should_process: true, reason: nil, actions: [:full]}
 
-    defp record(ctx, item),
-      do: {{:ok, item}, [Context.carried(ctx, :gate).actions | Context.accumulator(ctx)]}
-
-    defp passthrough(acc, _ctx), do: acc
-  end
-
-  defmodule Delaying do
-    @moduledoc false
-    use ALLM.Pipeline, name: "dsl_delaying", init: :empty
-
-    fan_out(:items,
-      over: :three,
-      body: :maybe_ok,
-      delay: [ms: {:opt, :delay_ms, 0}, when: :processed]
-    )
-
-    summarize(:passthrough)
-
-    defp empty, do: []
-    defp three(_prev), do: [:ok_one, :skip_me, :ok_two]
-    defp maybe_ok(_ctx, :skip_me), do: {:skipped, :not_due}
-    defp maybe_ok(_ctx, item), do: {:ok, item}
-    defp passthrough(acc, _ctx), do: acc
-  end
-
-  # `when: :always` is `meeting_summary`'s divergent fifth politeness rule
-  # (it sleeps after every item INCLUDING a skip), and Phase 5's port needs it
-  # declared explicitly. Same three items as `Delaying`, so the two fixtures
-  # differ in exactly the `when:` value under test.
-  defmodule DelayingAlways do
-    @moduledoc false
-    use ALLM.Pipeline, name: "dsl_delaying_always", init: :empty
-
-    fan_out(:items,
-      over: :three,
-      body: :maybe_ok,
-      delay: [ms: {:opt, :delay_ms, 0}, when: :always]
-    )
-
-    summarize(:passthrough)
-
-    defp empty, do: []
-    defp three(_prev), do: [:ok_one, :skip_me, :ok_two]
-    defp maybe_ok(_ctx, :skip_me), do: {:skipped, :not_due}
-    defp maybe_ok(_ctx, item), do: {:ok, item}
-    defp passthrough(acc, _ctx), do: acc
-  end
-
-  # The third `when:` form: any atom that is not `:processed` / `:always` is a
-  # HOOK name. Without that carve-out an implementer writing `when: :processed`
-  # would get a capture of a `processed/1` the module never wrote.
-  defmodule DelayingByHook do
-    @moduledoc false
-    use ALLM.Pipeline, name: "dsl_delaying_hook", init: :empty
-
-    fan_out(:items,
-      over: :three,
-      body: :maybe_ok,
-      delay: [ms: {:opt, :delay_ms, 0}, when: :only_skips]
-    )
-
-    summarize(:passthrough)
-
-    defp empty, do: []
-    defp three(_prev), do: [:ok_one, :skip_me, :ok_two]
-    defp maybe_ok(_ctx, :skip_me), do: {:skipped, :not_due}
-    defp maybe_ok(_ctx, item), do: {:ok, item}
-    defp only_skips({:skipped, _reason}), do: true
-    defp only_skips(_result), do: false
-    defp passthrough(acc, _ctx), do: acc
+    defp gated_input(ctx, item),
+      do: %SecondStep.Input{value: "#{item}:#{inspect(Context.carried(ctx, :gate).actions)}"}
   end
 
   # ── Helpers ───────────────────────────────────────────────────────────────
@@ -584,10 +544,10 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       assert after_boom.input_step_id == root.id
     end
 
-    test "an uncaught raise inside a fan-out body still writes a terminal status" do
+    test "an uncaught raise inside a stage body still writes a terminal status" do
       # The orphan-run defect this phase exists to close: two orchestrators in
       # the tree have no `rescue` at all and strand their run at `:running`.
-      assert_raise RuntimeError, "deliberate", fn -> RaisingUncaught.run() end
+      assert_raise RuntimeError, "deliberate", fn -> RaisingBody.run() end
 
       run = only_run("dsl_raising_uncaught")
       assert run.status == :failed
@@ -630,25 +590,6 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       assert Enum.map(items, & &1.input_step_id) == [root.id, root.id, root.id]
     end
 
-    test "section: is a SIBLING of the items, never their ancestor" do
-      {:ok, run} = SourceStageFanOut.run()
-
-      [root] = steps_of_type(run.id, "dsl_echo")
-      sections = steps_of_type(run.id, "section")
-      items = steps_of_type(run.id, "dsl_second")
-
-      assert length(sections) == 3
-      assert Enum.map(sections, & &1.input_step_id) == [root.id, root.id, root.id]
-
-      section_ids = MapSet.new(sections, & &1.id)
-
-      for item <- items do
-        refute MapSet.member?(section_ids, item.input_step_id),
-               "an item's steps parented to the SECTION row; every edge under the fan-out " <>
-                 "would move and the identity gate would fail."
-      end
-    end
-
     test "the step is executed exactly once per item — hooks are never re-applied" do
       {:ok, counter} = Agent.start_link(fn -> 0 end)
       Process.put(:dsl_echo_counter, counter)
@@ -685,12 +626,14 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
           @moduledoc false
           use ALLM.Pipeline, name: "dsl_bad_per_item"
 
-          fan_out(:one, over: :three, body: :pass)
-          fan_out(:two, over: :unwrapped, body: :pass, parent: :per_item)
+          alias ALLM.Pipeline.Dsl.RuntimeTest.SecondStep
+
+          fan_out(:one, SecondStep, over: :three, input: :inp)
+          fan_out(:two, SecondStep, over: :unwrapped, input: :inp, parent: :per_item)
 
           defp three(_prev), do: [:a, :b]
           defp unwrapped(items), do: ALLM.Pipeline.Dsl.Item.ok_values(items)
-          defp pass(_ctx, item), do: {:ok, item}
+          defp inp(_ctx, _item), do: %SecondStep.Input{value: "x"}
         end
 
         BadPerItem.run()
@@ -712,10 +655,6 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       assert metric.processed == 3
       assert metric.found == 3
       assert metric.entity_type == "things"
-    end
-
-    test "a body returning a bare item result leaves it untouched" do
-      assert {:ok, []} = Delaying.run()
     end
   end
 
@@ -792,12 +731,14 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
 
   describe "gate" do
     test "a failing gate skips the item silently and binds the decision for the rest" do
-      assert {:ok, actions} = GatedFanOut.run()
+      assert {:ok, _} = GatedFanOut.run()
 
-      # `:b` was gated out; `:a` and `:c` each pushed their decision's actions.
-      assert actions == [[:full], [:full]]
       run = only_run("dsl_gated")
-      assert steps_of_type(run.id, "section") == []
+      items = steps_of_type(run.id, "dsl_second")
+
+      # `:b` was gated out (no step log); `:a` and `:c` ran, each reading its
+      # bound decision's actions off the item context's carry.
+      assert Enum.map(items, & &1.input_data["value"]) == ["a:[:full]", "c:[:full]"]
       assert run.status == :success
     end
   end
@@ -822,95 +763,23 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
   end
 
   describe "concurrency" do
-    test "at concurrency 2, an item that EXITS fails only itself" do
+    test "at concurrency 2, an item whose Step EXITS fails only itself" do
       # `Task.async_stream` links its children, so a `rescue`-only
-      # implementation dies with the child and never returns here.
+      # implementation dies with the child and never returns here. An exit is
+      # not an exception, so `Executor.run_step/5`'s `rescue` passes it through
+      # to the fan-out's always-on `FanOut.guard`.
       assert {:ok, items} = ConcurrentExiting.run()
 
-      assert Enum.map(items, & &1.input) == [:a, :boom, :c]
+      assert Enum.map(items, & &1.input) == ["a", "boom", "c"]
 
-      assert [{:ok, :a}, {:error, {:uncaught, :exit, :deliberate}}, {:ok, :c}] =
+      assert [
+               {:ok, %{value: "a"}},
+               {:error, {:uncaught, :exit, :deliberate}},
+               {:ok, %{value: "c"}}
+             ] =
                Enum.map(items, & &1.result)
 
       assert only_run("dsl_concurrent_exit").status == :success
-    end
-
-    test "a concurrent fan_out whose body folds the accumulator raises, naming the fix" do
-      assert_raise ArgumentError, ~r/do not compose — the fold order is undefined/, fn ->
-        ConcurrentFolding.run()
-      end
-    end
-  end
-
-  describe "per-item failures" do
-    test "are NOT caught by default — the raise fails the whole run" do
-      assert_raise RuntimeError, "deliberate", fn -> RaisingUncaught.run() end
-      assert only_run("dsl_raising_uncaught").status == :failed
-    end
-
-    test "with catch_item_failures: true, only that item fails and the run completes" do
-      assert {:ok, items} = RaisingCaught.run()
-
-      assert Enum.map(items, & &1.input) == [:a, :boom, :c]
-
-      assert [{:ok, :a}, {:error, {:uncaught, :error, %RuntimeError{}}}, {:ok, :c}] =
-               Enum.map(items, & &1.result)
-
-      assert only_run("dsl_raising_caught").status == :success
-    end
-  end
-
-  describe "delay" do
-    test "when: :processed sleeps only after a successful item" do
-      started = System.monotonic_time(:millisecond)
-      assert {:ok, _} = Delaying.run(delay_ms: 100)
-      elapsed = System.monotonic_time(:millisecond) - started
-
-      # Three items, two of them `{:ok, _}` — so TWO sleeps, not three. Both
-      # bounds are load-bearing: the floor rejects `when: :never`, and the
-      # ceiling (one sleep below three, with a 90ms margin) rejects
-      # `when: :always`, which is `meeting_summary`'s divergent fifth rule.
-      assert elapsed >= 190, "expected two 100ms sleeps, saw #{elapsed}ms"
-      assert elapsed < 290, "expected two 100ms sleeps, not three; saw #{elapsed}ms"
-    end
-
-    test "ms resolves from opts, and 0 means no sleep" do
-      started = System.monotonic_time(:millisecond)
-      assert {:ok, _} = Delaying.run()
-      assert System.monotonic_time(:millisecond) - started < 100
-    end
-
-    test "when: :always sleeps after a SKIPPED item too" do
-      started = System.monotonic_time(:millisecond)
-      assert {:ok, _} = DelayingAlways.run(delay_ms: 100)
-      elapsed = System.monotonic_time(:millisecond) - started
-
-      # Same three items as `Delaying`, one of them `{:skipped, _}` — so THREE
-      # sleeps where `:processed` takes two. The floor is what separates the two
-      # rules; without it `:always` and `:processed` are indistinguishable.
-      assert elapsed >= 290, "expected three 100ms sleeps, saw #{elapsed}ms"
-    end
-
-    test "a `when:` HOOK decides per item result" do
-      started = System.monotonic_time(:millisecond)
-      assert {:ok, _} = DelayingByHook.run(delay_ms: 100)
-      elapsed = System.monotonic_time(:millisecond) - started
-
-      # The hook sleeps only after the ONE skipped item — the exact inverse of
-      # `:processed`, so neither reserved literal can satisfy this.
-      assert elapsed >= 90, "expected one 100ms sleep, saw #{elapsed}ms"
-      assert elapsed < 190, "expected one 100ms sleep, not two; saw #{elapsed}ms"
-    end
-
-    test "a `{:opt, key, default}` ms resolving to a non-integer raises, naming the stage" do
-      # `validate_ms!/3` rejects a malformed LITERAL at compile time; this is the
-      # runtime half, and it is guarded rather than left to `Process.sleep/1`
-      # because Erlang term ordering puts every non-number ABOVE every number —
-      # so `:nope > 0` is `true` and the bare guard would pass a value the sleep
-      # then dies on, with nothing naming the stage.
-      assert_raise ArgumentError, ~r/stage :items's `delay: \[ms: …\]` resolved to :nope/, fn ->
-        Delaying.run(delay_ms: :nope)
-      end
     end
   end
 

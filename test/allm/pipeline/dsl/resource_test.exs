@@ -19,7 +19,7 @@ defmodule ALLM.Pipeline.Dsl.ResourceTest do
 
   import Ecto.Query
 
-  alias ALLM.Pipeline.{Config, Context, PipelineRun, StepLog}
+  alias ALLM.Pipeline.{Config, Context, FanOut, PipelineRun, StepLog}
   alias ALLM.Pipeline.Dsl.Resource
 
   setup tags do
@@ -96,12 +96,22 @@ defmodule ALLM.Pipeline.Dsl.ResourceTest do
 
     resource(:handle, start: :open, stop: :close)
 
-    fan_out(:items, over: :three, body: :see)
-    stage(:collect, fn _ctx, items -> {{:ok, items}, items} end)
+    # An escape-hatch `stage` body folds three items through `FanOut.reduce/5`
+    # (body-mode `fan_out` was removed in 4.5.2). The resource is acquired ONCE
+    # per run, and each item's body reads the handle off its own context.
+    stage(:items, :see_all)
     summarize(:passthrough)
 
     defp empty, do: []
-    defp three(_prev), do: [:a, :b, :c]
+
+    defp see_all(ctx, _prev) do
+      {items, _acc} =
+        FanOut.reduce(ctx, [:a, :b, :c], [], fn ictx, item, acc ->
+          {{:ok, {item, Context.resource(ictx, :handle)}}, acc}
+        end)
+
+      {{:ok, items}, items}
+    end
 
     defp open(_ctx) do
       ResourceTest.bump(:resource_starts)
@@ -114,9 +124,6 @@ defmodule ALLM.Pipeline.Dsl.ResourceTest do
       :ok
     end
 
-    # Reads the handle off the CONTEXT FIELD. A body reading `opts` would see
-    # nothing, which is the point of criterion 2.
-    defp see(ctx, item), do: {:ok, {item, Context.resource(ctx, :handle)}}
     defp passthrough(acc, _ctx), do: acc
   end
 

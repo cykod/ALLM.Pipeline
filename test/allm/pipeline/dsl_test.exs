@@ -40,16 +40,16 @@ defmodule ALLM.Pipeline.DslTest do
       assert TargetDeclaration.__pipeline__(:concurrency) == 1
     end
 
-    test "the fan_out declares the flat tree, the delay and the gate" do
+    test "the fan_out declares the flat tree and the gate over a Step target" do
       meeting = Enum.find(TargetDeclaration.__pipeline__(:stages), &(&1.name == :meeting))
 
       assert meeting.kind == :fan_out
       assert meeting.parent == :source_stage
-      assert meeting.delay == %{ms: {:opt, :delay_ms, 2000}, when: :processed}
+      assert meeting.step == TargetDeclaration.MeetingListScraper
       assert is_function(meeting.gate, 2)
-      assert is_function(meeting.section, 1)
       assert is_function(meeting.over, 1)
-      assert is_function(meeting.body, 2)
+      assert is_function(meeting.input, 2)
+      # `section:`/`delay:`/`body:`-mode fan_out were removed in Phase 4.5.2.
     end
 
     test "every hook resolved to a PRIVATE function of the declaring module" do
@@ -118,7 +118,7 @@ defmodule ALLM.Pipeline.DslTest do
     test "every hook option has exactly one declared arity, and the table is non-empty" do
       arities = Dsl.__hook_arities__()
 
-      assert length(arities) >= 16,
+      assert length(arities) >= 14,
              "__hook_arities__/0 reports only #{length(arities)} hooks — rows were dropped, " <>
                "and the equality below would pass vacuously."
 
@@ -129,11 +129,9 @@ defmodule ALLM.Pipeline.DslTest do
                  init: 0,
                  input: 2,
                  over: 1,
-                 section: 1,
                  gate: 2,
                  body: 2,
                  skip_when: 1,
-                 when: 1,
                  from: 1,
                  summarize: 2,
                  start: 1,
@@ -250,9 +248,10 @@ defmodule ALLM.Pipeline.DslTest do
       {{:module, module, _bin, _exports}, _bindings} =
         compile!("""
         use ALLM.Pipeline, name: "x", concurrency: {:opt, :concurrency, 2}
-        fan_out :f, over: :items, body: :b, concurrency: {:opt, :llm_concurrency, 1}
+        fan_out :f, ALLM.Pipeline.TestSupport.TargetDeclaration.MeetingListScraper,
+          over: :items, input: :inp, concurrency: {:opt, :llm_concurrency, 1}
         defp items(_), do: []
-        defp b(_, _), do: {:ok, 1}
+        defp inp(_, _), do: %{}
         """)
 
       assert module.__pipeline__(:concurrency) == {:opt, :concurrency, 2}
@@ -299,8 +298,8 @@ defmodule ALLM.Pipeline.DslTest do
       end
     end
 
-    test "a fan_out with neither `body:` nor a Step module" do
-      assert_raise ArgumentError, ~r/declares neither a Step module nor a `body:`/, fn ->
+    test "a fan_out with no Step module (the removed body-mode form)" do
+      assert_raise ArgumentError, ~r/a `fan_out` requires a Step-module target/, fn ->
         compile!(
           ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, over: :items\ndefp items(_), do: []|
         )
@@ -310,7 +309,7 @@ defmodule ALLM.Pipeline.DslTest do
     test "a fan_out with no `over:`" do
       assert_raise ArgumentError, ~r/requires `over:`/, fn ->
         compile!(
-          ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, body: :b\ndefp b(_, _), do: {:ok, 1}|
+          ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, ALLM.Pipeline.TestSupport.TargetDeclaration.MeetingListScraper, input: :inp\ndefp inp(_, _), do: %{}|
         )
       end
     end
@@ -372,7 +371,7 @@ defmodule ALLM.Pipeline.DslTest do
     test "`parent:` on a fan_out must be one of the two modes" do
       assert_raise ArgumentError, ~r/`parent:` must be `:source_stage` or `:per_item`/, fn ->
         compile!(
-          ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, over: :i, body: :b, parent: :chained\ndefp i(_), do: []\ndefp b(_, _), do: {:ok, 1}|
+          ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, ALLM.Pipeline.TestSupport.TargetDeclaration.MeetingListScraper, over: :i, input: :inp, parent: :chained\ndefp i(_), do: []\ndefp inp(_, _), do: %{}|
         )
       end
     end
@@ -382,7 +381,7 @@ defmodule ALLM.Pipeline.DslTest do
                    ~r/does not apply to a `fan_out`.*catch_item_failures: true/s,
                    fn ->
                      compile!(
-                       ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, over: :i, body: :b, on_error: :continue\ndefp i(_), do: []\ndefp b(_, _), do: {:ok, 1}|
+                       ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, ALLM.Pipeline.TestSupport.TargetDeclaration.MeetingListScraper, over: :i, input: :inp, on_error: :continue\ndefp i(_), do: []\ndefp inp(_, _), do: %{}|
                      )
                    end
     end
@@ -394,53 +393,10 @@ defmodule ALLM.Pipeline.DslTest do
                )
     end
 
-    # `maybe_delay/3`'s `ms > 0` guard cannot stand in for this: Erlang term
-    # ordering puts every non-number ABOVE every number, so `"soon" > 0` is
-    # `true` and the value dies inside `Process.sleep/1` mid-fan-out — on the
-    # concurrent path, outside `guarded_item/7`'s catch.
-    test "`delay: [ms: …]` must be a non-negative integer or {:opt, key, default}" do
-      assert_raise ArgumentError, ~r/`delay: \[ms: …\]` must be a non-negative integer/, fn ->
-        compile!(
-          ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, over: :i, body: :b, delay: [ms: "soon"]\ndefp i(_), do: []\ndefp b(_, _), do: {:ok, 1}|
-        )
-      end
-    end
-
-    test "`delay: [ms: {:opt, key}]` with no default is rejected — it resolves to nil" do
-      assert_raise ArgumentError, ~r/`delay: \[ms: …\]` must be a non-negative integer/, fn ->
-        compile!(
-          ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, over: :i, body: :b, delay: [ms: {:opt, :delay_ms}]\ndefp i(_), do: []\ndefp b(_, _), do: {:ok, 1}|
-        )
-      end
-    end
-
     test "`metrics` without `from:`" do
       assert_raise ArgumentError, ~r/requires `from:`/, fn ->
         compile!(
           ~s|use ALLM.Pipeline, name: "x"\nstage :s, fn _, _ -> {:ok, 1} end\nmetrics "things", alert_on_empty: true|
-        )
-      end
-    end
-  end
-
-  describe "delay:'s `when:` reserves two literals and treats every other atom as a hook" do
-    test ":processed and :always stay literal" do
-      {{:module, mod, _, _}, _} =
-        compile!("""
-          use ALLM.Pipeline, name: "d"
-          fan_out :a, over: :i, body: :b, delay: [ms: 0, when: :processed]
-          fan_out :c, over: :i, body: :b, delay: [ms: 0, when: :always]
-          defp i(_), do: []
-          defp b(_, _), do: {:ok, 1}
-        """)
-
-      assert Enum.map(mod.__pipeline__(:stages), & &1.delay.when) == [:processed, :always]
-    end
-
-    test "any other atom is captured, and must be defined" do
-      assert_raise ArgumentError, ~r/`when: :after_write` names after_write\/1/, fn ->
-        compile!(
-          ~s|use ALLM.Pipeline, name: "d"\nfan_out :a, over: :i, body: :b, delay: [ms: 0, when: :after_write]\ndefp i(_), do: []\ndefp b(_, _), do: {:ok, 1}|
         )
       end
     end

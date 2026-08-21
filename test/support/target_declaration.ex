@@ -89,18 +89,18 @@ defmodule ALLM.Pipeline.TestSupport.TargetDeclaration do
   stage(:committee_cache, fn _ctx, _prev -> {:ok, ensure_committee_cache()} end)
   stage(:list, MeetingListScraper, input: :build_list_input)
 
-  fan_out(:meeting,
+  # Since Phase 4.5 a `fan_out` is Step-target only (the `body:`-mode form was
+  # removed). The `gate:` here is still the only compile-time exercise of that
+  # construct anywhere in the tree — 4.5.3 removes it.
+  fan_out(:meeting, MeetingListScraper,
     # (prev_output) -> [item]
     over: :meetings_from,
-    # (item) -> String.t()
-    section: :section_title,
     # (item, opts) -> %{should_process:, reason:, actions:}
     gate: :meeting_decision,
     # flat tree: every leaf parents to :list's step log
     parent: :source_stage,
-    delay: [ms: {:opt, :delay_ms, 2000}, when: :processed],
-    # (ctx, item) -> body_return()
-    body: :process_single_meeting
+    # (ctx, item) -> Step input struct
+    input: :meeting_input
   )
 
   metrics("meetings", from: :funnel)
@@ -127,12 +127,11 @@ defmodule ALLM.Pipeline.TestSupport.TargetDeclaration do
 
   defp meetings_from(%MeetingListScraper.Output{meetings: meetings}), do: meetings
 
-  defp section_title(meeting), do: "#{meeting.committee_name} - #{meeting.title}"
+  defp meeting_input(_ctx, _meeting),
+    do: MeetingListScraper.Input.new(source_url: "https://example.test")
 
   defp meeting_decision(_meeting, _opts),
     do: %{should_process: true, reason: nil, actions: [:full]}
-
-  defp process_single_meeting(_ctx, meeting), do: {{:ok, meeting}, %{}}
 
   defp funnel(stats), do: %{found: stats.meetings_found, processed: stats.meetings_processed}
 

@@ -36,11 +36,9 @@ defmodule ALLM.Pipeline.Dsl do
   | `init:` | `()` |
   | `input:` | `(ctx, subject)` |
   | `over:` | `(previous_stage_output)` |
-  | `section:` | `(item)` |
   | `gate:` | `(item, opts)` |
   | `body:` / escape-hatch stage | `(ctx, subject)` |
   | `skip_when:` | `(ctx)` — or the data form `{:opt, key}` / `{:opt, key, default}` |
-  | `delay: [when: …]` | `(item_result)` — or the literals `:processed` / `:always` |
   | `metrics …, from:` | `(summary)` |
   | `summarize` | `(acc, ctx)` |
   | `resource …, start:` | `(ctx)` |
@@ -85,11 +83,8 @@ defmodule ALLM.Pipeline.Dsl do
   @stage_options @common_options ++ [:on_error]
   @fan_out_options [
                      :over,
-                     :body,
-                     :section,
                      :gate,
                      :parent,
-                     :delay,
                      :concurrency,
                      :catch_item_failures
                    ] ++ @common_options
@@ -106,11 +101,9 @@ defmodule ALLM.Pipeline.Dsl do
     init: 0,
     input: 2,
     over: 1,
-    section: 1,
     gate: 2,
     body: 2,
     skip_when: 1,
-    when: 1,
     from: 1,
     summarize: 2,
     start: 1,
@@ -120,7 +113,7 @@ defmodule ALLM.Pipeline.Dsl do
   ]
 
   # The subset a `stage`/`fan_out` declares directly, in the order they are read.
-  @stage_hook_keys [:input, :over, :section, :gate, :body]
+  @stage_hook_keys [:input, :over, :gate, :body]
 
   @typedoc "A validated `use ALLM.Pipeline` declaration. Hook values are quoted AST."
   @type declaration :: %{
@@ -172,19 +165,19 @@ defmodule ALLM.Pipeline.Dsl do
   @doc """
   Declare a stage that runs **once per item** produced by its `over:` hook.
 
-      fan_out :meeting, over: :meetings_from, body: :process_single_meeting
       fan_out :detail, CommitteeDetailScraper, over: :committees_from, input: :detail_input
 
-  Options: `input:`, `skip_when:` and `carry:` (as `stage`), plus `over:`
-  (required), `body:`, `section:`, `gate:`, `parent:`, `delay:`, `concurrency:`
-  and `catch_item_failures:`. **Not** `on_error:` — that governs a whole-stage
-  failure, which a fan-out does not have; it is a compile error here.
-  """
-  defmacro fan_out(name, step_or_opts, opts \\ []) do
-    {target, opts} =
-      if keyword_ast?(step_or_opts), do: {nil, step_or_opts}, else: {step_or_opts, opts}
+  A `fan_out` always names a **Step-module** target. The `body:`-mode form was
+  removed in Phase 4.5 — to fold an ordinary body over the items, call
+  `ALLM.Pipeline.FanOut.reduce/5` from a plain `stage` body instead.
 
-    spec = __stage__(:fan_out, __CALLER__, name, target, opts)
+  Options: `input:` (required), `over:` (required), plus `skip_when:`, `carry:`,
+  `gate:`, `parent:`, `concurrency:` and `catch_item_failures:`. **Not**
+  `on_error:` — that governs a whole-stage failure, which a fan-out does not
+  have; it is a compile error here.
+  """
+  defmacro fan_out(name, step, opts \\ []) do
+    spec = __stage__(:fan_out, __CALLER__, name, step, opts)
     accumulate(spec)
   end
 
@@ -551,7 +544,10 @@ defmodule ALLM.Pipeline.Dsl do
   end
 
   # An alias is the Step form; anything else is the escape hatch. See the
-  # moduledoc — this is a SHAPE test, and `is_atom/1` is the trap.
+  # moduledoc — this is a SHAPE test, and `is_atom/1` is the trap. It serves
+  # BOTH kinds, so it is kind-conditional: a `:fan_out` requires a Step-module
+  # alias (the `body:`-mode form was removed in Phase 4.5), while a `:stage`
+  # keeps its escape-hatch body branches (a keyword-list or an inline `fn`).
   @spec split_target(module(), atom(), String.t(), Macro.t()) ::
           {Macro.t() | nil, Macro.t() | nil, [{atom(), atom(), arity()}]}
   defp split_target(_module, _kind, _label, nil), do: {nil, nil, []}
@@ -559,13 +555,20 @@ defmodule ALLM.Pipeline.Dsl do
   defp split_target(_module, _kind, _label, {:__aliases__, _, _} = alias_ast),
     do: {alias_ast, nil, []}
 
+  defp split_target(module, :fan_out, label, _target) do
+    raise ArgumentError,
+          "#{inspect(module)}: a `fan_out` requires a Step-module target (#{label}) — write " <>
+            "`fan_out :name, MyStep, over: …, input: …`. The `body:`-mode `fan_out` was " <>
+            "removed in Phase 4.5; to fold a body over the items, call " <>
+            "`ALLM.Pipeline.FanOut.reduce/5` from a plain `stage` body instead."
+  end
+
   defp split_target(module, kind, label, target) do
     if keyword_ast?(target) do
       raise ArgumentError,
             "#{inspect(module)}: `#{label}` was given a keyword list where a Step module or a " <>
               "body was expected. Write `#{kind} :name, MyStep, input: …` or " <>
-              "`#{kind} :name, fn ctx, prev -> … end`" <>
-              if(kind == :fan_out, do: " or `fan_out :name, over: …, body: …`.", else: ".")
+              "`#{kind} :name, fn ctx, prev -> … end`."
     end
 
     {ast, atoms} = hook(target, :body)
@@ -627,13 +630,11 @@ defmodule ALLM.Pipeline.Dsl do
         {:ok, value} -> validate_concurrency!(module, value, label)
       end
 
-    {delay, delay_atoms} = validate_delay!(module, label, Keyword.get(opts, :delay))
     {skip_when, skip_atoms} = validate_skip_when!(Keyword.get(opts, :skip_when))
 
     scalars = [
       skip_when: skip_when,
       carry: validate_carry!(module, label, Keyword.get(opts, :carry, [])),
-      delay: delay,
       parent: validate_parent!(module, kind, label, Keyword.get(opts, :parent, :source_stage)),
       concurrency: concurrency,
       catch_item_failures:
@@ -647,7 +648,7 @@ defmodule ALLM.Pipeline.Dsl do
       retry: validate_retry!(module, label, Keyword.get(opts, :retry))
     ]
 
-    {scalars, delay_atoms ++ skip_atoms}
+    {scalars, skip_atoms}
   end
 
   @spec validate_skip_when!(Macro.t() | nil) :: {Macro.t() | nil, [{atom(), atom(), arity()}]}
@@ -692,68 +693,6 @@ defmodule ALLM.Pipeline.Dsl do
     raise ArgumentError,
           "#{inspect(module)}: `#{label}`'s `#{key}:` must be `true` or `false`, " <>
             "got: #{Macro.to_string(value)}"
-  end
-
-  @spec validate_delay!(module(), String.t(), Macro.t() | nil) ::
-          {Macro.t() | nil, [{atom(), atom(), arity()}]}
-  defp validate_delay!(_module, _label, nil), do: {nil, []}
-
-  defp validate_delay!(module, label, spec) do
-    unless keyword_ast?(spec) and Keyword.has_key?(spec, :ms) do
-      raise ArgumentError,
-            "#{inspect(module)}: `#{label}`'s `delay:` must be a keyword list carrying `ms:`, " <>
-              "e.g. `delay: [ms: {:opt, :delay_ms, 2000}, when: :processed]`, " <>
-              "got: #{Macro.to_string(spec)}"
-    end
-
-    case Keyword.keys(spec) -- [:ms, :when] do
-      [] ->
-        :ok
-
-      unknown ->
-        raise ArgumentError, unknown_message(module, "#{label}'s delay:", unknown, [:ms, :when])
-    end
-
-    # `:processed` and `:always` are the two reserved literals; any OTHER atom
-    # in `when:` is a hook name. Without the carve-out an implementer choosing
-    # `when: :processed` would silently get a capture of a `processed/1` the
-    # module does not define.
-    {when_ast, atoms} =
-      case Keyword.get(spec, :when, :processed) do
-        reserved when reserved in [:processed, :always] -> {reserved, []}
-        other -> hook(other, :when)
-      end
-
-    ms = validate_ms!(module, Keyword.fetch!(spec, :ms), label)
-
-    {quote(do: %{ms: unquote(ms), when: unquote(when_ast)}), atoms}
-  end
-
-  # The sibling of `validate_concurrency!/3`, and for the same reason: without
-  # it `delay: [ms: "soon"]` compiles, survives `maybe_delay/3`'s `ms > 0` guard
-  # (Erlang term ordering puts every non-number ABOVE every number) and dies
-  # inside `Process.sleep/1` mid-fan-out. `0` is legal here — it is the
-  # documented "no sleep" value — where a `concurrency:` of 0 is not.
-  @spec validate_ms!(module(), Macro.t(), String.t()) :: Macro.t()
-  defp validate_ms!(_module, ms, _label) when is_integer(ms) and ms >= 0, do: ms
-
-  # Returned as the QUOTED tuple it arrived as, not rebuilt: this value is
-  # spliced straight back into `validate_delay!/3`'s `quote`, where a real
-  # 3-element tuple is not a valid AST node. `validate_concurrency!/3` returns
-  # quoted AST for exactly the same reason — see its comment for the full
-  # argument, including why `accumulate/1`'s `Macro.escape/1` does NOT rescue a
-  # real tuple (it runs BEFORE the splice). This is the shared rule for every
-  # `{:opt, …}`-shaped option: a validator whose result lands back inside a
-  # `quote` returns AST.
-  defp validate_ms!(_module, {:{}, _, [:opt, key, default]} = ms, _label)
-       when is_atom(key) and is_integer(default) and default >= 0,
-       do: ms
-
-  defp validate_ms!(module, other, label) do
-    raise ArgumentError,
-          "#{inspect(module)}: `#{label}`'s `delay: [ms: …]` must be a non-negative integer " <>
-            "or `{:opt, key, default}` with a non-negative integer default (so a CLI flag can " <>
-            "still reach it), got: #{Macro.to_string(other)}"
   end
 
   # Phase 4 D11: `retry:` RE-INVOKES the target and produces one step log per
@@ -895,8 +834,9 @@ defmodule ALLM.Pipeline.Dsl do
   # tuple: the recursion could only ever reach the raising catch-all, which
   # dialyzer reports as `call … will not succeed`.
   #
-  # Returned as the QUOTED tuple it arrived as, exactly as `validate_ms!/3`
-  # does, and for exactly the same reason: BOTH of this value's splice sites put
+  # Returned as the QUOTED tuple it arrived as (the shared rule for every
+  # `{:opt, …}`-shaped option — `validate_ms!/3` was its sibling until Phase 4.5
+  # removed `delay:`): BOTH of this value's splice sites put
   # it back inside a `quote`, where a real 3-element tuple is not a valid AST
   # node — `__stage_ast__/1`'s `{:%{}, [], fields}` and
   # `ALLM.Pipeline.__before_compile__/1`'s `def __pipeline__(:concurrency)`.

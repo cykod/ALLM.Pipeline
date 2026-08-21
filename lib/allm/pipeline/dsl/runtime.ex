@@ -425,7 +425,6 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
             stage.catch_item_failures
           )
 
-        maybe_delay(stage, opts, result.result)
         {[result | done], fold_acc(acc, acc_update)}
       end)
 
@@ -449,11 +448,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   defp run_concurrent(stage, run, opts, state, items, source_parent, concurrency) do
     items
     |> Task.async_stream(
-      fn item ->
-        {result, acc_update} = guarded_item(stage, run, opts, state, item, source_parent, true)
-        maybe_delay(stage, opts, result.result)
-        {result, acc_update}
-      end,
+      fn item -> guarded_item(stage, run, opts, state, item, source_parent, true) end,
       max_concurrency: concurrency,
       timeout: :infinity,
       ordered: true
@@ -501,8 +496,6 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   @spec run_item(Stage.t(), PipelineRun.t(), keyword(), state(), term(), Ecto.UUID.t() | nil) ::
           {Item.t(), acc_update()}
   defp run_item(stage, run, opts, state, item, source_parent) do
-    maybe_section(stage, run, item, source_parent)
-
     case gate(stage, item, opts) do
       {:skip, reason} ->
         # D8 again: silent. The decision is visible in this log line and in
@@ -745,16 +738,6 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
 
   # ── Per-stage helpers ─────────────────────────────────────────────────────
 
-  @spec maybe_section(Stage.t(), PipelineRun.t(), term(), Ecto.UUID.t() | nil) :: :ok
-  defp maybe_section(%Stage{section: nil}, _run, _item, _parent), do: :ok
-
-  defp maybe_section(%Stage{section: section}, run, item, parent) do
-    # A SIBLING leaf, never the lineage parent: the section's own log id is
-    # discarded, and the item's steps keep parenting to `parent`.
-    Executor.log_section(run, section.(item), parent)
-    :ok
-  end
-
   @spec gate(Stage.t(), term(), keyword()) :: {:run, term()} | {:skip, term()}
   defp gate(%Stage{gate: nil}, _item, _opts), do: {:run, nil}
 
@@ -785,38 +768,6 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   @spec item_parent(Stage.t(), term(), Ecto.UUID.t() | nil) :: Ecto.UUID.t() | nil
   defp item_parent(%Stage{parent: parent}, item, source_parent),
     do: FanOut.item_parent(parent, item, source_parent)
-
-  @spec maybe_delay(Stage.t(), keyword(), Item.result()) :: :ok
-  defp maybe_delay(%Stage{delay: nil}, _opts, _result), do: :ok
-
-  defp maybe_delay(%Stage{name: name, delay: %{ms: ms_spec, when: when_spec}}, opts, result) do
-    ms = resolve_ms(name, resolve_opt(ms_spec, opts))
-    if ms > 0 and delay?(when_spec, result), do: Process.sleep(ms)
-    :ok
-  end
-
-  # `validate_ms!/3` rejects a malformed LITERAL at compile time; this catches
-  # the `{:opt, key}` form resolving to a non-integer at run time — a CLI parse
-  # yielding `nil` for an absent `--delay` is an ordinary shape. Guarded rather
-  # than left to `Process.sleep/1` because Erlang term ordering puts every
-  # non-number above every number, so `nil > 0` is `true` and the bare guard
-  # passes a value the sleep then dies on, with nothing naming the stage.
-  @spec resolve_ms(atom(), term()) :: non_neg_integer()
-  defp resolve_ms(_name, ms) when is_integer(ms) and ms >= 0, do: ms
-
-  defp resolve_ms(name, other) do
-    raise ArgumentError,
-          "stage :#{name}'s `delay: [ms: …]` resolved to #{inspect(other)}; it must be a " <>
-            "non-negative integer. A `{:opt, key}` form with no default resolves to `nil` " <>
-            "when the option is absent — declare `{:opt, key, default}` instead."
-  end
-
-  @spec delay?(:processed | :always | (Item.result() -> as_boolean(term())), Item.result()) ::
-          boolean()
-  defp delay?(:always, _result), do: true
-  defp delay?(:processed, {:ok, _value}), do: true
-  defp delay?(:processed, _result), do: false
-  defp delay?(fun, result) when is_function(fun, 1), do: !!fun.(result)
 
   @spec skip?(Stage.skip_spec() | nil, Context.t()) :: boolean()
   defp skip?(nil, _ctx), do: false
