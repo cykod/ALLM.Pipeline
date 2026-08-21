@@ -224,6 +224,13 @@ defmodule ALLM.Pipeline.Executor do
 
   Requires an owning handle — both branches now refuse a borrowed or re-loaded
   run (`PipelineRun.complete/2`, `PipelineRun.fail/2`).
+
+  **It does NOT guard.** A raise, exit or throw between the caller's
+  `create_pipeline_run/3` and this call strands the run at `:running`; this
+  function only writes the terminal status for a `result` it is handed. An entry
+  point that creates its own run wants `ALLM.Pipeline.Lifecycle.owned_run/4`,
+  which owns creation, the guard and the metadata argument as well — see that
+  module's "Versus `Executor.finish_run/2`" table for the boundary.
   """
   @spec finish_run(PipelineRun.t(), result) :: result when result: var
   def finish_run(pipeline_run, {:ok, _stats} = result) do
@@ -364,10 +371,10 @@ defmodule ALLM.Pipeline.Executor do
     try do
       case step_module.execute(context, input_struct) do
         {:ok, output_struct} ->
-          handle_success(step_module, step_log, output_struct)
+          handle_success(step_module, step_log, output_struct, opts)
 
         {:error, reason} ->
-          handle_failure(step_log, reason)
+          handle_failure(step_log, reason, opts)
       end
     rescue
       e ->
@@ -376,11 +383,11 @@ defmodule ALLM.Pipeline.Executor do
           "Step #{step_module} raised exception: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}"
         )
 
-        handle_failure(step_log, e)
+        handle_failure(step_log, e, opts)
     end
   end
 
-  defp handle_success(step_module, step_log, output_struct) do
+  defp handle_success(step_module, step_log, output_struct, opts) do
     # Drain + persist the LLM-call artifact first (covers all exit paths since
     # both handlers drain). drain/0 deletes its key, so the fall-through to
     # handle_failure below re-drains harmlessly (returns []).
@@ -403,7 +410,7 @@ defmodule ALLM.Pipeline.Executor do
 
       {:error, reason} ->
         Logger.error("Output validation failed for #{step_module}: #{inspect(reason)}")
-        handle_failure(step_log, {:output_validation_failed, reason})
+        handle_failure(step_log, {:output_validation_failed, reason}, opts)
     end
   end
 
@@ -417,14 +424,23 @@ defmodule ALLM.Pipeline.Executor do
   # already-persisted `step_log` plus `normalize_error/1` (which always returns a
   # map), so no public entry point can drive `Repo.update` to `{:error, changeset}`
   # here — the realistic failures (pool exhaustion, a stale row) RAISE instead.
-  @spec handle_failure(StepLog.t(), term()) :: {:error, StepLog.t(), term()}
-  defp handle_failure(step_log, reason) do
+  # `opts` is the CALLER's option list, and exactly one key is read out of it
+  # here: `:is_retry`, which `StepLog.log_failure/3` turns into `retry_count`.
+  # `ALLM.Pipeline.Dsl.Runtime` sets it from the second attempt of a `retry:`
+  # declaration (Phase 4 D11), which is the only persisted trace a re-invoking
+  # retry leaves — each attempt writes its own step log, so without it a second
+  # failed attempt is indistinguishable from a first.
+  @spec handle_failure(StepLog.t(), term(), keyword()) :: {:error, StepLog.t(), term()}
+  defp handle_failure(step_log, reason, opts) do
     # Drain + persist the LLM-call artifact (a failed step's calls are the most
     # valuable to review). Idempotent on the success-validation-failure
     # fall-through: drain/0 already deleted its key, so this returns %{}.
     llm_info = drain_and_store_llm(step_log.id, nil)
 
-    case store().log_step_failure(step_log, reason, llm_info: llm_info) do
+    case store().log_step_failure(step_log, reason,
+           llm_info: llm_info,
+           is_retry: opts[:is_retry]
+         ) do
       {:ok, updated_log} ->
         {:error, updated_log, reason}
 
@@ -721,7 +737,7 @@ defmodule ALLM.Pipeline.Executor do
   #
   # `run_step/5` logs this reason and returns it, host pipelines fail their run
   # with it (`pipeline_runs.metadata.error`), and `validate_output/2`'s half
-  # reaches `step_logs.error` through `handle_failure/2`. None of those paths
+  # reaches `step_logs.error` through `handle_failure/3`. None of those paths
   # touches `StepLog`'s serializer, so `redact: true` — which applies only at
   # serialization (`ALLM.Pipeline.Schema`, D3) — cannot reach them. A bare
   # `inspect(term)` here (what this built until subphase 2.3) therefore persisted

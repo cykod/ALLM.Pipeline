@@ -806,7 +806,7 @@ defmodule ALLM.Pipeline.ExecutorTest do
       refute input_log =~ secret
 
       # Half 2 — the OUTPUT path, which DOES reach `step_logs.error` through
-      # `handle_failure/2`. Nothing else in this file covers that column.
+      # `handle_failure/3`. Nothing else in this file covers that column.
       output_log =
         capture_log(fn ->
           assert {:error, step_log, {:output_validation_failed, reason}} =

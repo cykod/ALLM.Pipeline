@@ -32,11 +32,13 @@ defmodule ALLM.Pipeline.FanOut do
 
   ## Sites
 
-  Every `Task.async_stream` in `apps/amesbury_scraper/lib` either fans out work
-  that is total by construction, or wraps its per-item work in a `catch`:
+  Every `Task.async_stream` **in this repo** — both trees, not just the host's —
+  either fans out work that is total by construction, or wraps its per-item work
+  in a `catch`:
 
   | Site | How it is kept safe |
   |---|---|
+  | `ALLM.Pipeline.Dsl.Runtime.run_concurrent/7` | always-on `catch` via `guarded_item/7` — the concurrent path passes `true` unconditionally, which is link safety rather than the `catch_item_failures:` policy |
   | `Scrapers.HttpScraper.fetch_many/2` | `safe_fetch/2` (`catch`) |
   | `Pipelines.PoiThumbnailStep.generate_for_pois/6` | `safe_generate_one/7` (`catch`) |
   | `Processors.DocumentTextCollector.execute/2` | `safe_collect_text/1` (`catch`) |
@@ -47,8 +49,11 @@ defmodule ALLM.Pipeline.FanOut do
   same `catch` for the same reason (an exit is not an exception) even though it
   has no link hazard.
 
-  This table is prose, not a guard — there is no membership test pinning it yet.
-  If you add a fan-out, add a row.
+  The table's MEMBERSHIP is machine-guarded by
+  `apps/allm_pipeline/test/allm/pipeline/fan_out_test.exs`, which scans both
+  `lib/` trees and fails by name when the site set changes. What it cannot check
+  is the right-hand column — how each site is kept safe — so a new fan-out still
+  has to add its own row by hand.
   """
 
   require Logger

@@ -441,6 +441,53 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
     defp passthrough(acc, _ctx), do: acc
   end
 
+  # `when: :always` is `meeting_summary`'s divergent fifth politeness rule
+  # (it sleeps after every item INCLUDING a skip), and Phase 5's port needs it
+  # declared explicitly. Same three items as `Delaying`, so the two fixtures
+  # differ in exactly the `when:` value under test.
+  defmodule DelayingAlways do
+    @moduledoc false
+    use ALLM.Pipeline, name: "dsl_delaying_always", init: :empty
+
+    fan_out(:items,
+      over: :three,
+      body: :maybe_ok,
+      delay: [ms: {:opt, :delay_ms, 0}, when: :always]
+    )
+
+    summarize(:passthrough)
+
+    defp empty, do: []
+    defp three(_prev), do: [:ok_one, :skip_me, :ok_two]
+    defp maybe_ok(_ctx, :skip_me), do: {:skipped, :not_due}
+    defp maybe_ok(_ctx, item), do: {:ok, item}
+    defp passthrough(acc, _ctx), do: acc
+  end
+
+  # The third `when:` form: any atom that is not `:processed` / `:always` is a
+  # HOOK name. Without that carve-out an implementer writing `when: :processed`
+  # would get a capture of a `processed/1` the module never wrote.
+  defmodule DelayingByHook do
+    @moduledoc false
+    use ALLM.Pipeline, name: "dsl_delaying_hook", init: :empty
+
+    fan_out(:items,
+      over: :three,
+      body: :maybe_ok,
+      delay: [ms: {:opt, :delay_ms, 0}, when: :only_skips]
+    )
+
+    summarize(:passthrough)
+
+    defp empty, do: []
+    defp three(_prev), do: [:ok_one, :skip_me, :ok_two]
+    defp maybe_ok(_ctx, :skip_me), do: {:skipped, :not_due}
+    defp maybe_ok(_ctx, item), do: {:ok, item}
+    defp only_skips({:skipped, _reason}), do: true
+    defp only_skips(_result), do: false
+    defp passthrough(acc, _ctx), do: acc
+  end
+
   # ── Helpers ───────────────────────────────────────────────────────────────
 
   defp steps(run_id) do
@@ -787,6 +834,39 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       started = System.monotonic_time(:millisecond)
       assert {:ok, _} = Delaying.run()
       assert System.monotonic_time(:millisecond) - started < 100
+    end
+
+    test "when: :always sleeps after a SKIPPED item too" do
+      started = System.monotonic_time(:millisecond)
+      assert {:ok, _} = DelayingAlways.run(delay_ms: 100)
+      elapsed = System.monotonic_time(:millisecond) - started
+
+      # Same three items as `Delaying`, one of them `{:skipped, _}` — so THREE
+      # sleeps where `:processed` takes two. The floor is what separates the two
+      # rules; without it `:always` and `:processed` are indistinguishable.
+      assert elapsed >= 290, "expected three 100ms sleeps, saw #{elapsed}ms"
+    end
+
+    test "a `when:` HOOK decides per item result" do
+      started = System.monotonic_time(:millisecond)
+      assert {:ok, _} = DelayingByHook.run(delay_ms: 100)
+      elapsed = System.monotonic_time(:millisecond) - started
+
+      # The hook sleeps only after the ONE skipped item — the exact inverse of
+      # `:processed`, so neither reserved literal can satisfy this.
+      assert elapsed >= 90, "expected one 100ms sleep, saw #{elapsed}ms"
+      assert elapsed < 190, "expected one 100ms sleep, not two; saw #{elapsed}ms"
+    end
+
+    test "a `{:opt, key, default}` ms resolving to a non-integer raises, naming the stage" do
+      # `validate_ms!/3` rejects a malformed LITERAL at compile time; this is the
+      # runtime half, and it is guarded rather than left to `Process.sleep/1`
+      # because Erlang term ordering puts every non-number ABOVE every number —
+      # so `:nope > 0` is `true` and the bare guard would pass a value the sleep
+      # then dies on, with nothing naming the stage.
+      assert_raise ArgumentError, ~r/stage :items's `delay: \[ms: …\]` resolved to :nope/, fn ->
+        Delaying.run(delay_ms: :nope)
+      end
     end
   end
 

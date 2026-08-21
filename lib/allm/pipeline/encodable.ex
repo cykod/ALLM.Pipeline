@@ -164,4 +164,28 @@ defmodule ALLM.Pipeline.Encodable do
   def encode(value) when is_binary(value), do: Text.scrub(value)
 
   def encode(value), do: value
+
+  @doc """
+  Render an arbitrary term into a **bounded** string for a message that will be
+  persisted to `pipeline_runs.metadata` or `step_logs.error`.
+
+  `inspect/1` is bounded in *encoding* — it renders a NUL-bearing or invalid
+  UTF-8 binary in `<<…>>` byte notation, so it cannot produce a `22P05` — but it
+  is unbounded in *content*: an exit reason such as
+  `{:timeout, {GenServer, :call, [pid, message, 5000]}}` inlines the call's
+  message term, which is exactly where a session token or bearer credential
+  would sit. `Executor.render_shape/1` settled the same question for a rejected
+  Step payload in subphase 2.3 by rendering type and key names only; that is the
+  right trade there, where the value carries no diagnostic weight, and the wrong
+  one here, where the reason IS the diagnostic. So bound it instead of erasing
+  it: a truncated credential is not a credential.
+
+  Use this — not bare `inspect/1` — for any term that reaches a persisted
+  message or metadata value. `limit:` caps collection elements and
+  `printable_limit:` caps binary length; struct `Inspect` implementations are
+  left in place deliberately, since a `@derive {Inspect, except: …}` redaction
+  is strictly better than what this can do.
+  """
+  @spec render(term()) :: String.t()
+  def render(term), do: inspect(term, limit: 5, printable_limit: 256)
 end

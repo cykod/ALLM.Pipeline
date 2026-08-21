@@ -18,7 +18,7 @@ defmodule ALLM.Pipeline.Dsl.Stage do
   | Field | Meaning |
   |---|---|
   | `name` | the stage's atom name, unique within the pipeline |
-  | `kind` | `:stage` (runs once) or `:fan_out` (runs once per item) |
+  | `kind` | `:stage` (runs once), `:fan_out` (runs once per item) or `:child_pipeline` (invokes another pipeline's entry point) |
   | `step` | the `ALLM.Pipeline.Step` module, or `nil` for the escape-hatch form |
   | `body` | the escape-hatch / per-item body, arity 2 `(ctx, subject)`, or `nil` |
   | `input` | arity-2 `(ctx, subject)` hook building the Step's input struct |
@@ -31,7 +31,9 @@ defmodule ALLM.Pipeline.Dsl.Stage do
   | `parent` | `:source_stage` (default) or `:per_item` — see the moduledoc of `ALLM.Pipeline` |
   | `concurrency` | `nil` (inherit the pipeline's), a `pos_integer()`, or `{:opt, key, default}` |
   | `catch_item_failures` | sequential `fan_out` only; a concurrent one is always wrapped (D7) |
-  | `on_error` | `kind: :stage` **only**: `:fail_run` (default) or `:continue`. It governs a whole-stage failure; a `fan_out` has none (its items fail individually into its output), so declaring it there is a compile error |
+  | `retry` | `nil`, or `%{max:, backoff:, base_ms:, on:}` — re-invokes the target, one step log per attempt (Phase 4 D11) |
+  | `child` | `kind: :child_pipeline` only: `%{module:, fun:, args:}` |
+  | `on_error` | `kind: :stage` and `:child_pipeline`: `:fail_run` (default) or `:continue`. It governs a whole-stage failure; a `fan_out` has none (its items fail individually into its output), so declaring it there is a compile error |
 
   ## `carry:`'s scope differs by kind
 
@@ -60,9 +62,29 @@ defmodule ALLM.Pipeline.Dsl.Stage do
           when: :processed | :always | (term() -> as_boolean(term()))
         }
 
+  @typedoc """
+  A validated `retry:` declaration. `on: :any` retries every `{:error, _}`; a
+  list retries only when the reason — or, for a tagged tuple, its first
+  element — is a member. Phase 4 D11: this re-invokes the target and produces
+  one step log per attempt; it does NOT accumulate a cumulative `retry_count`.
+  """
+  @type retry_spec :: %{
+          max: pos_integer(),
+          backoff: :none | :linear | :exponential,
+          base_ms: non_neg_integer(),
+          on: :any | [atom()]
+        }
+
+  @typedoc "A `child_pipeline` target: `Module.fun(args)` with `parent_run_id:` injected."
+  @type child_spec :: %{
+          module: module(),
+          fun: atom(),
+          args: (ALLM.Pipeline.Context.t(), term() -> [term()])
+        }
+
   @type t :: %__MODULE__{
           name: atom(),
-          kind: :stage | :fan_out,
+          kind: :stage | :fan_out | :child_pipeline,
           step: module() | nil,
           body: (ALLM.Pipeline.Context.t(), term() -> term()) | nil,
           input: (ALLM.Pipeline.Context.t(), term() -> struct()) | nil,
@@ -75,7 +97,9 @@ defmodule ALLM.Pipeline.Dsl.Stage do
           parent: :source_stage | :per_item,
           concurrency: concurrency_spec() | nil,
           catch_item_failures: boolean(),
-          on_error: :fail_run | :continue
+          on_error: :fail_run | :continue,
+          retry: retry_spec() | nil,
+          child: child_spec() | nil
         }
 
   @enforce_keys [:name, :kind]
@@ -91,6 +115,8 @@ defmodule ALLM.Pipeline.Dsl.Stage do
     :skip_when,
     :delay,
     :concurrency,
+    :retry,
+    :child,
     carry: [],
     parent: :source_stage,
     catch_item_failures: false,

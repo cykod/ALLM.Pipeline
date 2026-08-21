@@ -169,7 +169,8 @@ trusting a count:
 ```bash
 ls apps/allm_pipeline/lib/allm/pipeline.ex \
    apps/allm_pipeline/lib/allm/pipeline/dsl.ex \
-   apps/allm_pipeline/lib/allm/pipeline/dsl/*.ex
+   apps/allm_pipeline/lib/allm/pipeline/dsl/*.ex \
+   apps/allm_pipeline/lib/allm/pipeline/lifecycle.ex
 ```
 
 **A hook is quoted AST, not a value, and it has to stay that way.**
@@ -186,7 +187,8 @@ accumulates a spec containing AST onto `@allm_pipeline_stages`, and
   and why the arity in `Dsl.__hook_arities__/0` is load-bearing twice over: it
   is what the capture is built at AND what `Dsl.__assert_hooks_defined__!/2`
   checks the module defines. Change one and you have silently changed the
-  other. That attribute is the **single source** for all twelve hook arities;
+  other. That attribute is the **single source** for every hook arity — 16
+  (`MIX_ENV=test mix run --no-start -e 'IO.puts(length(ALLM.Pipeline.Dsl.__hook_arities__()))'`);
   do not restate one at a call site or in a doc table (`hook/2` looks it up),
   and `dsl_test.exs`'s "every hook option has exactly one declared arity" pins
   the set. A wrong row does not fail where you changed it — it fails as
@@ -214,6 +216,15 @@ wrote.
 `__validate__!/2`s with opposite signatures in one package is the footgun
 Phase 3 already paid for once.
 
+**A rejection of a `use`-option PAIR belongs in `__validate__!/2`, not in
+`__before_compile__/1`.** 4.1's D-6 routes the `use`-time *hooks* to
+`__before_compile__` because `Module.defines?/2` cannot answer at `use` time;
+that reason does not reach a scalar pair, whose presence is a literal fact about
+the quoted opt list. Both pair rejections live there and sit adjacent —
+`fetch_summary_type!/3` (`summary_type:` + `returns: :run`) and
+`fetch_borrowed_run!/3` (`borrowed_run: true` + `dry_run:`). What each pair MEANS
+is `ALLM.Pipeline`'s moduledoc and is not restated here.
+
 **`Dsl.__validate__!/2` receives QUOTED opts, not terms.** It cannot evaluate
 them (hooks must survive as AST), so scalars are validated as *literals*. A
 `name:` computed from a module attribute is therefore a compile error, not a
@@ -230,13 +241,15 @@ loss. Measured: that is exactly what the first implementation did, and
 raises" is the test that caught it.
 
 **A stage's target is invoked in exactly one place: `Runtime.run_target/5`.**
-Both kinds go through it — `:stage` from `do_stage/5`, each item from
-`run_item_body/5` — and they differ only in what they do with the result
-afterwards (`apply_result/3` vs `to_item/2`). Anything that changes *how* a
-target is invoked wraps that one function; 4.3's `retry:`, which re-invokes
-`execute/2` from the top, is the case this was extracted for. Writing the
-Step-vs-body dispatch a second time is how the two kinds silently diverge on
-one kind only, which is invisible until a port's step-log tree differs.
+All three kinds go through it — `:stage` and `:child_pipeline` from
+`do_stage/5`, each item from `run_item_body/5` — and they differ only in what
+they do with the result afterwards (`apply_result/3` vs `to_item/2`). Anything
+that changes *how* a target is invoked wraps that one function, which is exactly
+what 4.3's `retry:` did: `run_target/5` now delegates to `attempt_target/6` (the
+recursion) and `invoke_target/6` (the dispatch), and it is still the one seam.
+Writing the Step-vs-body dispatch a second time is how the kinds silently
+diverge on one kind only, which is invisible until a port's step-log tree
+differs.
 
 **`catch_item_failures:` and the concurrency guard are different rules that
 share one helper.** `Runtime.guarded_item/7`'s last argument is
@@ -244,6 +257,61 @@ share one helper.** `Runtime.guarded_item/7`'s last argument is
 unconditionally** on the concurrent one. The second is link safety, not policy:
 `Task.async_stream` links its children, so an uncaught raise or exit kills the
 caller. Do not "simplify" them to one source.
+
+**The lifecycle guard is `ALLM.Pipeline.Lifecycle`, and it has TWO consumers.**
+`Dsl.Runtime.execute/4` uses `guard/2` and `settle/4` separately — resource
+teardown runs *between* them (D3) — while a hand-written entry point calls
+`owned_run/4`, which composes create → guard → settle. Do not grow a third copy
+of `try/rescue/catch` + `complete/2` + `fail_pipeline_run/2` anywhere: the tree
+already paid for that, with four entry points that terminated their run on no
+path and two orchestrators with no `rescue` at all. `guard/2` catches all three
+kinds, always — `rescue` never sees an exit, and a Playwright teardown is one.
+
+**It is not the only complete-or-fail tail, and the older one is what the host
+docs point at.** `ALLM.Pipeline.Executor.finish_run/2` predates it and is still
+correct for its case — a caller that already holds an owning handle, writes no
+metadata, and is already inside somebody else's guard. It creates nothing and
+**guards nothing**. An entry point that creates its own run wants
+`owned_run/4`; the full boundary is the table in `ALLM.Pipeline.Lifecycle`'s
+moduledoc, "Versus `Executor.finish_run/2`". Do not restate it here.
+
+**`normalize_body/1` runs INSIDE `owned_run/4`'s guarded closure, and that is
+load-bearing.** Its `ArgumentError` for an unsanctioned body shape is a contract
+violation like any other raise, so it has to become a `{:raised, …}` settlement.
+Evaluated around the guard — as it was until 4.3's fix pass — it escaped with
+the run created and never terminated, i.e. the exact orphan-run defect the
+module exists to close, on the one path whose test asserted the raise but not
+the row. `Dsl.Runtime` does not share the shape: its `settlement/1` sees only
+`work/6`'s framework-controlled returns.
+
+**Teardown-error metadata is ONE rule written twice, and the reason is Ecto.**
+`Lifecycle` merges `"resource_teardown_errors"` into the metadata `complete/2`
+receives as an ARGUMENT, but onto the run STRUCT's metadata for
+`fail_pipeline_run/2`, which has no metadata parameter. The struct channel is
+not available to `complete/2`: when the merged map equals the struct's own
+metadata, Ecto sees no change and **silently drops the field**. Measured — a
+teardown failure under a `complete_metadata:` returning `%{}` wrote nothing to
+the row, while the identical code path with a non-empty map wrote it. `fail/2`
+always adds its `"error"` key, so it always changes.
+
+**`child_pipeline` lifts `:parent_run_id` out of `opts` into
+`create_pipeline_run/3`'s ATTRS.** Without that lift the opt reaches the child's
+generated `run/1` and stops there, and the link is silently lost — the column
+stays `nil` while the metadata carries a `parent_run_id` key that nothing
+queries. `Runtime.run_owned/3` is where the lift happens; it mirrors what the
+three hand-written consumers already do.
+
+**`retry:` wraps `run_target/5`, which is still the single invocation seam.**
+`attempt_target/6` is the recursion and `invoke_target/6` the dispatch; adding a
+second dispatch path is how the two stage kinds silently diverge on one kind
+only. Note the child clause of `invoke_target/6` must come FIRST: a
+`:child_pipeline` stage also has `step: nil`, so matching the escape hatch
+before it would call `nil.(ctx, subject)`.
+
+**A `resource`'s `start` is guarded too, and `acquire/2` returns a PAIR.** On a
+failing `start` the fold halts and hands back the resources acquired *so far*,
+so the caller can release them. Returning only the failure would leak exactly
+the handles the construct exists to manage.
 
 **Tests are DB-backed and split by half.** `dsl_test.exs` is the compile-time
 half and touches no database; `dsl/runtime_test.exs` is the runtime half and

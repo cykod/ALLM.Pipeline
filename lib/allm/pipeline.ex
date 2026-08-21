@@ -81,9 +81,11 @@ defmodule ALLM.Pipeline do
   `ALLM.Pipeline.Dsl.Runtime` reaches a `pipeline_runs`, `step_logs` or
   `pipeline_metrics` row **only** through `Executor`, `PipelineRun` and `Metrics`
   functions a hand-written orchestrator already calls — `create_pipeline_run/3`,
-  `run_step/5`, `log_section/3`, `fail_pipeline_run/2`, `PipelineRun.complete/2`,
-  `PipelineRun.borrow/1`, `Metrics.record/3` — with the same arguments, and adds
-  no `Repo` call of its own. (That module's moduledoc carries the command to
+  `run_step/5`, `log_section/3`, `log_summary/4`, `borrowed_run/1`,
+  `fail_pipeline_run/2`, `PipelineRun.complete/2`, `PipelineRun.borrow/1`,
+  `Metrics.record/3` — with the same arguments, and adds no `Repo` call of its
+  own. (The terminal write goes through `ALLM.Pipeline.Lifecycle`, which is the
+  shared guard, not a second writer.) (That module's moduledoc carries the command to
   re-derive the set; do not restate it from memory.) The DSL changes *who writes
   the call*, not *what the call is* — which is what makes "the ported pipeline's
   step-log tree is structurally identical" an achievable gate rather than an
@@ -112,6 +114,9 @@ defmodule ALLM.Pipeline do
   | `init:` | no | hook `(() :: term())` | the accumulator's initial value; default `%{}` |
   | `returns:` | no | `:summary` \\| `:run` | what `run/1` returns on success; default `:summary` |
   | `concurrency:` | no | `pos_integer()` \\| `{:opt, key, default}` | default **1**; a per-`fan_out` override wins |
+  | `summary_type:` | no | `atom()` | a zero-arity type THIS module defines; makes the generated `@spec run/1` return `{:ok, that()}` instead of `{:ok, term()}` |
+  | `borrowed_run:` | no | `boolean()` | default `false`; see "Running under a borrowed run" |
+  | `dry_run:` | no | hook `(ctx) :: map()` | the plan hook; see "`--dry-run`" |
 
   Three values are deliberately distinct, because real pipelines need them
   different: what `run/1` RETURNS (`summarize`, or the completed run under
@@ -123,7 +128,16 @@ defmodule ALLM.Pipeline do
   ## Generated functions
 
       @spec run(keyword()) :: {:ok, term()} | {:error, term()}
-      @spec __pipeline__(:name | :stages | :metrics | :concurrency | :hooks) :: term()
+      @spec __pipeline__(:name | :stages | :metrics | :concurrency | :hooks | :resources) ::
+              term()
+
+  `run/1`'s return is `{:ok, term()}` **unless** the declaration names its
+  summary type. Declare `summary_type: :stats` (a zero-arity type the module
+  defines) and the generated spec becomes `{:ok, stats()}`, which is what keeps
+  dialyzer type-checking the pipeline's consumers — a using module cannot write
+  its own `@spec run/1`, because it would collide with the generated one. Under
+  `returns: :run` the type is already known and the two options are mutually
+  exclusive.
 
   `__pipeline__(:stages)` returns a list of `ALLM.Pipeline.Dsl.Stage`
   **structs**, not bare atoms — read the field you mean (`& &1.name`,
@@ -195,6 +209,149 @@ defmodule ALLM.Pipeline do
   instead of at each call site. `rescue` alone is insufficient: an exit is not
   an exception.
 
+  ## `resource` — a handle acquired once per run
+
+      resource :browser, start: :open_browser, stop: :close_browser
+
+  Acquired **once per run** before the first stage — not once per fan-out item —
+  and released **before** the terminal write (D3). Every step and body reads it
+  as `ALLM.Pipeline.Context.resource(ctx, :browser)`: a struct field, never an
+  `opts` key, because a resource is framework-managed state with a lifecycle and
+  burying it in the caller's option list makes it indistinguishable from a CLI
+  flag.
+
+  Teardown runs on **every** exit path — success, a named failure, a raise, an
+  exit and a throw — and every `stop` is wrapped in `catch kind, reason`
+  covering all three kinds, because a Playwright or `GenServer` teardown
+  surfaces as an exit rather than an exception. A teardown failure **never
+  changes the terminal status**: the run's status is about the work, and a
+  leaked handle is an operational fault recorded beside it under
+  `metadata["resource_teardown_errors"]`. The ordering is the whole point —
+  teardown after the write could not record a failure anywhere, because the row
+  is already terminal. Full contract: `ALLM.Pipeline.Dsl.Resource`.
+
+  ## `child_pipeline` — invoke another pipeline, linked
+
+      child_pipeline :enrich, OtherPipeline, :run, args: :enrich_args
+
+  A stage that invokes another pipeline's entry point. The child creates and
+  terminates its **own** `PipelineRun`; this pipeline's run gains no step log
+  from it. What the construct adds over an escape-hatch `stage` is the link:
+  `args:` returns the full argument LIST, and `parent_run_id:` is merged into
+  its **last** element — which must be a keyword list. Merging rather than
+  appending keeps the child's arity intact, which matters for an `f(id, opts)`
+  entry point such as `ProjectEnrichmentPipeline.run_single/2`; the three live
+  consumer call sites are all `run(opts)`. Nothing validates the function atom
+  beyond "is a literal atom", so a name that does not exist on the child module
+  surfaces as an `UndefinedFunctionError` at the first real run, inside the
+  generated lifecycle guard — i.e. as a failed run. Grep the child's entry
+  points before writing the atom. A DSL-declared child lifts that opt into
+  `create_pipeline_run/3`'s attrs, so it lands in the `parent_run_id` COLUMN and
+  stays SQL/GraphQL-filterable rather than becoming a metadata key.
+
+  ## Running under a borrowed run
+
+      use ALLM.Pipeline, name: "inner", borrowed_run: true
+
+  An umbrella pipeline lends its run by putting it under the `:pipeline_run`
+  opt. A pipeline declaring `borrowed_run: true` branches on
+  `ALLM.Pipeline.Executor.borrowed_run/1`: given a lent run it executes its
+  stages under that handle and creates and terminates **nothing** — the umbrella
+  owner is the sole completer — and without one it is self-owned exactly as any
+  other pipeline. The handle is non-owning, so a body's stray `complete/2` is a
+  detectable `{:error, :not_run_owner}` rather than a mid-loop `:success` that
+  clobbers the umbrella's aggregate metadata.
+
+  Two consequences, both deliberate. A borrowed run records **no**
+  `pipeline_metrics` row (the funnel would be attributed to the umbrella and
+  double-count), and a resource teardown failure is **logged** rather than
+  recorded, because there is no terminal write of this pipeline's own to hang it
+  on. Under `returns: :run` the borrowed path hands back the borrowed run, which
+  is still `:running` — the umbrella completes it later.
+
+  The declaration is what gates the branch. `Executor.borrowed_run/1` is not
+  consulted for a pipeline that does not declare `borrowed_run: true`, so a
+  stray `:pipeline_run` opt cannot silently change any other pipeline's
+  lifecycle.
+
+  ## `--dry-run`
+
+      use ALLM.Pipeline, name: "poi_thumbnails", dry_run: :plan
+
+  **The contract, stated once, here.** When a pipeline declares a `dry_run:`
+  plan hook AND is run with a truthy `:dry_run` opt AND is **self-owned**, the
+  framework creates the run, calls the hook, writes **one** `log_summary` row
+  carrying the plan, completes the run, and returns the plan — all **before the
+  first stage**, and therefore before the first external call.
+  `Executor.run_step/5` is called zero times, and no `resource` is acquired, so
+  a declared browser or authenticated session is never opened. (A `dry_run:`
+  hook reading `Context.resource(ctx, :browser)` therefore gets `nil`: opening
+  the handle *is* an external call, and the contract is "before the first
+  one".)
+
+  A pipeline that declares no `dry_run:` hook ignores the flag entirely: a
+  pipeline with no declared plan has nothing to report, and skipping its work on
+  a flag it never opted into would be a hidden behaviour change.
+
+  ### `dry_run:` and `borrowed_run: true` are mutually exclusive
+
+  Declaring **both** is a **compile error** (`ALLM.Pipeline.Dsl.__validate__!/2`),
+  as `summary_type:` + `returns: :run` already is. There is no runtime branch for
+  the pair, and the rejection is the whole implementation of the rule.
+
+  The reason is a precedence that cannot be honoured: `run/1` resolves the lent
+  run **before** the dry branch, so a declaration carrying both, invoked with a
+  lent `:pipeline_run` and a truthy `:dry_run`, would run **every stage for real**
+  with the flag silently dropped — no plan hook, no error, and an `{:ok, …}`
+  return indistinguishable from a successful plan. That is the one shape in which
+  "`--dry-run` did not stop the work" is reachable without a declaration bug, and
+  `--dry-run` exists for cost avoidance. Inverting the precedence instead would
+  need new runtime semantics for what a *dry borrowed* run writes, since it cannot
+  complete a run it does not own — for a shape that has no consumer.
+
+  The accepted cost: a pipeline cannot be dry-runnable when self-owned **and**
+  lendable otherwise. A pipeline needing both splits into two declarations, or
+  keeps a `skip_when: {:opt, :dry_run}` on its write stage (the second meaning
+  below), which composes with `borrowed_run:` freely.
+
+  **`--dry-run` means two different things in the four hand-written host
+  implementations, and the framework implements only the first.** They are named
+  here because the difference is what a porter has to decide, and it is not
+  visible from either pipeline's flag name:
+
+  | Host implementation | Meaning | Ports as |
+  |---|---|---|
+  | `PoiThumbnailPipeline` (`run_dry/2`) | **Skip everything.** Resolve the working set, log a section per item, complete. No step runs. | `dry_run:` |
+  | `ProjectRefreshPipeline` | **Skip everything.** Compute the cohorts, log the summary, invoke no sub-pipeline. | `dry_run:` |
+  | `VideoPipeline` | **Skip only the WRITE.** The LLM match step still runs and still spends tokens; only `apply_assignments/1` is skipped. | a `skip_when: {:opt, :dry_run}` on the write stage |
+  | `RvcsPipeline` | **Skip only the WRITE.** Agenda and minutes are still fetched and transformed; only the loader is skipped. It also increments `meetings_processed` on the dry path, which the framework version does not. | a `skip_when: {:opt, :dry_run}` on the write stage |
+
+  A pipeline wanting the second meaning does **not** declare `dry_run:`; it
+  keeps a `skip_when:` on its write stage, which is already expressible and
+  leaves the earlier stages running.
+
+  ## `retry:`
+
+      stage :extract, Extractor, input: :build, retry: [max: 3, backoff: :exponential,
+                                                        on: [:rate_limited, :timeout]]
+
+  Re-invokes the target from the top, producing **one step log per attempt**
+  (D11). `max:` counts total ATTEMPTS, not retries. `on:` defaults to `:any` and
+  otherwise matches a bare reason atom or a tagged tuple's first element;
+  `backoff:` is `:none` (default), `:linear` or `:exponential` over `base_ms:`
+  (default 1000). Attempts from the second pass `is_retry: true`, which
+  `StepLog.log_failure/3` turns into `retry_count`.
+
+  Re-invoking rather than reusing a step log is what keeps a step's hooks
+  applied exactly once per invocation — `post_process/2` is not idempotent on
+  every ported step. The cost is that `retry_count` is "was this a retry",
+  not "how many"; a true cumulative counter needs one step log across attempts,
+  which changes timing and lineage semantics, and is Phase 7's.
+
+  Also note: an earlier attempt's accumulator write is **discarded** — the last
+  attempt's `{item_result, acc}` is the one that survives, and every attempt
+  sees the same context.
+
   ## Ownership
 
   The generated `run/1` obtains its handle from
@@ -220,9 +377,20 @@ defmodule ALLM.Pipeline do
 
     quote do
       import ALLM.Pipeline.Dsl,
-        only: [stage: 2, stage: 3, fan_out: 2, fan_out: 3, metrics: 2, summarize: 1]
+        only: [
+          stage: 2,
+          stage: 3,
+          fan_out: 2,
+          fan_out: 3,
+          child_pipeline: 3,
+          child_pipeline: 4,
+          resource: 2,
+          metrics: 2,
+          summarize: 1
+        ]
 
       Module.register_attribute(__MODULE__, :allm_pipeline_stages, accumulate: true)
+      Module.register_attribute(__MODULE__, :allm_pipeline_resources, accumulate: true)
 
       @allm_pipeline_declaration unquote(Macro.escape(declaration))
       @allm_pipeline_metrics nil
@@ -238,6 +406,7 @@ defmodule ALLM.Pipeline do
   defmacro __before_compile__(env) do
     declaration = Module.get_attribute(env.module, :allm_pipeline_declaration)
     specs = env.module |> Module.get_attribute(:allm_pipeline_stages) |> Enum.reverse()
+    resources = env.module |> Module.get_attribute(:allm_pipeline_resources) |> Enum.reverse()
     metrics = Module.get_attribute(env.module, :allm_pipeline_metrics)
     summarize = Module.get_attribute(env.module, :allm_pipeline_summarize)
 
@@ -247,16 +416,29 @@ defmodule ALLM.Pipeline do
     end
 
     assert_unique_names!(env.module, specs)
+    assert_unique_resources!(env.module, resources)
 
     Dsl.__assert_hooks_defined__!(
       env,
       declaration.atom_hooks ++
         Enum.flat_map(specs, & &1.atom_hooks) ++
+        Enum.flat_map(resources, & &1.atom_hooks) ++
         Module.get_attribute(env.module, :allm_pipeline_metrics_hooks) ++
         Module.get_attribute(env.module, :allm_pipeline_summarize_hooks)
     )
 
     stages_ast = Enum.map(specs, &Dsl.__stage_ast__/1)
+
+    resources_ast =
+      Enum.map(resources, fn resource ->
+        quote do
+          %ALLM.Pipeline.Dsl.Resource{
+            name: unquote(resource.name),
+            start: unquote(resource.start),
+            stop: unquote(resource.stop)
+          }
+        end
+      end)
 
     metrics_ast =
       if metrics, do: {:%{}, [], [entity_type: metrics.entity_type, from: metrics.from]}
@@ -272,14 +454,16 @@ defmodule ALLM.Pipeline do
       `opts` are the pipeline's own options; `run_name:` overrides the declared
       `name:` for a mode variant.
       """
-      @spec run(keyword()) :: {:ok, term()} | {:error, term()}
+      @spec run(keyword()) :: unquote(ALLM.Pipeline.__run_return__(declaration))
       def run(opts \\ []), do: ALLM.Pipeline.Dsl.Runtime.run(__MODULE__, opts)
 
       @doc false
-      @spec __pipeline__(:name | :stages | :metrics | :concurrency | :hooks) :: term()
+      @spec __pipeline__(:name | :stages | :metrics | :concurrency | :hooks | :resources) ::
+              term()
       def __pipeline__(:name), do: unquote(declaration.name)
       def __pipeline__(:concurrency), do: unquote(declaration.concurrency)
       def __pipeline__(:stages), do: unquote(stages_ast)
+      def __pipeline__(:resources), do: unquote(resources_ast)
       def __pipeline__(:metrics), do: unquote(metrics_ast)
 
       def __pipeline__(:hooks) do
@@ -288,12 +472,52 @@ defmodule ALLM.Pipeline do
           complete_metadata: unquote(declaration.complete_metadata),
           init: unquote(declaration.init),
           summarize: unquote(summarize),
-          returns: unquote(declaration.returns)
+          returns: unquote(declaration.returns),
+          borrowed_run: unquote(declaration.borrowed_run),
+          dry_run: unquote(declaration.dry_run)
         }
       end
 
       defoverridable run: 1
     end
+  end
+
+  @doc false
+  # The generated `run/1`'s return type. Without `summary_type:` it is
+  # `{:ok, term()}`, which silently stops dialyzer type-checking every consumer
+  # of a ported pipeline's stats map — measured on the first port, whose CLI
+  # reads `stats.meetings_found` off what became `term()`. A using module cannot
+  # add its own `@spec run/1` (it would collide with the generated one), so the
+  # affordance has to live here.
+  @spec __run_return__(Dsl.declaration()) :: Macro.t()
+  def __run_return__(%{returns: :run}) do
+    quote do: {:ok, ALLM.Pipeline.PipelineRun.t()} | {:error, term()}
+  end
+
+  def __run_return__(%{summary_type: nil}) do
+    quote do: {:ok, term()} | {:error, term()}
+  end
+
+  def __run_return__(%{summary_type: type}) do
+    quote do: {:ok, unquote({type, [], []})} | {:error, term()}
+  end
+
+  @spec assert_unique_resources!(module(), [Dsl.resource_spec()]) :: :ok
+  defp assert_unique_resources!(module, resources) do
+    duplicates =
+      resources
+      |> Enum.frequencies_by(& &1.name)
+      |> Enum.filter(&(elem(&1, 1) > 1))
+      |> Keyword.keys()
+
+    if duplicates != [] do
+      raise ArgumentError,
+            "#{inspect(module)}: duplicate resource name(s) #{inspect(duplicates)}. " <>
+              "A resource name keys `ALLM.Pipeline.Context.resource/2`, so a duplicate " <>
+              "would make one of the two handles unreachable and leak it."
+    end
+
+    :ok
   end
 
   @spec assert_unique_names!(module(), [Dsl.stage_spec()]) :: :ok

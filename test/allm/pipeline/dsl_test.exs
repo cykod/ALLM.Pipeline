@@ -78,14 +78,17 @@ defmodule ALLM.Pipeline.DslTest do
       # any `==` against a list built from the same broken source. Same
       # fail-open protection `executor_test.exs` and `encodable_test.exs` put
       # on their `Path.wildcard/1` results, transposed to the right instrument.
-      assert length(macros) >= 6,
+      assert length(macros) >= 9,
              "ALLM.Pipeline.Dsl exports only #{length(macros)} macros — the module moved or " <>
                "the constructs were renamed, and this guard is no longer scanning them."
 
       assert macros == [
+               child_pipeline: 3,
+               child_pipeline: 4,
                fan_out: 2,
                fan_out: 3,
                metrics: 2,
+               resource: 2,
                stage: 2,
                stage: 3,
                summarize: 1
@@ -115,7 +118,7 @@ defmodule ALLM.Pipeline.DslTest do
     test "every hook option has exactly one declared arity, and the table is non-empty" do
       arities = Dsl.__hook_arities__()
 
-      assert length(arities) >= 12,
+      assert length(arities) >= 16,
              "__hook_arities__/0 reports only #{length(arities)} hooks — rows were dropped, " <>
                "and the equality below would pass vacuously."
 
@@ -132,7 +135,11 @@ defmodule ALLM.Pipeline.DslTest do
                  skip_when: 1,
                  when: 1,
                  from: 1,
-                 summarize: 2
+                 summarize: 2,
+                 start: 1,
+                 stop: 1,
+                 args: 2,
+                 dry_run: 1
                )
 
       assert Keyword.keys(arities) == Enum.uniq(Keyword.keys(arities))

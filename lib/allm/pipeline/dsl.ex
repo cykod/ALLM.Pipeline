@@ -43,6 +43,10 @@ defmodule ALLM.Pipeline.Dsl do
   | `delay: [when: …]` | `(item_result)` — or the literals `:processed` / `:always` |
   | `metrics …, from:` | `(summary)` |
   | `summarize` | `(acc, ctx)` |
+  | `resource …, start:` | `(ctx)` |
+  | `resource …, stop:` | `(handle)` |
+  | `child_pipeline …, args:` | `(ctx, subject)` |
+  | `dry_run:` | `(ctx)` |
 
   `subject` is the previous stage's output for a `stage`, and the item for a
   `fan_out`. Note `carry:` does **not** capture from the subject — see
@@ -65,10 +69,13 @@ defmodule ALLM.Pipeline.Dsl do
     :complete_metadata,
     :init,
     :returns,
-    :concurrency
+    :concurrency,
+    :borrowed_run,
+    :dry_run,
+    :summary_type
   ]
 
-  @common_options [:input, :skip_when, :carry]
+  @common_options [:input, :skip_when, :carry, :retry]
 
   # `on_error:` governs a WHOLE-STAGE failure, and a `fan_out` has none — its
   # items' failures land in the `[Dsl.Item.t()]` it returns, and the stage
@@ -105,7 +112,11 @@ defmodule ALLM.Pipeline.Dsl do
     skip_when: 1,
     when: 1,
     from: 1,
-    summarize: 2
+    summarize: 2,
+    start: 1,
+    stop: 1,
+    args: 2,
+    dry_run: 1
   ]
 
   # The subset a `stage`/`fan_out` declares directly, in the order they are read.
@@ -119,16 +130,27 @@ defmodule ALLM.Pipeline.Dsl do
           init: Macro.t() | nil,
           returns: :summary | :run,
           concurrency: Macro.t(),
+          borrowed_run: boolean(),
+          dry_run: Macro.t() | nil,
+          summary_type: atom() | nil,
           atom_hooks: [{atom(), atom(), arity()}]
         }
 
   @typedoc "One accumulated stage specification. Hook values are quoted AST."
   @type stage_spec :: %{
           name: atom(),
-          kind: :stage | :fan_out,
+          kind: :stage | :fan_out | :child_pipeline,
           step: Macro.t() | nil,
           hooks: keyword(Macro.t()),
           scalars: keyword(Macro.t()),
+          atom_hooks: [{atom(), atom(), arity()}]
+        }
+
+  @typedoc "One accumulated `resource` declaration. Hook values are quoted AST."
+  @type resource_spec :: %{
+          name: atom(),
+          start: Macro.t(),
+          stop: Macro.t(),
           atom_hooks: [{atom(), atom(), arity()}]
         }
 
@@ -164,6 +186,53 @@ defmodule ALLM.Pipeline.Dsl do
 
     spec = __stage__(:fan_out, __CALLER__, name, target, opts)
     accumulate(spec)
+  end
+
+  @doc """
+  Declare a stage that invokes **another pipeline's** entry point.
+
+      child_pipeline :enrich, ProjectEnrichmentPipeline, :run, args: :enrich_args
+
+  The child creates and terminates its **own** `PipelineRun`; this pipeline's
+  run is untouched by it and gains no step log. What the construct adds over an
+  escape-hatch `stage` is the link: `args:` returns the full argument LIST, and
+  the DSL merges `parent_run_id: <this run's id>` into its **last** element —
+  which must be a keyword list.
+
+  Merging into the last element rather than appending is what keeps the child's
+  arity intact. All three live consumer call sites are `run(opts)` today
+  (`project_refresh_pipeline.ex:204`, `:266`, `:275`), so a plain append would
+  work for them — but `ProjectEnrichmentPipeline.run_single/2` is an
+  `f(id, opts)` entry point that exists now and would break under one.
+
+  Options: `args:` (required), plus `skip_when:`, `carry:`, `retry:` and
+  `on_error:` as a `stage` has them.
+  """
+  defmacro child_pipeline(name, module, fun, opts \\ []) do
+    spec = __child_pipeline__(__CALLER__, name, module, fun, opts)
+    accumulate(spec)
+  end
+
+  @doc """
+  Declare a handle acquired **once per run** and released before the terminal write.
+
+      resource :browser, start: :open_browser, stop: :close_browser
+
+  `start:` is `(ctx)` and returns the handle; `stop:` is `(handle)`. The handle
+  reaches every step and body as `ALLM.Pipeline.Context.resource(ctx, :browser)`
+  — a struct field, never an `opts` key. Multiple `resource` declarations are
+  acquired in declaration order and released in reverse.
+
+  Teardown ordering, its failure handling, and why a teardown failure never
+  changes the run's status are `ALLM.Pipeline.Dsl.Resource`'s moduledoc
+  (Phase 4 D3).
+  """
+  defmacro resource(name, opts) do
+    spec = __resource__(__CALLER__, name, opts)
+
+    quote do
+      @allm_pipeline_resources unquote(Macro.escape(spec))
+    end
   end
 
   @doc """
@@ -247,16 +316,21 @@ defmodule ALLM.Pipeline.Dsl do
     {metadata, a1} = use_hook(opts, :metadata)
     {complete_metadata, a2} = use_hook(opts, :complete_metadata)
     {init, a3} = use_hook(opts, :init)
+    {dry_run, a4} = use_hook(opts, :dry_run)
+    returns = fetch_returns!(module, opts)
 
     %{
       name: fetch_name!(module, opts),
       metadata: metadata,
       complete_metadata: complete_metadata,
       init: init,
-      returns: fetch_returns!(module, opts),
+      returns: returns,
       concurrency:
         validate_concurrency!(module, Keyword.get(opts, :concurrency, 1), "use ALLM.Pipeline"),
-      atom_hooks: a1 ++ a2 ++ a3
+      borrowed_run: fetch_borrowed_run!(module, opts, dry_run),
+      dry_run: dry_run,
+      summary_type: fetch_summary_type!(module, opts, returns),
+      atom_hooks: a1 ++ a2 ++ a3 ++ a4
     }
   end
 
@@ -299,6 +373,110 @@ defmodule ALLM.Pipeline.Dsl do
   end
 
   # ── Internals ─────────────────────────────────────────────────────────────
+
+  @spec __resource__(Macro.Env.t(), Macro.t(), Macro.t()) :: resource_spec()
+  defp __resource__(caller, name, opts) do
+    module = caller.module
+    label = "resource #{Macro.to_string(name)}"
+
+    unless is_atom(name) and not is_nil(name) do
+      raise ArgumentError,
+            "#{inspect(module)}: a resource's name must be a literal atom, " <>
+              "got: #{Macro.to_string(name)}"
+    end
+
+    unless keyword_ast?(opts) do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}` takes a keyword list of options, " <>
+              "got: #{Macro.to_string(opts)}"
+    end
+
+    case Keyword.keys(opts) -- [:start, :stop] do
+      [] -> :ok
+      unknown -> raise ArgumentError, unknown_message(module, label, unknown, [:start, :stop])
+    end
+
+    # BOTH are required, and `stop:` is the one that matters: a resource with no
+    # `stop` is a value, and the construct exists for the release half. There is
+    # no default — only the declaring module knows how to close its handle.
+    for key <- [:start, :stop], not Keyword.has_key?(opts, key) do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}` requires `#{key}:`. A `resource` is an " <>
+              "acquire/release pair; if there is nothing to release, it is not a resource."
+    end
+
+    {start_ast, start_atoms} = hook(Keyword.fetch!(opts, :start), :start)
+    {stop_ast, stop_atoms} = hook(Keyword.fetch!(opts, :stop), :stop)
+
+    %{name: name, start: start_ast, stop: stop_ast, atom_hooks: start_atoms ++ stop_atoms}
+  end
+
+  @spec __child_pipeline__(Macro.Env.t(), Macro.t(), Macro.t(), Macro.t(), Macro.t()) ::
+          stage_spec()
+  defp __child_pipeline__(caller, name, child_module, fun, opts) do
+    module = caller.module
+    label = "child_pipeline #{Macro.to_string(name)}"
+    # COMPOSED, not hand-copied — this is a fourth member of the same vocabulary
+    # as `@stage_options` and `@fan_out_options` above. Copied, a fifth common
+    # option would reach `stage` and `fan_out` automatically and silently skip
+    # `child_pipeline`, so a declaration the sibling kinds accept would raise
+    # "unknown option" here.
+    #
+    # `:input` is the exclusion: it is a Step's input builder and a child
+    # pipeline has no Step. Everything else a stage may declare, a
+    # `child_pipeline` may too.
+    known = [:args | @common_options -- [:input]] ++ [:on_error]
+
+    unless is_atom(name) do
+      raise ArgumentError,
+            "#{inspect(module)}: a child_pipeline's name must be a literal atom, " <>
+              "got: #{Macro.to_string(name)}"
+    end
+
+    # An ALIAS, for the same reason `stage/3` demands one: `is_atom/1` cannot
+    # tell a module from a hook name once an alias is expanded.
+    unless match?({:__aliases__, _, _}, child_module) do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}`'s second argument must be a module alias — " <>
+              "`child_pipeline :name, OtherPipeline, :run, args: …`, got: " <>
+              "#{Macro.to_string(child_module)}"
+    end
+
+    unless is_atom(fun) and not is_nil(fun) do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}`'s third argument must be a literal function name " <>
+              "atom, got: #{Macro.to_string(fun)}"
+    end
+
+    unless keyword_ast?(opts) and Keyword.has_key?(opts, :args) do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}` requires `args:` — an arity-2 hook " <>
+              "`(ctx, subject)` returning the child's argument LIST, whose last element is " <>
+              "the keyword list `parent_run_id:` is merged into."
+    end
+
+    case Keyword.keys(opts) -- known do
+      [] -> :ok
+      unknown -> raise ArgumentError, unknown_message(module, label, unknown, known)
+    end
+
+    {args_ast, args_atoms} = hook(Keyword.fetch!(opts, :args), :args)
+    {scalars, scalar_atoms} = stage_scalars(module, :child_pipeline, label, opts)
+
+    child_ast =
+      quote do
+        %{module: unquote(child_module), fun: unquote(fun), args: unquote(args_ast)}
+      end
+
+    %{
+      name: name,
+      kind: :child_pipeline,
+      step: nil,
+      hooks: Enum.map(@stage_hook_keys, &{&1, nil}) ++ [child: child_ast],
+      scalars: scalars,
+      atom_hooks: args_atoms ++ scalar_atoms
+    }
+  end
 
   @spec accumulate(stage_spec()) :: Macro.t()
   defp accumulate(spec) do
@@ -455,7 +633,8 @@ defmodule ALLM.Pipeline.Dsl do
           :catch_item_failures,
           Keyword.get(opts, :catch_item_failures, false)
         ),
-      on_error: validate_on_error!(module, label, Keyword.get(opts, :on_error, :fail_run))
+      on_error: validate_on_error!(module, label, Keyword.get(opts, :on_error, :fail_run)),
+      retry: validate_retry!(module, label, Keyword.get(opts, :retry))
     ]
 
     {scalars, delay_atoms ++ skip_atoms}
@@ -562,6 +741,129 @@ defmodule ALLM.Pipeline.Dsl do
           "#{inspect(module)}: `#{label}`'s `delay: [ms: …]` must be a non-negative integer " <>
             "or `{:opt, key, default}` with a non-negative integer default (so a CLI flag can " <>
             "still reach it), got: #{Macro.to_string(other)}"
+  end
+
+  # Phase 4 D11: `retry:` RE-INVOKES the target and produces one step log per
+  # attempt. `max:` counts ATTEMPTS, not retries, so `max: 1` is a declaration
+  # that never retries and is rejected — it reads as "one retry" and is the
+  # off-by-one this option's name invites.
+  @spec validate_retry!(module(), String.t(), Macro.t() | nil) :: Macro.t() | nil
+  defp validate_retry!(_module, _label, nil), do: nil
+
+  defp validate_retry!(module, label, spec) do
+    known = [:max, :backoff, :base_ms, :on]
+
+    unless keyword_ast?(spec) and Keyword.has_key?(spec, :max) do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}`'s `retry:` must be a keyword list carrying `max:`, " <>
+              "e.g. `retry: [max: 3, backoff: :exponential, on: [:rate_limited]]`, " <>
+              "got: #{Macro.to_string(spec)}"
+    end
+
+    case Keyword.keys(spec) -- known do
+      [] -> :ok
+      unknown -> raise ArgumentError, unknown_message(module, "#{label}'s retry:", unknown, known)
+    end
+
+    max = Keyword.fetch!(spec, :max)
+
+    unless is_integer(max) and max > 1 do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}`'s `retry: [max: …]` counts total ATTEMPTS and must " <>
+              "be an integer greater than 1, got: #{Macro.to_string(max)}"
+    end
+
+    backoff = Keyword.get(spec, :backoff, :none)
+
+    unless backoff in [:none, :linear, :exponential] do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}`'s `retry: [backoff: …]` must be `:none`, " <>
+              "`:linear` or `:exponential`, got: #{Macro.to_string(backoff)}"
+    end
+
+    base_ms = Keyword.get(spec, :base_ms, 1_000)
+
+    unless is_integer(base_ms) and base_ms >= 0 do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}`'s `retry: [base_ms: …]` must be a non-negative " <>
+              "integer, got: #{Macro.to_string(base_ms)}"
+    end
+
+    on = Keyword.get(spec, :on, :any)
+
+    unless on == :any or (is_list(on) and on != [] and Enum.all?(on, &is_atom/1)) do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}`'s `retry: [on: …]` must be `:any` or a non-empty " <>
+              "literal list of reason atoms, got: #{Macro.to_string(on)}"
+    end
+
+    quote do
+      %{max: unquote(max), backoff: unquote(backoff), base_ms: unquote(base_ms), on: unquote(on)}
+    end
+  end
+
+  # `summary_type:` names a ZERO-ARITY type the using module defines, and its
+  # only effect is on the GENERATED `@spec run/1`: without it the return is
+  # `{:ok, term()}` and dialyzer stops type-checking every consumer of the
+  # pipeline's stats map. Under `returns: :run` the summary type is already
+  # known (`PipelineRun.t()`), so declaring both is a contradiction rather than
+  # a redundancy.
+  @spec fetch_summary_type!(module(), Macro.t(), :summary | :run) :: atom() | nil
+  defp fetch_summary_type!(module, opts, returns) do
+    case {Keyword.fetch(opts, :summary_type), returns} do
+      {:error, _returns} ->
+        nil
+
+      {{:ok, _type}, :run} ->
+        raise ArgumentError,
+              "#{inspect(module)}: `summary_type:` and `returns: :run` cannot both be " <>
+                "declared — under `returns: :run` the generated `run/1` returns the completed " <>
+                "`ALLM.Pipeline.PipelineRun.t()`, which is already typed."
+
+      {{:ok, type}, _returns} when is_atom(type) and not is_nil(type) and not is_boolean(type) ->
+        type
+
+      {{:ok, other}, _returns} ->
+        raise ArgumentError,
+              "#{inspect(module)}: `summary_type:` must be an atom naming a zero-arity type " <>
+                "this module defines (e.g. `summary_type: :stats` for `@type stats :: …`), " <>
+                "got: #{Macro.to_string(other)}"
+    end
+  end
+
+  # `borrowed_run: true` and `dry_run:` are mutually exclusive, and the rejection
+  # is the whole implementation of that rule — there is no runtime branch for the
+  # pair. `Runtime.run/1` resolves the lent handle (`lent_run/2`) BEFORE the dry
+  # branch (`dry_run?/2`), so a declaration carrying both, invoked with a lent run
+  # and a truthy `:dry_run`, would execute every stage for real with the flag
+  # silently dropped and return `{:ok, …}` indistinguishable from a successful
+  # plan — the one shape in which "`--dry-run` did not stop the work" is reachable
+  # without a declaration bug, on the phase where a stage costs LLM tokens.
+  # Inverting the precedence instead was rejected: a dry borrowed run cannot
+  # complete a run it does not own, so honouring the flag there needs new runtime
+  # semantics for a shape that has no consumer. Rejected at compile time, which is
+  # the only moment anyone can act on it — as `summary_type:` + `returns: :run`
+  # already is. Cost, accepted: a pipeline cannot be dry-runnable when self-owned
+  # and lendable otherwise.
+  @spec fetch_borrowed_run!(module(), Macro.t(), Macro.t() | nil) :: Macro.t()
+  defp fetch_borrowed_run!(module, opts, dry_run) do
+    borrowed =
+      validate_boolean!(
+        module,
+        "use ALLM.Pipeline",
+        :borrowed_run,
+        Keyword.get(opts, :borrowed_run, false)
+      )
+
+    if borrowed == true and not is_nil(dry_run) do
+      raise ArgumentError,
+            "#{inspect(module)}: `borrowed_run: true` and `dry_run:` cannot both be " <>
+              "declared — `run/1` resolves the lent run before the dry branch, so under a " <>
+              "lent run every stage would execute for real with the flag silently dropped, " <>
+              "and a dry borrowed run cannot complete a run it does not own."
+    end
+
+    borrowed
   end
 
   @spec validate_concurrency!(module(), Macro.t(), String.t()) :: Macro.t()
