@@ -9,13 +9,12 @@ defmodule ALLM.Pipeline.TestSupport.TargetDeclaration do
   the DSL fails a test in this package rather than surfacing during the port.
 
   ⚠️ **It is 4.1's SPEC, not a transcript of the shipped port.** 4.2 shipped a
-  declaration that diverges in two places — no `gate: :meeting_decision`, and a
-  fourth `stage :tally` after the fan-out — for reasons recorded as
-  `…PHASE_4_RECORDS.md` → "4.2 — Deviations" D-8 and D-9, and summarised in
-  `ALLM.Pipeline`'s moduledoc under "A `gate:` is SILENT". Do **not** read the
-  declaration below as the canonical usage, and do **not** "fix" it to match the
-  port: its `gate:` is the only compile-time exercise of that construct anywhere
-  in the tree, which is the job this fixture exists to do.
+  declaration that diverges — notably a fourth `stage :tally` after the fan-out —
+  for reasons recorded as `…PHASE_4_RECORDS.md` → "4.2 — Deviations" D-8 and D-9.
+  Do **not** read the declaration below as the canonical usage, and do **not**
+  "fix" it to match the port. (Phase 4.5.3 removed the `gate:` option entirely,
+  so the fixture no longer carries the `gate: :meeting_decision` it originally
+  used to give that construct its only compile-time exercise.)
 
   It is a **fixture, not the port**. It runs nothing; `dsl_test.exs` only reads
   its `__pipeline__/1`. Two consequences to keep in mind when editing it:
@@ -90,13 +89,10 @@ defmodule ALLM.Pipeline.TestSupport.TargetDeclaration do
   stage(:list, MeetingListScraper, input: :build_list_input)
 
   # Since Phase 4.5 a `fan_out` is Step-target only (the `body:`-mode form was
-  # removed). The `gate:` here is still the only compile-time exercise of that
-  # construct anywhere in the tree — 4.5.3 removes it.
+  # removed in 4.5.2, and `gate:` in 4.5.3).
   fan_out(:meeting, MeetingListScraper,
     # (prev_output) -> [item]
     over: :meetings_from,
-    # (item, opts) -> %{should_process:, reason:, actions:}
-    gate: :meeting_decision,
     # flat tree: every leaf parents to :list's step log
     parent: :source_stage,
     # (ctx, item) -> Step input struct
@@ -129,9 +125,6 @@ defmodule ALLM.Pipeline.TestSupport.TargetDeclaration do
 
   defp meeting_input(_ctx, _meeting),
     do: MeetingListScraper.Input.new(source_url: "https://example.test")
-
-  defp meeting_decision(_meeting, _opts),
-    do: %{should_process: true, reason: nil, actions: [:full]}
 
   defp funnel(stats), do: %{found: stats.meetings_found, processed: stats.meetings_processed}
 

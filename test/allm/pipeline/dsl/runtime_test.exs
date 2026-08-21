@@ -287,33 +287,6 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       do: %SecondStep.Input{value: Context.carried(ctx, :value) <> "-last"}
   end
 
-  # `carry:` has DIFFERENT scope on the two kinds, and both directions are
-  # declared here so one fixture pins both: `:root`'s capture (a `stage`) must
-  # reach `:reader` three stages later, and `:items`' capture (a `fan_out`) must
-  # reach its own item and NOT `:reader`.
-  defmodule CarryScopes do
-    @moduledoc false
-    use ALLM.Pipeline, name: "dsl_carry_scopes", returns: :run
-
-    alias ALLM.Pipeline.Dsl.RuntimeTest.{EchoStep, SecondStep}
-
-    stage(:root, EchoStep, input: :root_input, carry: [:value])
-    fan_out(:items, SecondStep, over: :two, input: :item_input, carry: [:token])
-    stage(:reader, SecondStep, input: :reader_input)
-
-    defp root_input(_ctx, _prev), do: %EchoStep.Input{value: "from-stage"}
-    defp two(_prev), do: [%{token: "T1"}, %{token: "T2"}]
-
-    # Reads the ITEM's own carry, never the item — a body that read `item.token`
-    # would pass whether or not the fan-out captured anything.
-    defp item_input(ctx, _item), do: %SecondStep.Input{value: Context.carried(ctx, :token)}
-
-    defp reader_input(ctx, _prev),
-      do: %SecondStep.Input{
-        value: "#{Context.carried(ctx, :value)}/#{inspect(Context.carried(ctx, :token))}"
-      }
-  end
-
   # A `carry:` key the captured subject does not have. `Dsl.validate_carry!/3`
   # accepts it — a literal list of atoms is all it can check — so the miss is a
   # RUNTIME fact, and until 2026-08-21 it was a silent one.
@@ -449,26 +422,6 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
     stage(:boom, fn _ctx, _prev -> raise("deliberate") end)
   end
 
-  # A Step-target fan_out with a `gate:` (Phase 4.5.2 removed body-mode; `gate:`
-  # itself is removed in 4.5.3). The gate skips `:b` and binds each surviving
-  # item's decision into the item context's carry under `:gate`, which the input
-  # hook reads back.
-  defmodule GatedFanOut do
-    @moduledoc false
-    use ALLM.Pipeline, name: "dsl_gated"
-
-    alias ALLM.Pipeline.Dsl.RuntimeTest.SecondStep
-
-    fan_out(:items, SecondStep, over: :three, gate: :decide, input: :gated_input)
-
-    defp three(_prev), do: [:a, :b, :c]
-    defp decide(:b, _opts), do: %{should_process: false, reason: :not_due}
-    defp decide(_item, _opts), do: %{should_process: true, reason: nil, actions: [:full]}
-
-    defp gated_input(ctx, item),
-      do: %SecondStep.Input{value: "#{item}:#{inspect(Context.carried(ctx, :gate).actions)}"}
-  end
-
   # ── Helpers ───────────────────────────────────────────────────────────────
 
   defp steps(run_id) do
@@ -586,6 +539,9 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       [root] = steps_of_type(run.id, "dsl_echo")
       items = steps_of_type(run.id, "dsl_second")
 
+      # EVERY item runs — Phase 4.5.3 removed `gate:` and its skip path, so a
+      # fan-out item can no longer be skipped. All three produce a step log
+      # (a leftover gate branch would drop one). Rejects a skip-by-gate path.
       assert Enum.map(items, & &1.output_data["value"]) == ["a", "b", "c"]
       assert Enum.map(items, & &1.input_step_id) == [root.id, root.id, root.id]
     end
@@ -689,22 +645,6 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
   end
 
   describe "carry" do
-    # Both directions in one run, because the two are only distinguishable
-    # together: an implementation that never captures a fan-out's carry passes
-    # the second assertion, and one that writes it back into the pipeline state
-    # passes the first.
-    test "a fan_out's carry reaches its OWN item and is not propagated past the stage" do
-      {:ok, run} = CarryScopes.run()
-      [_root, item_a, item_b, reader] = steps(run.id)
-
-      # Item-scoped capture DID reach the item's own `input:`.
-      assert item_a.input_data["value"] == "T1"
-      assert item_b.input_data["value"] == "T2"
-
-      # …and did NOT survive the stage, while the plain stage's carry did.
-      assert reader.input_data["value"] == "from-stage/nil"
-    end
-
     # The fail-open this closes: a declared key the subject does not have was
     # dropped with no error, no log line and no observable difference, so a
     # mistyped `carry:` was indistinguishable from a working one at every later
@@ -726,20 +666,6 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
       run = only_run("dsl_carry_miss")
       [_root, reader] = steps(run.id)
       assert reader.input_data["value"] == "kept/nil"
-    end
-  end
-
-  describe "gate" do
-    test "a failing gate skips the item silently and binds the decision for the rest" do
-      assert {:ok, _} = GatedFanOut.run()
-
-      run = only_run("dsl_gated")
-      items = steps_of_type(run.id, "dsl_second")
-
-      # `:b` was gated out (no step log); `:a` and `:c` ran, each reading its
-      # bound decision's actions off the item context's carry.
-      assert Enum.map(items, & &1.input_data["value"]) == ["a:[:full]", "c:[:full]"]
-      assert run.status == :success
     end
   end
 

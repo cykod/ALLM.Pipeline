@@ -40,16 +40,16 @@ defmodule ALLM.Pipeline.DslTest do
       assert TargetDeclaration.__pipeline__(:concurrency) == 1
     end
 
-    test "the fan_out declares the flat tree and the gate over a Step target" do
+    test "the fan_out declares the flat tree over a Step target" do
       meeting = Enum.find(TargetDeclaration.__pipeline__(:stages), &(&1.name == :meeting))
 
       assert meeting.kind == :fan_out
       assert meeting.parent == :source_stage
       assert meeting.step == TargetDeclaration.MeetingListScraper
-      assert is_function(meeting.gate, 2)
       assert is_function(meeting.over, 1)
       assert is_function(meeting.input, 2)
-      # `section:`/`delay:`/`body:`-mode fan_out were removed in Phase 4.5.2.
+      # `section:`/`delay:`/`body:`-mode fan_out were removed in Phase 4.5.2;
+      # `gate:` in 4.5.3 (the `:gate` field is gone from `%Stage{}`).
     end
 
     test "every hook resolved to a PRIVATE function of the declaring module" do
@@ -118,10 +118,11 @@ defmodule ALLM.Pipeline.DslTest do
     test "every hook option has exactly one declared arity, and the table is non-empty" do
       arities = Dsl.__hook_arities__()
 
-      assert length(arities) >= 14,
+      assert length(arities) >= 13,
              "__hook_arities__/0 reports only #{length(arities)} hooks — rows were dropped, " <>
                "and the equality below would pass vacuously."
 
+      # `gate: 2` was removed in Phase 4.5.3 (`section: 1` / `when: 1` in 4.5.2).
       assert Enum.sort(arities) ==
                Enum.sort(
                  metadata: 1,
@@ -129,7 +130,6 @@ defmodule ALLM.Pipeline.DslTest do
                  init: 0,
                  input: 2,
                  over: 1,
-                 gate: 2,
                  body: 2,
                  skip_when: 1,
                  from: 1,
@@ -390,6 +390,35 @@ defmodule ALLM.Pipeline.DslTest do
       assert {_, _} =
                compile!(
                  ~s|use ALLM.Pipeline, name: "x"\nstage :s, fn _, _ -> {:ok, 1} end, on_error: :continue|
+               )
+    end
+
+    # Phase 4.5.3 removed `gate:` from `@fan_out_options` and `@hook_arities`, so
+    # it falls to the generic unknown-option gate. Rejects the option surviving.
+    test "`gate:` on a fan_out is an unknown option" do
+      assert_raise ArgumentError, ~r/unknown `fan_out :f` option\(s\) \[:gate\]/, fn ->
+        compile!(
+          ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, ALLM.Pipeline.TestSupport.TargetDeclaration.MeetingListScraper, over: :i, input: :inp, gate: :g\ndefp i(_), do: []\ndefp inp(_, _), do: %{}\ndefp g(_, _), do: true|
+        )
+      end
+    end
+
+    # Phase 4.5.3: `carry:` is off `@fan_out_options`, and a targeted message
+    # names the item-chain alternative rather than a bare "unknown option".
+    # Rejects silently accepting it (the trap it used to be).
+    test "`carry:` on a fan_out is a compile error naming the item-chain alternative" do
+      assert_raise ArgumentError, ~r/not available on a `fan_out`.*ok_items\/1/s, fn ->
+        compile!(
+          ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, ALLM.Pipeline.TestSupport.TargetDeclaration.MeetingListScraper, over: :i, input: :inp, carry: [:token]\ndefp i(_), do: []\ndefp inp(_, _), do: %{}|
+        )
+      end
+    end
+
+    # `carry:` remains valid on a `stage` (the surviving form).
+    test "`carry:` on a plain stage is still accepted" do
+      assert {_, _} =
+               compile!(
+                 ~s|use ALLM.Pipeline, name: "x"\nstage :s, fn _, _ -> {:ok, 1} end, carry: [:token]|
                )
     end
 

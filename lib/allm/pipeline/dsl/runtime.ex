@@ -496,20 +496,12 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   @spec run_item(Stage.t(), PipelineRun.t(), keyword(), state(), term(), Ecto.UUID.t() | nil) ::
           {Item.t(), acc_update()}
   defp run_item(stage, run, opts, state, item, source_parent) do
-    case gate(stage, item, opts) do
-      {:skip, reason} ->
-        # D8 again: silent. The decision is visible in this log line and in
-        # whatever the body's accumulator records, not in a `:skipped` row.
-        Logger.info("[#{stage.name}] item skipped by gate: #{inspect(reason)}")
-        {%Item{input: item, result: {:skipped, reason}}, :keep}
-
-      {:run, decision} ->
-        parent = item_parent(stage, item, source_parent)
-        carry = stage |> capture(state.carry, item) |> put_decision(decision)
-        ctx = context(run, opts, %{state | carry: carry}, parent)
-
-        run_item_body(stage, run, ctx, item, parent)
-    end
+    # A fan-out item ALWAYS runs (Phase 4.5.3 removed `gate:` and its skip
+    # path). It sees the run-level `state.carry` a prior `stage` captured, but
+    # captures nothing of its own — `carry:` on a `fan_out` is a compile error.
+    parent = item_parent(stage, item, source_parent)
+    ctx = context(run, opts, state, parent)
+    run_item_body(stage, run, ctx, item, parent)
   end
 
   @spec run_item_body(Stage.t(), PipelineRun.t(), Context.t(), term(), Ecto.UUID.t() | nil) ::
@@ -737,31 +729,6 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   end
 
   # ── Per-stage helpers ─────────────────────────────────────────────────────
-
-  @spec gate(Stage.t(), term(), keyword()) :: {:run, term()} | {:skip, term()}
-  defp gate(%Stage{gate: nil}, _item, _opts), do: {:run, nil}
-
-  defp gate(%Stage{gate: gate}, item, opts) do
-    decision = gate.(item, opts)
-    if gate_pass?(decision), do: {:run, decision}, else: {:skip, gate_reason(decision)}
-  end
-
-  # A decision map/struct answers through `:should_process`; a bare boolean
-  # answers as itself. `meeting_agenda`'s `MeetingProcessingDecision` returns
-  # `%{should_process:, reason:, actions:}` and its body branches on `actions`,
-  # which is why the whole decision is bound into the context rather than only
-  # its verdict.
-  @spec gate_pass?(term()) :: boolean()
-  defp gate_pass?(%{should_process: value}), do: !!value
-  defp gate_pass?(value), do: !!value
-
-  @spec gate_reason(term()) :: term()
-  defp gate_reason(%{reason: reason}), do: reason
-  defp gate_reason(_decision), do: :gate
-
-  @spec put_decision(Context.carry(), term()) :: Context.carry()
-  defp put_decision(carry, nil), do: carry
-  defp put_decision(carry, decision), do: Map.put(carry, :gate, decision)
 
   # Delegates to `FanOut.item_parent/3`, the single home shared with
   # `FanOut.reduce/5` — the re-parent-or-raise rule is written once.

@@ -36,7 +36,6 @@ defmodule ALLM.Pipeline.Dsl do
   | `init:` | `()` |
   | `input:` | `(ctx, subject)` |
   | `over:` | `(previous_stage_output)` |
-  | `gate:` | `(item, opts)` |
   | `body:` / escape-hatch stage | `(ctx, subject)` |
   | `skip_when:` | `(ctx)` — or the data form `{:opt, key}` / `{:opt, key, default}` |
   | `metrics …, from:` | `(summary)` |
@@ -48,7 +47,7 @@ defmodule ALLM.Pipeline.Dsl do
 
   `subject` is the previous stage's output for a `stage`, and the item for a
   `fan_out`. Note `carry:` does **not** capture from the subject — see
-  `ALLM.Pipeline.Dsl.Stage`'s `carry` row, which states the two kinds separately.
+  `ALLM.Pipeline.Dsl.Stage`'s `carry` row.
 
   ## The two `stage/3` forms are told apart by AST SHAPE, not by a keyword
 
@@ -79,15 +78,23 @@ defmodule ALLM.Pipeline.Dsl do
   # items' failures land in the `[Dsl.Item.t()]` it returns, and the stage
   # itself always succeeds. Accepting the option there would be a declaration
   # that compiles, validates and does nothing, so it is a `stage`-only option
-  # and `assert_on_error_placement!/3` rejects it by name on a `fan_out`.
+  # and `assert_on_error_placement!/4` rejects it by name on a `fan_out`.
   @stage_options @common_options ++ [:on_error]
+
+  # `:carry` is deliberately dropped from what `@fan_out_options` inherits from
+  # `@common_options`, and `:gate` is gone entirely: both were zero-consumer
+  # traps removed in Phase 4.5.3. A `fan_out`'s `carry:` captured into each
+  # item's own context and propagated nothing past the stage — the silent-bug
+  # shape the removal closes — so `assert_carry_placement!/4` rejects it by name
+  # and points the author at the item chain. `:gate` simply falls to the generic
+  # unknown-option gate. `carry:` still rides `@common_options` for `@stage_options`
+  # and the `child_pipeline` `known` list.
   @fan_out_options [
                      :over,
-                     :gate,
                      :parent,
                      :concurrency,
                      :catch_item_failures
-                   ] ++ @common_options
+                   ] ++ (@common_options -- [:carry])
 
   # `(hook key, arity)` for EVERY hook any declaration may name — the `use`-level
   # three, the five a stage may declare, and the four that ride inside another
@@ -101,7 +108,6 @@ defmodule ALLM.Pipeline.Dsl do
     init: 0,
     input: 2,
     over: 1,
-    gate: 2,
     body: 2,
     skip_when: 1,
     from: 1,
@@ -113,7 +119,7 @@ defmodule ALLM.Pipeline.Dsl do
   ]
 
   # The subset a `stage`/`fan_out` declares directly, in the order they are read.
-  @stage_hook_keys [:input, :over, :gate, :body]
+  @stage_hook_keys [:input, :over, :body]
 
   @typedoc "A validated `use ALLM.Pipeline` declaration. Hook values are quoted AST."
   @type declaration :: %{
@@ -171,10 +177,12 @@ defmodule ALLM.Pipeline.Dsl do
   removed in Phase 4.5 — to fold an ordinary body over the items, call
   `ALLM.Pipeline.FanOut.reduce/5` from a plain `stage` body instead.
 
-  Options: `input:` (required), `over:` (required), plus `skip_when:`, `carry:`,
-  `gate:`, `parent:`, `concurrency:` and `catch_item_failures:`. **Not**
-  `on_error:` — that governs a whole-stage failure, which a fan-out does not
-  have; it is a compile error here.
+  Options: `input:` (required), `over:` (required), plus `skip_when:`,
+  `parent:`, `concurrency:` and `catch_item_failures:`. **Not** `carry:` — a
+  fan-out captures nothing to propagate (removed in Phase 4.5.3; read per-item
+  values off the `[Item.t()]` output instead). **Not** `on_error:` — that governs
+  a whole-stage failure, which a fan-out does not have; both are a compile error
+  here.
   """
   defmacro fan_out(name, step, opts \\ []) do
     spec = __stage__(:fan_out, __CALLER__, name, step, opts)
@@ -508,6 +516,7 @@ defmodule ALLM.Pipeline.Dsl do
     end
 
     assert_on_error_placement!(module, kind, label, opts)
+    assert_carry_placement!(module, kind, label, opts)
 
     case Keyword.keys(opts) -- known do
       [] -> :ok
@@ -596,6 +605,30 @@ defmodule ALLM.Pipeline.Dsl do
   end
 
   defp assert_on_error_placement!(_module, _kind, _label, _opts), do: :ok
+
+  # A targeted rejection so `carry:` on a `fan_out` names the item-chain
+  # alternative rather than falling to the generic "unknown option" message
+  # (Phase 4.5.3). `carry:` is off `@fan_out_options`, so the generic gate would
+  # reject it anyway — but the trap it used to be (captures into each item's own
+  # context, propagates nothing) is exactly what a bare "unknown option" would
+  # fail to explain.
+  @spec assert_carry_placement!(module(), atom(), String.t(), Macro.t()) :: :ok
+  defp assert_carry_placement!(module, :fan_out, label, opts) do
+    if Keyword.has_key?(opts, :carry) do
+      raise ArgumentError,
+            "#{inspect(module)}: `#{label}` declares `carry:`, which is not available on a " <>
+              "`fan_out` — it would capture into each item's own context and propagate nothing " <>
+              "past the stage, exactly the silent-bug shape Phase 4.5.3 removed. To read a " <>
+              "per-item value downstream, filter the fan-out's `[ALLM.Pipeline.Dsl.Item.t()]` " <>
+              "output with `ALLM.Pipeline.Dsl.Item.ok_items/1` in the next stage and read the " <>
+              "field off each item. `carry:` remains available on a `stage` (captured from its " <>
+              "own output) and on a `child_pipeline`."
+    end
+
+    :ok
+  end
+
+  defp assert_carry_placement!(_module, _kind, _label, _opts), do: :ok
 
   @spec assert_runnable!(module(), atom(), String.t(), Macro.t() | nil, Macro.t()) :: :ok
   defp assert_runnable!(module, kind, label, step, opts) do
