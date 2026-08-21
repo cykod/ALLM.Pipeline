@@ -835,17 +835,43 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   defp skip?({:opt, key, default}, ctx), do: !!Context.get_opt(ctx, key, default)
   defp skip?(fun, ctx) when is_function(fun, 1), do: !!fun.(ctx)
 
+  # A declared key the subject does not carry is DROPPED, not fatal — a later
+  # `Context.carried/3` for it simply returns its default. `Dsl.validate_carry!/3`
+  # can only check the declaration is a literal list of atoms; whether the key is
+  # a field of whatever the stage produces is knowable here and nowhere earlier.
+  # So the miss is logged rather than silent (user decision, 2026-08-21: warn,
+  # not raise — a raise would change framework behaviour that nothing gates).
   @spec capture(Stage.t(), Context.carry(), term()) :: Context.carry()
   defp capture(%Stage{carry: []}, carry, _subject), do: carry
 
-  defp capture(%Stage{carry: keys}, carry, subject) do
+  defp capture(%Stage{carry: keys, name: name}, carry, subject) do
     Enum.reduce(keys, carry, fn key, acc ->
       case fetch_field(subject, key) do
-        {:ok, value} -> Map.put(acc, key, value)
-        :error -> acc
+        {:ok, value} ->
+          Map.put(acc, key, value)
+
+        :error ->
+          Logger.warning(
+            "[#{name}] `carry:` declares `:#{key}`, but the captured subject is " <>
+              "#{subject_label(subject)}, which has no such field — nothing was carried " <>
+              "under `:#{key}` and every later `Context.carried(ctx, :#{key})` returns its " <>
+              "default. A `stage` captures from its OWN output and a `fan_out` from each " <>
+              "ITEM (never from the subject the stage was handed), so declare a key that " <>
+              "subject defines, or read the value in the consuming stage's `input:` hook."
+          )
+
+          acc
       end
     end)
   end
+
+  @spec subject_label(term()) :: String.t()
+  defp subject_label(%module{}), do: "a #{inspect(module)}"
+
+  defp subject_label(subject) when is_map(subject),
+    do: "a plain map with keys #{inspect(Map.keys(subject))}"
+
+  defp subject_label(subject), do: "#{inspect(subject, limit: 3)}, which is not a map"
 
   @spec fetch_field(term(), atom()) :: {:ok, term()} | :error
   defp fetch_field(subject, key) when is_map(subject), do: Map.fetch(subject, key)

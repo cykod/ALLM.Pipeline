@@ -445,7 +445,25 @@ defmodule ALLM.Pipeline.PipelineRun do
   end
 
   defp normalize_error(error) when is_binary(error), do: %{"message" => error}
-  defp normalize_error(error), do: %{"message" => inspect(error)}
+
+  # `Encodable.render/1`, not bare `inspect/1`: this fallback catches every
+  # non-exception, non-binary reason, which since Phase 4.4 includes EXITS —
+  # `Lifecycle.guard/2` catches `kind, reason` and routes the tuple here, where
+  # a hand-written orchestrator's bare `rescue` used to let an exit escape
+  # unpersisted. An exit reason such as
+  # `{:timeout, {GenServer, :call, [pid, message, 5000]}}` inlines the call's
+  # message term, which is exactly where a bearer token would sit; `render/1`
+  # bounds both collection depth and binary length. See its moduledoc for why
+  # bounding beats erasing here (the reason IS the diagnostic), and note it is
+  # NOT `Executor.render_shape/1`, which keeps type and key names only.
+  # NOTE the deliberate divergence from `StepLog`'s same-named private sibling
+  # (`step_log.ex`), which still uses bare `inspect/1`. That one is NOT bounded
+  # on purpose: its `inspect/1` is what omits a changeset's `params` via
+  # `Ecto.Changeset`'s own `Inspect` impl (see `StepLog`'s moduledoc), and
+  # `render/1`'s `limit: 5` would truncate a changeset's `errors` list in the
+  # column operators read to diagnose a failed step. Tracked as an open
+  # `.work/HANDOFF.md` row rather than changed by the 4.4 fix pass.
+  defp normalize_error(error), do: %{"message" => Encodable.render(error)}
 
   # The host's Ecto repo, resolved at RUNTIME. `allm_pipeline` deliberately
   # depends on no umbrella app (see `apps/allm_pipeline/mix.exs`), so this tree

@@ -198,6 +198,23 @@ accumulates a spec containing AST onto `@allm_pipeline_stages`, and
   written as a capture must be a REMOTE one (`&Mod.fun/1`). A local capture
   there evaluates before the function exists.
 
+**A `Dsl` validator whose result is destined for a `quote` must RETURN quoted
+AST, not the term.** Both splice paths put a validated scalar straight back
+inside a `quote`: `__stage_ast__/1`'s `{:%{}, [], fields}`, and
+`ALLM.Pipeline.__before_compile__/1`'s `def __pipeline__(:concurrency)`. A real
+3-element tuple is not a valid AST node, so returning one is
+`** (CompileError) invalid quoted expression: {:opt, :concurrency, 2}` at the
+**using** module, naming neither the option nor this file. `accumulate/1`'s
+`Macro.escape/1` does **not** cover it — that escape runs BEFORE the splice, to
+round-trip the spec through a module attribute. `validate_ms!/3` got this right
+from the start; `validate_concurrency!/3` did not, and its `{:opt, …}` clause was
+therefore **dead for every consumer** until Phase 4.4's `committee` port needed
+it (`grep -rn 'concurrency: {:opt' apps` -> 0 hits before that). Any new
+`{:opt, key, default}`-shaped option is the third instance. Pinned by
+`dsl_test.exs`'s "`concurrency: {:opt, key, default}`", whose positive case
+declares the form at BOTH levels in one module — a fix applied to one splice site
+leaves the other a compile error.
+
 **`stage/3` disambiguates on AST SHAPE (`{:__aliases__, _, _}`), never on
 `is_atom/1`.** An alias *is* an atom once expanded, so an `is_atom` test treats
 every Step module as a hook — and the failure is a `FunctionClauseError` at the

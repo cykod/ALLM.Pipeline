@@ -43,11 +43,17 @@ defmodule ALLM.Pipeline.FanOut do
   | `Pipelines.PoiThumbnailStep.generate_for_pois/6` | `safe_generate_one/7` (`catch`) |
   | `Processors.DocumentTextCollector.execute/2` | `safe_collect_text/1` (`catch`) |
   | `Services.ProjectScaleRescale.run/1` | `rescore/3` (`rescue` + `catch`) |
-  | `Pipelines.CommitteePipeline` (×3) | total child — `Executor.run_step/5`; see that module's comment for why no `catch` |
 
   A sequential sibling, `Pipelines.ProjectRefreshPipeline.safe_run/2`, uses the
   same `catch` for the same reason (an exit is not an exception) even though it
   has no link hazard.
+
+  `Pipelines.CommitteePipeline` carried three rows here until Phase 4.4 ported
+  it onto `use ALLM.Pipeline`. Its detail, transform and load fan-outs are now
+  the framework's single site above — which is the DSL centralizing fan-out, and
+  a **behaviour change** for that pipeline, since its hand-written fan-outs
+  deliberately wrapped nothing. That change is declared in `CommitteePipeline`'s
+  own moduledoc.
 
   The table's MEMBERSHIP is machine-guarded by
   `apps/allm_pipeline/test/allm/pipeline/fan_out_test.exs`, which scans both

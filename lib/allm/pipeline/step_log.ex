@@ -391,6 +391,36 @@ defmodule ALLM.Pipeline.StepLog do
   end
 
   @doc """
+  Per-`step_type` row counts for a run, as `%{step_type => %{status => count}}`.
+
+  The aggregate form of "how many rows of type X, and how many of those
+  succeeded". Use this — not `get_pipeline_steps/1` + `Enum.group_by/2` — when
+  the answer is a COUNT: `get_pipeline_steps/1` is `select *` and materialises
+  every row's `input_data`/`output_data` jsonb, which is a few kilobytes for a
+  31-item run and **megabytes** for a large one (the biggest
+  `meeting_agenda_scrape` runs in dev are ~2600 rows / ~5 MB, measured
+  2026-08-21). A `use ALLM.Pipeline` pipeline folding run-level counters in a
+  `stage :tally` is the canonical caller.
+
+  Sections are INCLUDED (unlike `get_pipeline_stats/1`, which excludes them):
+  callers key on a specific `Step.step_type()`, so a `"section"` bucket is
+  simply never read, and excluding it here would make the function unusable for
+  anyone who wanted to count them.
+  """
+  @spec count_by_step_type(Ecto.UUID.t()) :: %{String.t() => %{atom() => non_neg_integer()}}
+  def count_by_step_type(pipeline_run_id) do
+    from(s in __MODULE__,
+      where: s.pipeline_run_id == ^pipeline_run_id,
+      group_by: [s.step_type, s.status],
+      select: {s.step_type, s.status, count(s.id)}
+    )
+    |> repo().all()
+    |> Enum.reduce(%{}, fn {step_type, status, count}, acc ->
+      Map.update(acc, step_type, %{status => count}, &Map.put(&1, status, count))
+    end)
+  end
+
+  @doc """
   Get pipeline statistics.
   """
   @spec get_pipeline_stats(Ecto.UUID.t()) :: map()

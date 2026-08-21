@@ -180,6 +180,43 @@ defmodule ALLM.Pipeline.DslTest do
     end
   end
 
+  describe "`concurrency: {:opt, key, default}`" do
+    # This whole form was a COMPILE ERROR until Phase 4.4 — on the `use` line and
+    # on a `fan_out` alike — and no consumer had ever declared it, so nothing
+    # noticed. `validate_concurrency!/3` returned the real 3-element tuple, which
+    # is not a valid AST node, and BOTH splice sites put it straight back inside
+    # a `quote`: `__stage_ast__/1`'s `{:%{}, [], fields}` and
+    # `ALLM.Pipeline.__before_compile__/1`'s `def __pipeline__(:concurrency)`.
+    # The failure was `** (CompileError) invalid quoted expression:
+    # {:opt, :concurrency, 2}` at the USING module, naming neither.
+    #
+    # Discriminator: this test compiles a module declaring the form at BOTH
+    # levels. A fix applied to only one splice site leaves the other a compile
+    # error, so the module never loads and this fails at `compile!/1`.
+    test "compiles at both levels and reaches `__pipeline__/1` as a real tuple" do
+      {{:module, module, _bin, _exports}, _bindings} =
+        compile!("""
+        use ALLM.Pipeline, name: "x", concurrency: {:opt, :concurrency, 2}
+        fan_out :f, over: :items, body: :b, concurrency: {:opt, :llm_concurrency, 1}
+        defp items(_), do: []
+        defp b(_, _), do: {:ok, 1}
+        """)
+
+      assert module.__pipeline__(:concurrency) == {:opt, :concurrency, 2}
+
+      assert Enum.map(module.__pipeline__(:stages), &{&1.name, &1.concurrency}) ==
+               [{:f, {:opt, :llm_concurrency, 1}}]
+    end
+
+    test "a non-positive default is still rejected at compile time" do
+      assert_raise ArgumentError, ~r/`concurrency:` must be a positive integer or/, fn ->
+        compile!(
+          ~s|use ALLM.Pipeline, name: "x", concurrency: {:opt, :concurrency, 0}\nstage :s, fn _, _ -> {:ok, 1} end|
+        )
+      end
+    end
+  end
+
   describe "compile-time rejections" do
     test "an unknown `use` option" do
       assert_raise ArgumentError, ~r/unknown `use ALLM.Pipeline` option\(s\) \[:registry\]/, fn ->

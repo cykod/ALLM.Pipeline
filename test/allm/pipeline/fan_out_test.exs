@@ -24,12 +24,18 @@ defmodule ALLM.Pipeline.FanOutTest do
   #   python3 scripts/refsweep.py 'Task\.async_stream\(' apps --include '*.ex' \
   #     --format hits | grep -v '/test/'
   #
-  # The paren is load-bearing: these modules mention `Task.async_stream` in
-  # prose 22 more times (30 hits without it, 8 with), and a bare-substring
-  # guard would pin comment churn instead of call sites.
+  # The paren is load-bearing: `lib/` mentions `Task.async_stream` in prose 24
+  # more times than it calls it — re-derived 2026-08-21, after 4.4's port:
+  # 29 hits without the paren, 5 with (same sweep, `--include '*.ex'`,
+  # `grep -vc '/test/'`). A bare-substring guard would pin comment churn
+  # instead of call sites.
   @sites [
     {"allm_pipeline/lib/allm/pipeline/dsl/runtime.ex", 1},
-    {"amesbury_scraper/lib/amesbury_scraper/pipelines/committee_pipeline.ex", 3},
+    # `committee_pipeline.ex` had three until Phase 4.4 ported it onto
+    # `use ALLM.Pipeline`: its detail/transform/load fan-outs are now the
+    # framework's one `Task.async_stream`, which is the DSL centralizing fan-out
+    # exactly as designed. This guard failed by name when they went away, which
+    # is it working.
     {"amesbury_scraper/lib/amesbury_scraper/pipelines/poi_thumbnail_step.ex", 1},
     {"amesbury_scraper/lib/amesbury_scraper/processors/document_text_collector.ex", 1},
     {"amesbury_scraper/lib/amesbury_scraper/scrapers/http_scraper.ex", 1},
@@ -88,7 +94,11 @@ defmodule ALLM.Pipeline.FanOutTest do
       # POSITIVE CONTROL: the scan found something at all. Without it, a regex
       # that stopped matching would report an empty set and the `--` diffs below
       # would both be empty.
-      assert length(found) >= 5,
+      # Floor sits BELOW the current set size (5) on purpose: at `>= 5` a
+      # legitimate REMOVAL of a fan-out trips this control first and reports
+      # "the pattern stopped matching" — the wrong diagnosis — instead of
+      # reaching the informative set diff below.
+      assert length(found) >= 4,
              "the scan found only #{length(found)} fan-out files — the pattern stopped " <>
                "matching, and the set comparison below would pass vacuously."
 
@@ -103,7 +113,26 @@ defmodule ALLM.Pipeline.FanOutTest do
     end
 
     test "the moduledoc's Sites table has a row for every scanned file" do
-      doc = moduledoc!(FanOut)
+      # Scoped to the TABLE, not the whole moduledoc. The prose below the table
+      # names `Pipelines.CommitteePipeline` twice (explaining why its three rows
+      # left in 4.4), so a whole-doc `=~` would report a row exists for any file
+      # merely DISCUSSED in the moduledoc — including, specifically, the one
+      # module most likely to regain a fan-out. Markdown table rows are the only
+      # lines starting with `|`.
+      rows =
+        FanOut
+        |> moduledoc!()
+        |> String.split("\n")
+        |> Enum.filter(&String.starts_with?(String.trim_leading(&1), "|"))
+        |> Enum.join("\n")
+
+      # POSITIVE CONTROL: an empty-string `rows` makes every `=~` below fail,
+      # but a table that merely lost its leading pipes would too — assert the
+      # extraction found a plausible table before trusting it.
+      assert length(String.split(rows, "\n")) >= length(@sites),
+             "the Sites-table extraction found #{length(String.split(rows, "\n"))} `|` " <>
+               "lines for #{length(@sites)} sites — the table's markdown changed and this " <>
+               "guard is no longer reading it."
 
       # The table is keyed by MODULE name, not by path, so map each site file to
       # the last two segments of its module path — enough to be unambiguous and
@@ -111,9 +140,10 @@ defmodule ALLM.Pipeline.FanOutTest do
       for {path, _count} <- @sites do
         module_hint = path |> Path.basename(".ex") |> Macro.camelize()
 
-        assert doc =~ module_hint,
-               "ALLM.Pipeline.FanOut's Sites table has no row mentioning #{module_hint} " <>
-                 "(from #{path}). Every fan-out gets a row saying how it is kept safe."
+        assert rows =~ module_hint,
+               "ALLM.Pipeline.FanOut's Sites TABLE has no row mentioning #{module_hint} " <>
+                 "(from #{path}). Every fan-out gets a row saying how it is kept safe — " <>
+                 "a mention in the surrounding prose does not count."
       end
     end
 

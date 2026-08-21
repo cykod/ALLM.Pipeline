@@ -172,6 +172,11 @@ defmodule ALLM.Pipeline.Context do
   From an **earlier `stage`** (its captures reach every later stage), or from
   **this item's own `fan_out`** (its captures are item-scoped and do not
   propagate). See `carry/0`'s typedoc.
+
+  `default` here does not distinguish "declared and legitimately absent" from
+  "declared a key the subject never had" — but the second is not silent:
+  `Runtime.capture/3` warns at capture time. See
+  `ALLM.Pipeline.Dsl.Stage`'s "A key the subject does not have".
   """
   @spec carried(t(), atom(), term()) :: term()
   def carried(%__MODULE__{carry: carry}, name, default \\ nil), do: Map.get(carry, name, default)

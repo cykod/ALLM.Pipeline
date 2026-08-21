@@ -16,6 +16,7 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
   use ExUnit.Case, async: true
 
   import Ecto.Query
+  import ExUnit.CaptureLog
 
   alias ALLM.Pipeline.{Config, Context, Metrics, PipelineMetric, PipelineRun, StepLog}
   alias ALLM.Pipeline.Dsl.Item
@@ -264,6 +265,26 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
     defp reader_input(ctx, _prev),
       do: %SecondStep.Input{
         value: "#{Context.carried(ctx, :value)}/#{inspect(Context.carried(ctx, :token))}"
+      }
+  end
+
+  # A `carry:` key the captured subject does not have. `Dsl.validate_carry!/3`
+  # accepts it — a literal list of atoms is all it can check — so the miss is a
+  # RUNTIME fact, and until 2026-08-21 it was a silent one.
+  defmodule CarryMiss do
+    @moduledoc false
+    use ALLM.Pipeline, name: "dsl_carry_miss", returns: :run
+
+    alias ALLM.Pipeline.Dsl.RuntimeTest.{EchoStep, SecondStep}
+
+    stage(:root, EchoStep, input: :root_input, carry: [:value, :detail_url])
+    stage(:reader, SecondStep, input: :reader_input)
+
+    defp root_input(_ctx, _prev), do: %EchoStep.Input{value: "kept"}
+
+    defp reader_input(ctx, _prev),
+      do: %SecondStep.Input{
+        value: "#{Context.carried(ctx, :value)}/#{inspect(Context.carried(ctx, :detail_url))}"
       }
   end
 
@@ -743,6 +764,29 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
 
       # …and did NOT survive the stage, while the plain stage's carry did.
       assert reader.input_data["value"] == "from-stage/nil"
+    end
+
+    # The fail-open this closes: a declared key the subject does not have was
+    # dropped with no error, no log line and no observable difference, so a
+    # mistyped `carry:` was indistinguishable from a working one at every later
+    # read. User decision 2026-08-21: warn, do not raise — raising would change
+    # framework behaviour nothing currently gates.
+    test "a carry: key the subject does not have is dropped LOUDLY" do
+      log = capture_log(fn -> assert {:ok, _run} = CarryMiss.run() end)
+
+      # All three of the things the caller needs: the key, the stage, the
+      # subject's struct. Asserting "some warning was logged" would pass against
+      # a message naming none of them.
+      assert log =~ "`carry:` declares `:detail_url`"
+      assert log =~ "[root]"
+      assert log =~ "ALLM.Pipeline.Dsl.RuntimeTest.EchoStep.Output"
+
+      # The present key was still captured, and the absent one still reads as
+      # its default — one miss does not abort the fold or fail the run.
+      refute log =~ "declares `:value`"
+      run = only_run("dsl_carry_miss")
+      [_root, reader] = steps(run.id)
+      assert reader.input_data["value"] == "kept/nil"
     end
   end
 

@@ -729,9 +729,12 @@ defmodule ALLM.Pipeline.Dsl do
 
   # Returned as the QUOTED tuple it arrived as, not rebuilt: this value is
   # spliced straight back into `validate_delay!/3`'s `quote`, where a real
-  # 3-element tuple is not a valid AST node. (`validate_concurrency!/3` may
-  # return the real tuple because its result reaches the stage spec through
-  # `Macro.escape/1` instead.)
+  # 3-element tuple is not a valid AST node. `validate_concurrency!/3` returns
+  # quoted AST for exactly the same reason — see its comment for the full
+  # argument, including why `accumulate/1`'s `Macro.escape/1` does NOT rescue a
+  # real tuple (it runs BEFORE the splice). This is the shared rule for every
+  # `{:opt, …}`-shaped option: a validator whose result lands back inside a
+  # `quote` returns AST.
   defp validate_ms!(_module, {:{}, _, [:opt, key, default]} = ms, _label)
        when is_atom(key) and is_integer(default) and default >= 0,
        do: ms
@@ -881,9 +884,22 @@ defmodule ALLM.Pipeline.Dsl do
   # `unquote`.) Validated directly rather than by recursing on a reconstructed
   # tuple: the recursion could only ever reach the raising catch-all, which
   # dialyzer reports as `call … will not succeed`.
-  defp validate_concurrency!(_module, {:{}, _, [:opt, key, default]}, _label)
+  #
+  # Returned as the QUOTED tuple it arrived as, exactly as `validate_ms!/3`
+  # does, and for exactly the same reason: BOTH of this value's splice sites put
+  # it back inside a `quote`, where a real 3-element tuple is not a valid AST
+  # node — `__stage_ast__/1`'s `{:%{}, [], fields}` and
+  # `ALLM.Pipeline.__before_compile__/1`'s `def __pipeline__(:concurrency)`.
+  # This clause returned the REAL tuple until Phase 4.4, under a comment
+  # asserting that `Macro.escape/1` covered it; `accumulate/1`'s escape runs
+  # BEFORE the splice (it round-trips the spec through a module attribute) and
+  # therefore does not. The whole `{:opt, …}` concurrency form was a compile
+  # error — `** (CompileError) invalid quoted expression: {:opt, :concurrency, 2}`
+  # — and unreachable for any consumer, which is why `committee`'s port is the
+  # first thing to hit it.
+  defp validate_concurrency!(_module, {:{}, _, [:opt, key, default]} = value, _label)
        when is_atom(key) and is_integer(default) and default > 0,
-       do: {:opt, key, default}
+       do: value
 
   defp validate_concurrency!(module, other, label) do
     raise ArgumentError,

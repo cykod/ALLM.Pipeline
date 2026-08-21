@@ -49,6 +49,24 @@ defmodule ALLM.Pipeline.Dsl.Stage do
 
   `Runtime.apply_result/3` is the first half, `Runtime.run_item/6` the second;
   `runtime_test.exs`'s "carry" describe pins both directions.
+
+  ## A key the subject does not have
+
+  `carry:` is validated at compile time only as a literal list of atoms
+  (`Dsl.validate_carry!/3`) — whether a key is a *field* of whatever the stage
+  produces is knowable only at run time. A key that is not is **dropped**: the
+  carry map is unchanged and every later `Context.carried(ctx, key)` returns its
+  default. `Runtime.capture/3` logs a `Logger.warning` naming the key, the stage
+  and the subject's struct when that happens (user decision, 2026-08-21 — warn
+  rather than raise, since raising would change framework behaviour nothing
+  gates). It is a detector, not a gate: the run still succeeds, so a new
+  `carry:` is verified by asserting the value ARRIVES in the consuming stage,
+  never by the declaration compiling. `runtime_test.exs`'s "a carry: key the
+  subject does not have is dropped LOUDLY" pins the message.
+
+  The commonest way to hit it is a `fan_out` under `parent: :per_item`, whose
+  items are `%ALLM.Pipeline.Dsl.Item{}` wrappers with fields `input` / `result`
+  / `step_log` and no domain fields at all.
   """
 
   @type ms_spec :: non_neg_integer() | {:opt, atom(), non_neg_integer()}
