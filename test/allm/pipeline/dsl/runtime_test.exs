@@ -543,11 +543,9 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
   end
 
   describe "self-owned parent_run_id lift" do
-    # The direct regression coverage for `run_owned/3`'s
-    # `Keyword.take(opts, [:parent_run_id])`. Its only prior coverage rode
-    # through `run_modes_test.exs`, which Phase 5.10 deletes. Asserts the FK
-    # COLUMN — the queryable link — not a metadata key: removing the lift reds
-    # this.
+    # Asserts the FK COLUMN — the queryable link — not a metadata key: removing
+    # `run_owned/3`'s `Keyword.take(opts, [:parent_run_id])` lift reds this.
+    # (Rationale for the fixture and its prior coverage: see `ParentLinkable` above.)
     test "run(parent_run_id: id) sets the pipeline_runs.parent_run_id column" do
       {:ok, parent} = ALLM.Pipeline.Executor.create_pipeline_run("dsl_parent_of_linkable")
 
