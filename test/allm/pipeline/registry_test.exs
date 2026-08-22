@@ -316,6 +316,28 @@ defmodule ALLM.Pipeline.RegistryTest do
       assert message =~ "lock_keys:"
     end
 
+    test "a pipeline name with a non-[a-z0-9_] char is rejected at compile time" do
+      # The name is spliced verbatim into shell tokens (scraper-entrypoint.sh)
+      # and TS literals (sst/scraper.ts), so the charset is constrained at the
+      # single source of truth. A crafted atom such as `:"x) ;; evil ;; ("` must
+      # not compile.
+      message =
+        assert_raise(ArgumentError, fn ->
+          compile_registry(
+            repo: A.R,
+            store: A.S,
+            artifacts: A.A,
+            lock: A.L,
+            pipelines: [
+              %{name: :"x) ;; evil", entry: {A.Mod, :run}, run_names: ["x"]}
+            ]
+          )
+        end).message
+
+      assert message =~ "name:"
+      assert message =~ "[a-z0-9_]"
+    end
+
     test "an unknown option is rejected, and the message says values do not belong here" do
       message =
         assert_raise(ArgumentError, fn ->

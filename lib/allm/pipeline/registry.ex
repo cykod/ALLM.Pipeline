@@ -443,6 +443,18 @@ defmodule ALLM.Pipeline.Registry do
               "got: #{inspect(entry.name)}"
     end
 
+    # Constrain the name's character content at the single source of truth so
+    # EVERY downstream emitter inherits it: the name is spliced verbatim into
+    # shell tokens (`scraper-entrypoint.sh` case/die) and TypeScript literals
+    # (`sst/scraper.ts`), so a stray char is a codegen/injection hazard. This is
+    # the compile-time gate; downstream drift/`bash -n` detection is the backstop.
+    unless to_string(entry.name) =~ ~r/\A[a-z0-9_]+\z/ do
+      raise ArgumentError,
+            "#{inspect(module)}: `name:` in a `pipelines:` entry must match " <>
+              "~r/\\A[a-z0-9_]+\\z/ (lowercase letters, digits, underscore), " <>
+              "got: #{inspect(entry.name)}"
+    end
+
     case entry.entry do
       {mod, fun} when is_atom(mod) and is_atom(fun) ->
         :ok
