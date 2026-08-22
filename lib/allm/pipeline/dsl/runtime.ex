@@ -53,7 +53,6 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
 
   alias ALLM.Pipeline.{
     Context,
-    Encodable,
     Executor,
     FanOut,
     Lifecycle,
@@ -132,11 +131,13 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
 
     # `:parent_run_id` is lifted out of `opts` into `create_pipeline_run/3`'s
     # ATTRS, where it is a first-class column rather than a metadata key — which
-    # is what makes a child run SQL/GraphQL-filterable under its parent. Without
-    # this lift `child_pipeline` cannot link a DSL-declared child at all: the
-    # opt would reach the child's `run/1` and stop there. It mirrors what the
-    # three hand-written consumers already do
+    # is what makes a child run SQL/GraphQL-filterable under its parent. This has
+    # ALWAYS been on the self-owned path: a ported pipeline invoked as a child
+    # (`ProjectEnrichmentPipeline.run(project_id:, parent_run_id:)`) sets the
+    # column through here, mirroring what the hand-written consumers do
     # (`parent_run_id: Keyword.get(opts, :parent_run_id)`).
+    # `runtime_test.exs`'s "self-owned parent_run_id lift" is its regression
+    # coverage.
     case Executor.create_pipeline_run(
            name,
            call(hooks.metadata, [opts], %{options: opts}),
@@ -363,11 +364,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
 
   @spec do_stage(Stage.t(), PipelineRun.t(), keyword(), state(), pos_integer()) ::
           {:ok, state()} | {:error, term()}
-  # `:child_pipeline` shares the `:stage` branch verbatim: it runs once, its
-  # result is an `item_result()`, and `apply_result/3` handles it identically.
-  # Only `run_target/5`'s dispatch differs.
-  defp do_stage(%Stage{kind: kind} = stage, run, opts, state, _default_concurrency)
-       when kind in [:stage, :child_pipeline] do
+  defp do_stage(%Stage{kind: :stage} = stage, run, opts, state, _default_concurrency) do
     ctx = context(run, opts, state, state.parent)
     {result, acc_update} = run_target(stage, run, ctx, state.prev, state.parent)
 
@@ -422,16 +419,14 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
         # The RUNNING accumulator, not the one this stage started with: a body
         # writing `{item_result, acc + 1}` has to read the value its
         # predecessor wrote, or every item folds from the same snapshot.
+        #
+        # The sequential path is NOT wrapped in the link-safe `catch` — what
+        # survives a Step's own safety is infrastructure raising, and one of
+        # those should abort the run rather than be tallied as N failed items
+        # under a `:success` run. (Phase 5.10 removed the `catch_item_failures:`
+        # option that could opt into catching here; nothing consumed it.)
         {result, acc_update} =
-          guarded_item(
-            stage,
-            run,
-            opts,
-            %{state | acc: acc},
-            item,
-            source_parent,
-            stage.catch_item_failures
-          )
+          run_item(stage, run, opts, %{state | acc: acc}, item, source_parent)
 
         {[result | done], fold_acc(acc, acc_update)}
       end)
@@ -456,7 +451,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   defp run_concurrent(stage, run, opts, state, items, source_parent, concurrency) do
     items
     |> Task.async_stream(
-      fn item -> guarded_item(stage, run, opts, state, item, source_parent, true) end,
+      fn item -> guarded_item(stage, run, opts, state, item, source_parent) end,
       max_concurrency: concurrency,
       timeout: :infinity,
       ordered: true
@@ -471,29 +466,23 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
     end)
   end
 
-  # `Task.async_stream` LINKS its children, so the concurrent path passes
-  # `guard? = true` unconditionally — that is link safety, not policy. The
-  # SEQUENTIAL path passes the `catch_item_failures:` declaration, which
-  # defaults to `false`: what survives a Step's own safety is infrastructure
-  # raising, and one of those should abort the run rather than be tallied as N
-  # individually-failed items under a `:success` run.
+  # `Task.async_stream` LINKS its children, so the concurrent path is ALWAYS
+  # wrapped — that is link safety, not policy: an uncaught raise or exit in one
+  # item kills the caller before the stream emits anything. The SEQUENTIAL path
+  # is NOT wrapped (`run_sequential/6` calls `run_item/6` directly), so an
+  # uncaught infrastructure raise aborts the run there. The always-on
+  # `catch kind, reason` lives in `FanOut.guard/3` — the single home shared with
+  # `FanOut.reduce/5`, so the two paths cannot diverge on one kind. `rescue`
+  # alone would miss the exit a Playwright/`GenServer.call` teardown arrives as.
   @spec guarded_item(
           Stage.t(),
           PipelineRun.t(),
           keyword(),
           state(),
           term(),
-          Ecto.UUID.t() | nil,
-          boolean()
+          Ecto.UUID.t() | nil
         ) :: {Item.t(), acc_update()}
-  defp guarded_item(stage, run, opts, state, item, source_parent, false),
-    do: run_item(stage, run, opts, state, item, source_parent)
-
-  # The always-on `catch kind, reason` lives in `FanOut.guard/3` — the single
-  # home shared with `FanOut.reduce/5`, so the two paths cannot diverge on one
-  # kind. `rescue` alone would miss the exit a Playwright/`GenServer.call`
-  # teardown arrives as.
-  defp guarded_item(stage, run, opts, state, item, source_parent, true) do
+  defp guarded_item(stage, run, opts, state, item, source_parent) do
     FanOut.guard(
       item_label(stage, item),
       fn -> run_item(stage, run, opts, state, item, source_parent) end,
@@ -521,154 +510,22 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
 
   # The ONE place a stage's target is invoked, for both kinds. `:stage` and
   # `:fan_out` differ only in what they do with the result afterwards
-  # (`apply_result/3` vs `to_item/2`), never in how the target is called — so
-  # anything that changes the invocation (4.3's `retry:`, which re-invokes
-  # `execute/2` from the top) wraps this and nothing else.
+  # (`apply_result/3` vs `to_item/2`), never in how the target is called. It is
+  # the single dispatch seam: a step-module target routes through
+  # `Executor.run_step/5`, an escape-hatch body is called directly.
   @spec run_target(Stage.t(), PipelineRun.t(), Context.t(), term(), Ecto.UUID.t() | nil) ::
           {item_result(), acc_update()}
-  defp run_target(stage, run, ctx, subject, parent),
-    do: attempt_target(stage, run, ctx, subject, parent, 1)
-
-  # Phase 4 D11: `retry:` RE-INVOKES the target, so each attempt gets its own
-  # step log — the framework never re-applies a step's hooks to an existing one,
-  # which matters because `post_process/2` is not idempotent on two ported steps
-  # (`.work/HANDOFF.md`). The LAST attempt's `{result, acc_update}` is the one
-  # that survives: an earlier attempt's accumulator write is discarded, and each
-  # attempt sees the same context.
-  @spec attempt_target(
-          Stage.t(),
-          PipelineRun.t(),
-          Context.t(),
-          term(),
-          Ecto.UUID.t() | nil,
-          pos_integer()
-        ) :: {item_result(), acc_update()}
-  defp attempt_target(stage, run, ctx, subject, parent, attempt) do
-    {result, acc_update} = invoke_target(stage, run, ctx, subject, parent, attempt)
-
-    if retry?(stage.retry, result, attempt) do
-      backoff(stage, attempt)
-      attempt_target(stage, run, ctx, subject, parent, attempt + 1)
-    else
-      {result, acc_update}
-    end
-  end
-
-  @spec retry?(Stage.retry_spec() | nil, item_result(), pos_integer()) :: boolean()
-  defp retry?(nil, _result, _attempt), do: false
-  defp retry?(%{max: max}, _result, attempt) when attempt >= max, do: false
-  defp retry?(%{on: on}, {:error, reason}, _attempt), do: retryable?(on, reason)
-  defp retry?(_retry, _result, _attempt), do: false
-
-  # A bare reason atom, or the first element of a tagged tuple — the two shapes
-  # `Executor.run_step/5` actually returns (`:rate_limited`,
-  # `{:output_validation_failed, _}`). Anything else is not retried, because a
-  # reason nobody can name is not one anybody declared `on:` for.
-  @spec retryable?(:any | [atom()], term()) :: boolean()
-  defp retryable?(:any, _reason), do: true
-  defp retryable?(on, reason) when is_atom(reason), do: reason in on
-
-  defp retryable?(on, reason) when is_tuple(reason) and tuple_size(reason) > 0,
-    do: elem(reason, 0) in on
-
-  defp retryable?(_on, _reason), do: false
-
-  @spec backoff(Stage.t(), pos_integer()) :: :ok
-  defp backoff(%Stage{name: name, retry: %{backoff: kind, base_ms: base}}, attempt) do
-    ms =
-      case kind do
-        :none -> 0
-        :linear -> base * attempt
-        :exponential -> base * Integer.pow(2, attempt - 1)
-      end
-
-    Logger.warning("[#{name}] attempt #{attempt} failed; retrying in #{ms}ms")
-    if ms > 0, do: Process.sleep(ms)
-    :ok
-  end
-
-  # The child clause is FIRST because a `:child_pipeline` stage also has
-  # `step: nil` — matching the escape hatch before it would call `nil.(ctx, _)`.
-  @spec invoke_target(
-          Stage.t(),
-          PipelineRun.t(),
-          Context.t(),
-          term(),
-          Ecto.UUID.t() | nil,
-          pos_integer()
-        ) :: {item_result(), acc_update()}
-  defp invoke_target(
-         %Stage{kind: :child_pipeline, child: child} = stage,
-         run,
-         ctx,
-         subject,
-         _p,
-         _a
-       ) do
-    args = child.args.(ctx, subject)
-    {normalize_child!(stage, apply(child.module, child.fun, link_child(stage, args, run))), :keep}
-  end
-
-  defp invoke_target(%Stage{step: nil} = stage, _run, ctx, subject, _parent, _attempt),
+  defp run_target(%Stage{step: nil} = stage, _run, ctx, subject, _parent),
     do: normalize!(stage, stage.body.(ctx, subject))
 
-  defp invoke_target(%Stage{step: step} = stage, run, ctx, subject, parent, attempt) do
+  defp run_target(%Stage{step: step} = stage, run, ctx, subject, parent) do
     result =
-      case Executor.run_step(
-             run,
-             step,
-             stage.input.(ctx, subject),
-             parent,
-             step_opts(ctx, attempt)
-           ) do
+      case Executor.run_step(run, step, stage.input.(ctx, subject), parent, step_opts(ctx)) do
         {:ok, step_log, output} -> {:ok, output, step_log}
         {:error, _step_log, reason} -> {:error, reason}
       end
 
     {result, :keep}
-  end
-
-  # `parent_run_id:` is merged into the argument list's LAST element, which must
-  # be a keyword list. All three live consumer call sites are `run(opts)`
-  # (`project_refresh_pipeline.ex:204`, `:266`, `:275`), so an append would
-  # serve them — merging is what keeps the child's arity intact for an
-  # `f(id, opts)` entry point such as `ProjectEnrichmentPipeline.run_single/2`.
-  @spec link_child(Stage.t(), term(), PipelineRun.t()) :: [term()]
-  defp link_child(stage, args, run) when is_list(args) and args != [] do
-    last = List.last(args)
-
-    if Keyword.keyword?(last) do
-      List.replace_at(args, -1, Keyword.put(last, :parent_run_id, run.id))
-    else
-      raise_child_args!(stage, args)
-    end
-  end
-
-  defp link_child(stage, args, _run), do: raise_child_args!(stage, args)
-
-  # `Encodable.render/1`, not `inspect/1`: `Lifecycle.guard/2` logs this message
-  # and `PipelineRun.fail/2` persists it to `pipeline_runs.metadata.error`, and
-  # an `args:` hook's last element is a keyword list — exactly where an API token
-  # or session handle would be threaded to a child pipeline.
-  @spec raise_child_args!(Stage.t(), term()) :: no_return()
-  defp raise_child_args!(%Stage{name: name}, args) do
-    raise ArgumentError,
-          "child_pipeline :#{name}'s `args:` hook returned #{Encodable.render(args)}. " <>
-            "It must return a " <>
-            "non-empty argument LIST whose last element is a keyword list — that is where " <>
-            "`parent_run_id:` is merged, and it is what links the child run to this one."
-  end
-
-  @spec normalize_child!(Stage.t(), term()) :: item_result()
-  defp normalize_child!(_stage, {tag, _payload} = result) when tag in [:ok, :skipped, :error],
-    do: result
-
-  defp normalize_child!(%Stage{name: name, child: child}, other) do
-    raise ArgumentError,
-          "child_pipeline :#{name} invoked #{inspect(child.module)}.#{child.fun}, which " <>
-            "returned #{Encodable.render(other)}. A child pipeline's entry point must " <>
-            "return " <>
-            "`{:ok, value}`, `{:skipped, reason}` or `{:error, reason}`."
   end
 
   # ── Result handling ───────────────────────────────────────────────────────
@@ -855,17 +712,9 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   # `Executor.run_step/5` hands its `opts` to `Context.new/3`, which pops these
   # two onto struct fields — so a Step reads `Context.resource(ctx, :browser)`,
   # not `Keyword.get(opts, :page)`.
-  # `is_retry: true` from the SECOND attempt (Phase 4 D11). It reaches
-  # `StepLog.log_failure/3`'s `retry_count` through `Executor.run_step/5`'s
-  # opts, so a retried attempt that fails again is distinguishable from a first
-  # one in `step_logs` — which is the only persisted trace a re-invoking retry
-  # leaves, since each attempt writes its own row.
-  @spec step_opts(Context.t(), pos_integer()) :: keyword()
-  defp step_opts(%Context{} = ctx, 1),
+  @spec step_opts(Context.t()) :: keyword()
+  defp step_opts(%Context{} = ctx),
     do: Keyword.merge(ctx.opts, resources: ctx.resources, carry: ctx.carry)
-
-  defp step_opts(%Context{} = ctx, _attempt),
-    do: ctx |> step_opts(1) |> Keyword.put(:is_retry, true)
 
   @spec item_label(Stage.t(), term()) :: String.t()
   defp item_label(%Stage{name: name}, item),

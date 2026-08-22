@@ -38,7 +38,7 @@ defmodule ALLM.Pipeline.FanOut do
 
   | Site | How it is kept safe |
   |---|---|
-  | `ALLM.Pipeline.Dsl.Runtime.run_concurrent/7` | always-on `catch` via `guarded_item/7` — the concurrent path passes `true` unconditionally, which is link safety rather than the `catch_item_failures:` policy |
+  | `ALLM.Pipeline.Dsl.Runtime.run_concurrent/7` | always-on `catch` via `guarded_item/6` — the concurrent path is unconditionally wrapped, which is link safety (the sequential path calls `run_item/6` directly and is NOT wrapped) |
   | `Scrapers.HttpScraper.fetch_many/2` | `safe_fetch/2` (`catch`) |
   | `Pipelines.PoiThumbnailStep.generate_for_pois/6` | `safe_generate_one/7` (`catch`) |
   | `Processors.DocumentTextCollector.execute/2` | `safe_collect_text/1` (`catch`) |

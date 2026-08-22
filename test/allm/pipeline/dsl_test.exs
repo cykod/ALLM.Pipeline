@@ -78,13 +78,12 @@ defmodule ALLM.Pipeline.DslTest do
       # any `==` against a list built from the same broken source. Same
       # fail-open protection `executor_test.exs` and `encodable_test.exs` put
       # on their `Path.wildcard/1` results, transposed to the right instrument.
-      assert length(macros) >= 9,
+      assert length(macros) >= 7,
              "ALLM.Pipeline.Dsl exports only #{length(macros)} macros — the module moved or " <>
                "the constructs were renamed, and this guard is no longer scanning them."
 
+      # `child_pipeline/3` and `/4` were removed in Phase 5.10 (zero-consumer).
       assert macros == [
-               child_pipeline: 3,
-               child_pipeline: 4,
                fan_out: 2,
                fan_out: 3,
                metrics: 2,
@@ -118,11 +117,12 @@ defmodule ALLM.Pipeline.DslTest do
     test "every hook option has exactly one declared arity, and the table is non-empty" do
       arities = Dsl.__hook_arities__()
 
-      assert length(arities) >= 13,
+      assert length(arities) >= 12,
              "__hook_arities__/0 reports only #{length(arities)} hooks — rows were dropped, " <>
                "and the equality below would pass vacuously."
 
-      # `gate: 2` was removed in Phase 4.5.3 (`section: 1` / `when: 1` in 4.5.2).
+      # `gate: 2` was removed in Phase 4.5.3 (`section: 1` / `when: 1` in 4.5.2);
+      # `args: 2` in Phase 5.10 with `child_pipeline`.
       assert Enum.sort(arities) ==
                Enum.sort(
                  metadata: 1,
@@ -136,7 +136,6 @@ defmodule ALLM.Pipeline.DslTest do
                  summarize: 2,
                  start: 1,
                  stop: 1,
-                 args: 2,
                  dry_run: 1
                )
 
@@ -406,7 +405,7 @@ defmodule ALLM.Pipeline.DslTest do
 
     test "`on_error:` on a fan_out, which cannot fail as a stage" do
       assert_raise ArgumentError,
-                   ~r/does not apply to a `fan_out`.*catch_item_failures: true/s,
+                   ~r/does not apply to a `fan_out`.*read the item results/s,
                    fn ->
                      compile!(
                        ~s|use ALLM.Pipeline, name: "x"\nfan_out :f, ALLM.Pipeline.TestSupport.TargetDeclaration.MeetingListScraper, over: :i, input: :inp, on_error: :continue\ndefp i(_), do: []\ndefp inp(_, _), do: %{}|

@@ -1,14 +1,11 @@
 defmodule ALLM.Pipeline.Dsl.RunModesTest do
   @moduledoc """
-  Pins the three constructs that change WHICH run a declaration executes under,
-  or whether it executes at all: `borrowed_run:`, `child_pipeline` and the
-  framework's `--dry-run`.
+  Pins the two constructs that change WHICH run a declaration executes under, or
+  whether it executes at all: `borrowed_run:` and the framework's `--dry-run`.
 
-  None of the three has a Phase 4 production consumer — that is a knowingly
-  accepted YAGNI exception (the phasing doc's Phase 4 deliverable list calls
-  `child_pipeline` and `borrowed_run` "required, not optional"), and its
-  mitigation is exactly this file: each ships against stub steps with the
-  discriminator its design named.
+  (Phase 5.10 removed `child_pipeline`, which this file also covered — its
+  parent_run_id lift is now regression-covered directly by
+  `runtime_test.exs`'s "self-owned parent_run_id lift".)
   """
 
   use ExUnit.Case, async: true
@@ -99,61 +96,6 @@ defmodule ALLM.Pipeline.Dsl.RunModesTest do
     defp funnel(acc), do: %{found: acc, processed: acc}
     defp passthrough(acc, _ctx), do: acc
     defp as_metadata(acc), do: %{"counted" => acc}
-  end
-
-  # ── child_pipeline ────────────────────────────────────────────────────────
-
-  defmodule Child do
-    @moduledoc false
-    use ALLM.Pipeline, name: "run_modes_child", returns: :run
-
-    stage(:only, fn _ctx, _prev -> {:ok, :child_done} end)
-  end
-
-  defmodule Parent do
-    @moduledoc false
-    use ALLM.Pipeline, name: "run_modes_parent"
-
-    alias ALLM.Pipeline.Dsl.RunModesTest.Child
-
-    stage(:seed, fn _ctx, _prev -> {:ok, :seeded} end)
-    child_pipeline(:spawn, Child, :run, args: :child_args)
-    summarize(:passthrough)
-
-    # The full ARGUMENT LIST. `parent_run_id:` is merged into its last element.
-    defp child_args(_ctx, prev), do: [[seeded_from: prev]]
-    defp passthrough(_acc, _ctx), do: :parent_done
-  end
-
-  defmodule BadChildArgs do
-    @moduledoc false
-    use ALLM.Pipeline, name: "run_modes_bad_child_args"
-
-    alias ALLM.Pipeline.Dsl.RunModesTest.Child
-
-    child_pipeline(:spawn, Child, :run, args: :child_args)
-
-    defp child_args(_ctx, _prev), do: [:not_a_keyword_list]
-  end
-
-  defmodule FailingChild do
-    @moduledoc false
-    use ALLM.Pipeline, name: "run_modes_failing_child_parent"
-
-    alias ALLM.Pipeline.Dsl.RunModesTest.Refuser
-
-    child_pipeline(:spawn, Refuser, :run, args: :child_args)
-    summarize(:passthrough)
-
-    defp child_args(_ctx, _prev), do: [[]]
-    defp passthrough(acc, _ctx), do: acc
-  end
-
-  defmodule Refuser do
-    @moduledoc false
-    use ALLM.Pipeline, name: "run_modes_refuser"
-
-    stage(:nope, fn _ctx, _prev -> {:error, :child_refused} end)
   end
 
   # ── dry_run ───────────────────────────────────────────────────────────────
@@ -272,56 +214,6 @@ defmodule ALLM.Pipeline.Dsl.RunModesTest do
     end
   end
 
-  describe "child_pipeline" do
-    test "the child run carries parent_run_id and the parent's run is untouched" do
-      assert {:ok, :parent_done} = Parent.run()
-
-      parent = only_run("run_modes_parent")
-      child = only_run("run_modes_child")
-
-      assert child.parent_run_id == parent.id
-      assert child.status == :success
-
-      # The parent gains NO step log from the child stage: the child owns and
-      # terminates its own run, and this stage writes nothing to the parent's.
-      assert steps(parent.id) == []
-      assert parent.status == :success
-    end
-
-    test "the args hook's own keyword list survives the parent_run_id merge" do
-      {:ok, :parent_done} = Parent.run()
-
-      child = only_run("run_modes_child")
-      assert child.metadata["options"]["seeded_from"] == "seeded"
-    end
-
-    test "a child that fails propagates through on_error: :fail_run" do
-      assert {:error, :child_refused} = FailingChild.run()
-
-      assert only_run("run_modes_failing_child_parent").status == :failed
-      assert only_run("run_modes_refuser").status == :failed
-    end
-
-    test "an args hook returning a non-keyword last element raises, naming the fix" do
-      assert_raise ArgumentError, ~r/last element is a keyword list/, fn ->
-        BadChildArgs.run()
-      end
-
-      # And the parent run is still terminal — the raise went through the
-      # generated lifecycle guard.
-      assert only_run("run_modes_bad_child_args").status == :failed
-    end
-
-    test "a child_pipeline IS a stage and appears in __pipeline__(:stages)" do
-      assert [seed, spawn] = Parent.__pipeline__(:stages)
-      assert seed.kind == :stage
-      assert spawn.kind == :child_pipeline
-      assert spawn.child.module == Child
-      assert spawn.child.fun == :run
-      assert is_function(spawn.child.args, 2)
-    end
-  end
-
   describe "--dry-run" do
     test "completes the run and makes ZERO run_step calls" do
       assert {:ok, %{"would_process" => 7}} = Dryable.run(dry_run: true)
@@ -365,21 +257,6 @@ defmodule ALLM.Pipeline.Dsl.RunModesTest do
   end
 
   describe "compile-time validation" do
-    test "child_pipeline requires args:" do
-      assert_raise ArgumentError, ~r/requires `args:`/, fn ->
-        compile!(~s|use ALLM.Pipeline, name: "x"
-                    child_pipeline :c, ALLM.Pipeline.Dsl.RunModesTest.Child, :run|)
-      end
-    end
-
-    test "child_pipeline's module must be an alias, never a bare atom" do
-      assert_raise ArgumentError, ~r/must be a module alias/, fn ->
-        compile!(~s|use ALLM.Pipeline, name: "x"
-                    child_pipeline :c, :some_hook, :run, args: :a
-                    defp a(_ctx, _prev), do: [[]]|)
-      end
-    end
-
     test "summary_type: and returns: :run cannot both be declared" do
       assert_raise ArgumentError, ~r/cannot both be\s+declared/, fn ->
         compile!(~s|use ALLM.Pipeline, name: "x", returns: :run, summary_type: :stats

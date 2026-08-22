@@ -221,22 +221,22 @@ defmodule ALLM.Pipeline do
     `committee`'s chain. Getting this wrong is invisible to a spot check and
     fatal to the gate.
 
-  ## Per-item failures are NOT caught by default
+  ## Per-item failures on a sequential fan_out are NOT caught
 
-  `catch_item_failures: true` is opt-in per `fan_out`, and neither Phase 4 port
-  declares it. What survives a Step's own safety is infrastructure raising —
+  A **sequential** `fan_out`'s items run through `run_item/6` directly, with no
+  wrapping `catch`. What survives a Step's own safety is infrastructure raising —
   pool exhaustion, a lost connection — and one of those should abort the run
   rather than be tallied as N individually-failed items under a `:success` run.
-  A framework that caught by default would silently invert that.
+  (Phase 5 removed the `catch_item_failures:` option that could opt into catching
+  on the sequential path; no pipeline consumed it.)
 
-  The **one** exception is not a policy choice: a `fan_out` with
-  `concurrency > 1` runs through `Task.async_stream`, which LINKS its children,
-  so an uncaught raise or exit in one item kills the caller before the stream
-  emits anything. Those are therefore **always** wrapped in `catch kind, reason`
-  and degraded to `{:error, {:uncaught, kind, reason}}` — the rule
-  `ALLM.Pipeline.FanOut`'s moduledoc states, applied once in the framework
-  instead of at each call site. `rescue` alone is insufficient: an exit is not
-  an exception.
+  A `fan_out` with `concurrency > 1` is different, and not as a policy choice: it
+  runs through `Task.async_stream`, which LINKS its children, so an uncaught
+  raise or exit in one item kills the caller before the stream emits anything.
+  Those are therefore **always** wrapped in `catch kind, reason` and degraded to
+  `{:error, {:uncaught, kind, reason}}` — the rule `ALLM.Pipeline.FanOut`'s
+  moduledoc states, applied once in the framework instead of at each call site.
+  `rescue` alone is insufficient: an exit is not an exception.
 
   ## `resource` — a handle acquired once per run
 
@@ -259,34 +259,26 @@ defmodule ALLM.Pipeline do
   teardown after the write could not record a failure anywhere, because the row
   is already terminal. Full contract: `ALLM.Pipeline.Dsl.Resource`.
 
-  > **No production consumer as of Phase 4.5 — deadlined to Phase 5.** `resource`
-  > is wired into a named Phase 5 port that consumes it, or removed (§8.6 Rec 3;
-  > `.work/HANDOFF.md`). Kept, not deleted, because Phase 5's browser/session
-  > ports are its intended consumers.
+  > **Kept with its one consumer.** `resource` is wired into
+  > `AmesburyScraper.Pipelines.ProjectEnrichmentPipeline` (Phase 5.2). It is the
+  > sanctioned exception to the "earn its keep across more than one pipeline" bar
+  > (`steering/ALLM_PIPELINE_DSL.md` §6.2) **because it closes a named §1 defect
+  > class by construction** — a leaked handle on a raise, which a bare `after`
+  > block cannot catch (a Playwright/`GenServer` teardown surfaces as an exit).
 
-  ## `child_pipeline` — invoke another pipeline, linked
+  ## Linking a child run
 
-      child_pipeline :enrich, OtherPipeline, :run, args: :enrich_args
-
-  A stage that invokes another pipeline's entry point. The child creates and
-  terminates its **own** `PipelineRun`; this pipeline's run gains no step log
-  from it. What the construct adds over an escape-hatch `stage` is the link:
-  `args:` returns the full argument LIST, and `parent_run_id:` is merged into
-  its **last** element — which must be a keyword list. Merging rather than
-  appending keeps the child's arity intact, which matters for an `f(id, opts)`
-  entry point such as `ProjectEnrichmentPipeline.run_single/2`; the three live
-  consumer call sites are all `run(opts)`. Nothing validates the function atom
-  beyond "is a literal atom", so a name that does not exist on the child module
-  surfaces as an `UndefinedFunctionError` at the first real run, inside the
-  generated lifecycle guard — i.e. as a failed run. Grep the child's entry
-  points before writing the atom. A DSL-declared child lifts that opt into
-  `create_pipeline_run/3`'s attrs, so it lands in the `parent_run_id` COLUMN and
-  stays SQL/GraphQL-filterable rather than becoming a metadata key.
-
-  > **No production consumer as of Phase 4.5 — deadlined to Phase 5.**
-  > `child_pipeline` is wired into a named Phase 5 port that consumes it, or
-  > removed (§8.6 Rec 3; `.work/HANDOFF.md`). Kept, not deleted, because Phase 5's
-  > umbrella ports are its intended consumers.
+  A ported pipeline invoked as a child of another (`ProjectEnrichmentPipeline`
+  is a child of `ProjectRefreshPipeline`) sets the queryable
+  `pipeline_runs.parent_run_id` FK column by threading `parent_run_id:` in its
+  `opts`: the generated self-owned `run/1` lifts it out of `opts` into
+  `create_pipeline_run/3`'s attrs (`Dsl.Runtime.run_owned/3`), so it lands in
+  the COLUMN rather than becoming a metadata key. No declarative construct is
+  needed — a child is just another `run/1` call with `parent_run_id:` set.
+  (Phase 5 removed the `child_pipeline` construct: it had no production consumer,
+  and the one intended one, `project_refresh`, cannot adopt it — it injects the
+  child module at runtime as a test seam and chains two children per item. See
+  `steering/ALLM_PIPELINE_DSL.md` §6.2.)
 
   ## Running under a borrowed run
 
@@ -373,34 +365,6 @@ defmodule ALLM.Pipeline do
   keeps a `skip_when:` on its write stage, which is already expressible and
   leaves the earlier stages running.
 
-  ## `retry:`
-
-      stage :extract, Extractor, input: :build, retry: [max: 3, backoff: :exponential,
-                                                        on: [:rate_limited, :timeout]]
-
-  Re-invokes the target from the top, producing **one step log per attempt**
-  (D11). `max:` counts total ATTEMPTS, not retries. `on:` defaults to `:any` and
-  otherwise matches a bare reason atom or a tagged tuple's first element;
-  `backoff:` is `:none` (default), `:linear` or `:exponential` over `base_ms:`
-  (default 1000). Attempts from the second pass `is_retry: true`, which
-  `StepLog.log_failure/3` turns into `retry_count`.
-
-  Re-invoking rather than reusing a step log is what keeps a step's hooks
-  applied exactly once per invocation — `post_process/2` is not idempotent on
-  every ported step. The cost is that `retry_count` is "was this a retry",
-  not "how many"; a true cumulative counter needs one step log across attempts,
-  which changes timing and lineage semantics, and is Phase 7's.
-
-  Also note: an earlier attempt's accumulator write is **discarded** — the last
-  attempt's `{item_result, acc}` is the one that survives, and every attempt
-  sees the same context.
-
-  > **No production consumer as of Phase 4.5 — deadlined to Phase 5.** No pipeline
-  > declares `retry:` (nor `catch_item_failures:`); both are wired into a named
-  > Phase 5 port that consumes them, or removed (§8.6 Rec 3; `.work/HANDOFF.md`).
-  > Kept, not deleted, because Phase 5's rate-limited LLM ports are their intended
-  > consumers.
-
   ## Ownership
 
   The generated `run/1` obtains its handle from
@@ -431,8 +395,6 @@ defmodule ALLM.Pipeline do
           stage: 3,
           fan_out: 2,
           fan_out: 3,
-          child_pipeline: 3,
-          child_pipeline: 4,
           resource: 2,
           metrics: 2,
           summarize: 1

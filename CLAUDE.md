@@ -187,7 +187,7 @@ accumulates a spec containing AST onto `@allm_pipeline_stages`, and
   and why the arity in `Dsl.__hook_arities__/0` is load-bearing twice over: it
   is what the capture is built at AND what `Dsl.__assert_hooks_defined__!/2`
   checks the module defines. Change one and you have silently changed the
-  other. That attribute is the **single source** for every hook arity — 13
+  other. That attribute is the **single source** for every hook arity — 12
   (`MIX_ENV=test mix run --no-start -e 'IO.puts(length(ALLM.Pipeline.Dsl.__hook_arities__()))'`);
   do not restate one at a call site or in a doc table (`hook/2` looks it up),
   and `dsl_test.exs`'s "every hook option has exactly one declared arity" pins
@@ -252,22 +252,25 @@ loss. Measured: that is exactly what the first implementation did, and
 raises" is the test that caught it.
 
 **A stage's target is invoked in exactly one place: `Runtime.run_target/5`.**
-All three kinds go through it — `:stage` and `:child_pipeline` from
-`do_stage/5`, each item from `run_item_body/5` — and they differ only in what
-they do with the result afterwards (`apply_result/3` vs `to_item/2`). Anything
-that changes *how* a target is invoked wraps that one function, which is exactly
-what 4.3's `retry:` did: `run_target/5` now delegates to `attempt_target/6` (the
-recursion) and `invoke_target/6` (the dispatch), and it is still the one seam.
-Writing the Step-vs-body dispatch a second time is how the kinds silently
-diverge on one kind only, which is invisible until a port's step-log tree
-differs.
+Both kinds go through it — a `:stage` from `do_stage/5`, each `:fan_out` item
+from `run_item_body/5` — and they differ only in what they do with the result
+afterwards (`apply_result/3` vs `to_item/2`). `run_target/5` itself is the
+Step-vs-body dispatch (a `step: nil` stage calls its body, else it routes through
+`Executor.run_step/5`). Writing that dispatch a second time is how the kinds
+silently diverge on one kind only, which is invisible until a port's step-log
+tree differs. (Phase 5.10 removed `retry:`, which used to wrap this seam with an
+`attempt_target/6` recursion; `run_target/5` is now the single non-recursive
+dispatch.)
 
-**`catch_item_failures:` and the concurrency guard are different rules that
-share one helper.** `Runtime.guarded_item/7`'s last argument is
-`stage.catch_item_failures` on the sequential path and **`true`
-unconditionally** on the concurrent one. The second is link safety, not policy:
+**The sequential and concurrent fan-out paths handle a raising item
+differently, on purpose.** The SEQUENTIAL path calls `run_item/6` directly with
+NO wrapping `catch`, so an uncaught infrastructure raise aborts the run. The
+CONCURRENT path wraps every item in `Runtime.guarded_item/6` (which uses
+`FanOut.guard/3`) **unconditionally** — that is link safety, not policy:
 `Task.async_stream` links its children, so an uncaught raise or exit kills the
-caller. Do not "simplify" them to one source.
+caller. Do not "simplify" them to one path. (Phase 5.10 removed the
+`catch_item_failures:` option that could opt the sequential path into catching;
+nothing consumed it.)
 
 **The lifecycle guard is `ALLM.Pipeline.Lifecycle`, and it has TWO consumers.**
 `Dsl.Runtime.execute/4` uses `guard/2` and `settle/4` separately — resource
@@ -305,19 +308,16 @@ teardown failure under a `complete_metadata:` returning `%{}` wrote nothing to
 the row, while the identical code path with a non-empty map wrote it. `fail/2`
 always adds its `"error"` key, so it always changes.
 
-**`child_pipeline` lifts `:parent_run_id` out of `opts` into
-`create_pipeline_run/3`'s ATTRS.** Without that lift the opt reaches the child's
-generated `run/1` and stops there, and the link is silently lost — the column
-stays `nil` while the metadata carries a `parent_run_id` key that nothing
-queries. `Runtime.run_owned/3` is where the lift happens; it mirrors what the
-three hand-written consumers already do.
-
-**`retry:` wraps `run_target/5`, which is still the single invocation seam.**
-`attempt_target/6` is the recursion and `invoke_target/6` the dispatch; adding a
-second dispatch path is how the two stage kinds silently diverge on one kind
-only. Note the child clause of `invoke_target/6` must come FIRST: a
-`:child_pipeline` stage also has `step: nil`, so matching the escape hatch
-before it would call `nil.(ctx, subject)`.
+**The self-owned `run/1` lifts `:parent_run_id` out of `opts` into
+`create_pipeline_run/3`'s ATTRS.** A ported pipeline invoked as a child (with
+`parent_run_id:` in its opts) sets the queryable `pipeline_runs.parent_run_id`
+FK COLUMN through here; without the lift the opt would reach the child's
+generated `run/1` and stop there, leaving the column `nil` while the metadata
+carried an unqueried key. `Runtime.run_owned/3` is where the lift happens; it
+mirrors what the hand-written consumers do. (Phase 5.10 removed the
+`child_pipeline` construct, which relied on this lift — the lift itself has
+always been on the self-owned path and stays. `runtime_test.exs`'s "self-owned
+parent_run_id lift" is its regression coverage.)
 
 **A `resource`'s `start` is guarded too, and `acquire/2` returns a PAIR.** On a
 failing `start` the fold halts and hands back the resources acquired *so far*,

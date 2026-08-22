@@ -77,8 +77,9 @@ defmodule ALLM.Pipeline.StepLog do
   trace is **not re-derivable from this file**: subphase 2.3's security review
   (`.work/security-reviews/2026-08-14-allm-p2c.md`, Informational 4) walked the
   five loaders and found a changeset surfacing only as a failure return (→
-  `normalize_error/1`, whose `inspect/1` omits `params` via `Ecto.Changeset`'s
-  own `Inspect` impl) and via `Encodable.encode/1` (→ `changeset_errors` only),
+  `normalize_error/1`, which since Phase 5.10 renders it params-free via
+  `Encodable.encode/1`'s `changeset_errors` leaf) and via `Encodable.encode/1`
+  (→ `changeset_errors` only),
   so none reaches this serializer. That is a **dated observation about the
   loaders**, not a property of this module, and a new `term()`-typed Step Output
   can falsify it without touching anything here.
@@ -687,8 +688,24 @@ defmodule ALLM.Pipeline.StepLog do
     %{"type" => to_string(e.__struct__), "message" => Exception.message(e)}
   end
 
+  # A failed loader returns its `Ecto.Changeset`; render it to its structured,
+  # params-free validation errors via `Encodable.encode/1`'s `changeset_errors`
+  # leaf, the same rule that covers a changeset reaching run metadata. This is
+  # NOT truncated (unlike the bounded fallback below), so the `errors` list the
+  # column operators read to diagnose a failed step survives in full — which is
+  # what let the generic fallback become bounded (Phase 5.10).
+  defp normalize_error(%Ecto.Changeset{} = changeset), do: Encodable.encode(changeset)
+
   defp normalize_error(error) when is_binary(error), do: %{"message" => error}
-  defp normalize_error(error), do: %{"message" => inspect(error)}
+
+  # BOUNDED, not bare `inspect/1`: an exit reason such as
+  # `{:timeout, {GenServer, :call, [pid, message, 5000]}}` inlines the call's
+  # message term — exactly where a bearer token or session handle would sit — and
+  # this column is `step_logs.error`. `Encodable.render/1` caps collection depth
+  # and binary length; the changeset clause above removes the tension the old
+  # unbounded form existed for (a small `limit:` truncating a changeset's errors).
+  # Mirrors `PipelineRun.normalize_error/1`'s bounded fallback.
+  defp normalize_error(error), do: %{"message" => Encodable.render(error)}
 
   # The host's Ecto repo, resolved at RUNTIME. `allm_pipeline` deliberately
   # depends on no umbrella app (see `apps/allm_pipeline/mix.exs`), so this tree

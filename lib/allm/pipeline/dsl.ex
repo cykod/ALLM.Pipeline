@@ -42,7 +42,6 @@ defmodule ALLM.Pipeline.Dsl do
   | `summarize` | `(acc, ctx)` |
   | `resource …, start:` | `(ctx)` |
   | `resource …, stop:` | `(handle)` |
-  | `child_pipeline …, args:` | `(ctx, subject)` |
   | `dry_run:` | `(ctx)` |
 
   `subject` is the previous stage's output for a `stage`, and the item for a
@@ -72,7 +71,7 @@ defmodule ALLM.Pipeline.Dsl do
     :summary_type
   ]
 
-  @common_options [:input, :skip_when, :carry, :retry]
+  @common_options [:input, :skip_when, :carry]
 
   # `on_error:` governs a WHOLE-STAGE failure, and a `fan_out` has none — its
   # items' failures land in the `[Dsl.Item.t()]` it returns, and the stage
@@ -87,13 +86,14 @@ defmodule ALLM.Pipeline.Dsl do
   # item's own context and propagated nothing past the stage — the silent-bug
   # shape the removal closes — so `assert_carry_placement!/4` rejects it by name
   # and points the author at the item chain. `:gate` simply falls to the generic
-  # unknown-option gate. `carry:` still rides `@common_options` for `@stage_options`
-  # and the `child_pipeline` `known` list.
+  # unknown-option gate. `carry:` still rides `@common_options` for `@stage_options`.
+  # (`:catch_item_failures` was removed in Phase 5.10 as a zero-consumer option;
+  # the concurrent path's always-on link-safe catch is unconditional and was
+  # never the option — see `Runtime.guarded_item/6`.)
   @fan_out_options [
                      :over,
                      :parent,
-                     :concurrency,
-                     :catch_item_failures
+                     :concurrency
                    ] ++ (@common_options -- [:carry])
 
   # `(hook key, arity)` for EVERY hook any declaration may name — the `use`-level
@@ -114,7 +114,6 @@ defmodule ALLM.Pipeline.Dsl do
     summarize: 2,
     start: 1,
     stop: 1,
-    args: 2,
     dry_run: 1
   ]
 
@@ -138,7 +137,7 @@ defmodule ALLM.Pipeline.Dsl do
   @typedoc "One accumulated stage specification. Hook values are quoted AST."
   @type stage_spec :: %{
           name: atom(),
-          kind: :stage | :fan_out | :child_pipeline,
+          kind: :stage | :fan_out,
           step: Macro.t() | nil,
           hooks: keyword(Macro.t()),
           scalars: keyword(Macro.t()),
@@ -178,7 +177,7 @@ defmodule ALLM.Pipeline.Dsl do
   `ALLM.Pipeline.FanOut.reduce/5` from a plain `stage` body instead.
 
   Options: `input:` (required), `over:` (required), plus `skip_when:`,
-  `parent:`, `concurrency:` and `catch_item_failures:`. **Not** `carry:` — a
+  `parent:` and `concurrency:`. **Not** `carry:` — a
   fan-out captures nothing to propagate (removed in Phase 4.5.3; read per-item
   values off the `[Item.t()]` output instead). **Not** `on_error:` — that governs
   a whole-stage failure, which a fan-out does not have; both are a compile error
@@ -186,31 +185,6 @@ defmodule ALLM.Pipeline.Dsl do
   """
   defmacro fan_out(name, step, opts \\ []) do
     spec = __stage__(:fan_out, __CALLER__, name, step, opts)
-    accumulate(spec)
-  end
-
-  @doc """
-  Declare a stage that invokes **another pipeline's** entry point.
-
-      child_pipeline :enrich, ProjectEnrichmentPipeline, :run, args: :enrich_args
-
-  The child creates and terminates its **own** `PipelineRun`; this pipeline's
-  run is untouched by it and gains no step log. What the construct adds over an
-  escape-hatch `stage` is the link: `args:` returns the full argument LIST, and
-  the DSL merges `parent_run_id: <this run's id>` into its **last** element —
-  which must be a keyword list.
-
-  Merging into the last element rather than appending is what keeps the child's
-  arity intact. All three live consumer call sites are `run(opts)` today
-  (`project_refresh_pipeline.ex:204`, `:266`, `:275`), so a plain append would
-  work for them — but `ProjectEnrichmentPipeline.run_single/2` is an
-  `f(id, opts)` entry point that exists now and would break under one.
-
-  Options: `args:` (required), plus `skip_when:`, `carry:`, `retry:` and
-  `on_error:` as a `stage` has them.
-  """
-  defmacro child_pipeline(name, module, fun, opts \\ []) do
-    spec = __child_pipeline__(__CALLER__, name, module, fun, opts)
     accumulate(spec)
   end
 
@@ -422,73 +396,6 @@ defmodule ALLM.Pipeline.Dsl do
     %{name: name, start: start_ast, stop: stop_ast, atom_hooks: start_atoms ++ stop_atoms}
   end
 
-  @spec __child_pipeline__(Macro.Env.t(), Macro.t(), Macro.t(), Macro.t(), Macro.t()) ::
-          stage_spec()
-  defp __child_pipeline__(caller, name, child_module, fun, opts) do
-    module = caller.module
-    label = "child_pipeline #{Macro.to_string(name)}"
-    # COMPOSED, not hand-copied — this is a fourth member of the same vocabulary
-    # as `@stage_options` and `@fan_out_options` above. Copied, a fifth common
-    # option would reach `stage` and `fan_out` automatically and silently skip
-    # `child_pipeline`, so a declaration the sibling kinds accept would raise
-    # "unknown option" here.
-    #
-    # `:input` is the exclusion: it is a Step's input builder and a child
-    # pipeline has no Step. Everything else a stage may declare, a
-    # `child_pipeline` may too.
-    known = [:args | @common_options -- [:input]] ++ [:on_error]
-
-    unless is_atom(name) do
-      raise ArgumentError,
-            "#{inspect(module)}: a child_pipeline's name must be a literal atom, " <>
-              "got: #{Macro.to_string(name)}"
-    end
-
-    # An ALIAS, for the same reason `stage/3` demands one: `is_atom/1` cannot
-    # tell a module from a hook name once an alias is expanded.
-    unless match?({:__aliases__, _, _}, child_module) do
-      raise ArgumentError,
-            "#{inspect(module)}: `#{label}`'s second argument must be a module alias — " <>
-              "`child_pipeline :name, OtherPipeline, :run, args: …`, got: " <>
-              "#{Macro.to_string(child_module)}"
-    end
-
-    unless is_atom(fun) and not is_nil(fun) do
-      raise ArgumentError,
-            "#{inspect(module)}: `#{label}`'s third argument must be a literal function name " <>
-              "atom, got: #{Macro.to_string(fun)}"
-    end
-
-    unless keyword_ast?(opts) and Keyword.has_key?(opts, :args) do
-      raise ArgumentError,
-            "#{inspect(module)}: `#{label}` requires `args:` — an arity-2 hook " <>
-              "`(ctx, subject)` returning the child's argument LIST, whose last element is " <>
-              "the keyword list `parent_run_id:` is merged into."
-    end
-
-    case Keyword.keys(opts) -- known do
-      [] -> :ok
-      unknown -> raise ArgumentError, unknown_message(module, label, unknown, known)
-    end
-
-    {args_ast, args_atoms} = hook(Keyword.fetch!(opts, :args), :args)
-    {scalars, scalar_atoms} = stage_scalars(module, :child_pipeline, label, opts)
-
-    child_ast =
-      quote do
-        %{module: unquote(child_module), fun: unquote(fun), args: unquote(args_ast)}
-      end
-
-    %{
-      name: name,
-      kind: :child_pipeline,
-      step: nil,
-      hooks: Enum.map(@stage_hook_keys, &{&1, nil}) ++ [child: child_ast],
-      scalars: scalars,
-      atom_hooks: args_atoms ++ scalar_atoms
-    }
-  end
-
   @spec accumulate(stage_spec()) :: Macro.t()
   defp accumulate(spec) do
     quote do
@@ -597,8 +504,8 @@ defmodule ALLM.Pipeline.Dsl do
             "#{inspect(module)}: `#{label}` declares `on_error:`, which governs a WHOLE-STAGE " <>
               "failure and therefore does not apply to a `fan_out` — a fan-out's items fail " <>
               "individually into its `[ALLM.Pipeline.Dsl.Item.t()]` output and the stage " <>
-              "itself always succeeds. For per-item failures use `catch_item_failures: true`; " <>
-              "to act on them, read the item results in the next stage or in `summarize`."
+              "itself always succeeds. To act on per-item failures, read the item results in " <>
+              "the next stage or in `summarize`."
     end
 
     :ok
@@ -622,7 +529,7 @@ defmodule ALLM.Pipeline.Dsl do
               "per-item value downstream, filter the fan-out's `[ALLM.Pipeline.Dsl.Item.t()]` " <>
               "output with `ALLM.Pipeline.Dsl.Item.ok_items/1` in the next stage and read the " <>
               "field off each item. `carry:` remains available on a `stage` (captured from its " <>
-              "own output) and on a `child_pipeline`."
+              "own output)."
     end
 
     :ok
@@ -670,15 +577,7 @@ defmodule ALLM.Pipeline.Dsl do
       carry: validate_carry!(module, label, Keyword.get(opts, :carry, [])),
       parent: validate_parent!(module, kind, label, Keyword.get(opts, :parent, :source_stage)),
       concurrency: concurrency,
-      catch_item_failures:
-        validate_boolean!(
-          module,
-          label,
-          :catch_item_failures,
-          Keyword.get(opts, :catch_item_failures, false)
-        ),
-      on_error: validate_on_error!(module, label, Keyword.get(opts, :on_error, :fail_run)),
-      retry: validate_retry!(module, label, Keyword.get(opts, :retry))
+      on_error: validate_on_error!(module, label, Keyword.get(opts, :on_error, :fail_run))
     ]
 
     {scalars, skip_atoms}
@@ -750,65 +649,6 @@ defmodule ALLM.Pipeline.Dsl do
     raise ArgumentError,
           "#{inspect(module)}: `#{label}`'s `#{key}:` must be `true` or `false`, " <>
             "got: #{Macro.to_string(value)}"
-  end
-
-  # Phase 4 D11: `retry:` RE-INVOKES the target and produces one step log per
-  # attempt. `max:` counts ATTEMPTS, not retries, so `max: 1` is a declaration
-  # that never retries and is rejected — it reads as "one retry" and is the
-  # off-by-one this option's name invites.
-  @spec validate_retry!(module(), String.t(), Macro.t() | nil) :: Macro.t() | nil
-  defp validate_retry!(_module, _label, nil), do: nil
-
-  defp validate_retry!(module, label, spec) do
-    known = [:max, :backoff, :base_ms, :on]
-
-    unless keyword_ast?(spec) and Keyword.has_key?(spec, :max) do
-      raise ArgumentError,
-            "#{inspect(module)}: `#{label}`'s `retry:` must be a keyword list carrying `max:`, " <>
-              "e.g. `retry: [max: 3, backoff: :exponential, on: [:rate_limited]]`, " <>
-              "got: #{Macro.to_string(spec)}"
-    end
-
-    case Keyword.keys(spec) -- known do
-      [] -> :ok
-      unknown -> raise ArgumentError, unknown_message(module, "#{label}'s retry:", unknown, known)
-    end
-
-    max = Keyword.fetch!(spec, :max)
-
-    unless is_integer(max) and max > 1 do
-      raise ArgumentError,
-            "#{inspect(module)}: `#{label}`'s `retry: [max: …]` counts total ATTEMPTS and must " <>
-              "be an integer greater than 1, got: #{Macro.to_string(max)}"
-    end
-
-    backoff = Keyword.get(spec, :backoff, :none)
-
-    unless backoff in [:none, :linear, :exponential] do
-      raise ArgumentError,
-            "#{inspect(module)}: `#{label}`'s `retry: [backoff: …]` must be `:none`, " <>
-              "`:linear` or `:exponential`, got: #{Macro.to_string(backoff)}"
-    end
-
-    base_ms = Keyword.get(spec, :base_ms, 1_000)
-
-    unless is_integer(base_ms) and base_ms >= 0 do
-      raise ArgumentError,
-            "#{inspect(module)}: `#{label}`'s `retry: [base_ms: …]` must be a non-negative " <>
-              "integer, got: #{Macro.to_string(base_ms)}"
-    end
-
-    on = Keyword.get(spec, :on, :any)
-
-    unless on == :any or (is_list(on) and on != [] and Enum.all?(on, &is_atom/1)) do
-      raise ArgumentError,
-            "#{inspect(module)}: `#{label}`'s `retry: [on: …]` must be `:any` or a non-empty " <>
-              "literal list of reason atoms, got: #{Macro.to_string(on)}"
-    end
-
-    quote do
-      %{max: unquote(max), backoff: unquote(backoff), base_ms: unquote(base_ms), on: unquote(on)}
-    end
   end
 
   # `summary_type:` names a ZERO-ARITY type the using module defines, and its

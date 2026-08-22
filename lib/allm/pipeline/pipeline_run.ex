@@ -456,13 +456,14 @@ defmodule ALLM.Pipeline.PipelineRun do
   # bounds both collection depth and binary length. See its moduledoc for why
   # bounding beats erasing here (the reason IS the diagnostic), and note it is
   # NOT `Executor.render_shape/1`, which keeps type and key names only.
-  # NOTE the deliberate divergence from `StepLog`'s same-named private sibling
-  # (`step_log.ex`), which still uses bare `inspect/1`. That one is NOT bounded
-  # on purpose: its `inspect/1` is what omits a changeset's `params` via
-  # `Ecto.Changeset`'s own `Inspect` impl (see `StepLog`'s moduledoc), and
-  # `render/1`'s `limit: 5` would truncate a changeset's `errors` list in the
-  # column operators read to diagnose a failed step. Tracked as an open
-  # `.work/HANDOFF.md` row rather than changed by the 4.4 fix pass.
+  # `StepLog`'s same-named private sibling (`step_log.ex`) now matches this
+  # (Phase 5.10): a bounded `Encodable.render/1` fallback, plus a dedicated
+  # `%Ecto.Changeset{}` clause that renders params-free `changeset_errors`
+  # UN-truncated — the changeset clause is what removed the old tension where a
+  # small `limit:` would truncate the `errors` list operators read to diagnose a
+  # failed step. This site takes no separate changeset clause because a run's
+  # terminal reason reaches here as an exit/raise term, not a bare changeset (a
+  # changeset in run metadata goes through `Encodable.encode/1` at the write).
   defp normalize_error(error), do: %{"message" => Encodable.render(error)}
 
   # The host's Ecto repo, resolved at RUNTIME. `allm_pipeline` deliberately
