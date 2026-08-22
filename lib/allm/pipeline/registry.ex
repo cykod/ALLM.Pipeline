@@ -245,6 +245,19 @@ defmodule ALLM.Pipeline.Registry do
       @doc false
       @spec __registry__(atom()) :: term()
       def __registry__(key), do: Map.fetch!(@allm_pipeline_registry, key)
+
+      @doc """
+      The validated per-pipeline metadata list (the `pipelines:` declaration).
+
+      A precisely-typed accessor — unlike `__registry__(:pipelines)`, whose
+      generic `:: term()` spec would widen every caller's inferred return and
+      trip `invalid_contract` on `AmesburyScraper.Runner`'s registry-derived
+      `pipeline_names/0` / `browser_pipelines/0`. Host code that reads the
+      metadata for its type (`Runner`) calls this; a test that only needs the
+      value can still read `__registry__(:pipelines)`.
+      """
+      @spec pipelines() :: [ALLM.Pipeline.Registry.pipeline_entry()]
+      def pipelines, do: ALLM.Pipeline.Registry.pipelines(@allm_pipeline_registry)
     end
   end
 
@@ -286,6 +299,14 @@ defmodule ALLM.Pipeline.Registry do
   # `@module_keys`, `@optional_module_keys` and `@seam_keys`.
   @spec __seam_keys__() :: keyword(module())
   def __seam_keys__, do: @seam_keys
+
+  @doc false
+  # The typing anchor behind the generated `pipelines/0` accessor: pattern-matches
+  # a validated `declaration()` so the return is provably `[pipeline_entry()]`
+  # rather than the `term()` a generic `__registry__/1` read would surface. See
+  # `__using__`'s `pipelines/0` for why the precise type matters to `Runner`.
+  @spec pipelines(declaration()) :: [pipeline_entry()]
+  def pipelines(%{pipelines: pipelines}), do: pipelines
 
   @doc false
   @spec __install__(declaration()) :: :ok
