@@ -29,6 +29,12 @@ defmodule ALLM.Pipeline.Registry do
   | `alert_on_empty:` | `:alert_on_empty` | `ALLM.Pipeline.Config.alert_on_empty/0` |
   | `lock_keys:` | `:lock_keys` | `ALLM.Pipeline.Config.lock_keys/0` |
 
+  The `pipelines:` declaration is the one collection this table does NOT cover:
+  it is **not** installed into the application environment — it is read directly
+  through `__registry__(:pipelines)` by host code (`AmesburyScraper.Runner`) and
+  by the `mix allm_pipeline.names` codegen task. See "The `pipelines:`
+  declaration" below.
+
   So **no `repo/0` (or `store/0`, `artifacts/0`, `lock/0`) accessor is
   generated on the registry module**, deliberately. Batch 1.B decided that
   `ALLM.Pipeline.Config.repo/0` is the package's single, permanent host-repo
@@ -43,6 +49,25 @@ defmodule ALLM.Pipeline.Registry do
   never the resolved value, and nothing in the framework calls it. It is what
   lets a host-side test assert "what the framework resolves equals what the
   registry declared" without hand-mirroring either side.
+
+  ## The `pipelines:` declaration
+
+  `pipelines:` is the host's per-pipeline metadata table — one entry per
+  cron-dispatchable pipeline, each a map of `name` / `entry` / `browser` /
+  `run_names` / `schedules`. It is the single source of truth the extraction
+  plan's §3.8a/§3.8b codegen is built on: `AmesburyScraper.Runner` derives its
+  dispatch table and name lists from it, and `mix allm_pipeline.names` emits it
+  as JSON for the shell/SST/stage-scraper consumers.
+
+  Unlike the wiring keys above, `pipelines:` is **not** installed into the
+  application environment — `install/0` ignores it — because it is host domain
+  data read on demand, not framework wiring resolved at runtime. It is read
+  through `__registry__(:pipelines)` (an empty list when undeclared).
+
+  The `entry:` MFAs name **host** modules (`{CommitteePipeline, :run}`), so they
+  are stored as opaque data: package code never references them, only the host's
+  `Runner` does. That keeps the leaf boundary intact — the package task reads
+  `name`/`browser` only, never `entry`.
 
   ## Which module at compile time, which value at runtime
 
@@ -113,7 +138,7 @@ defmodule ALLM.Pipeline.Registry do
   # no package adapter to fall back to and a silent no-op default would let a
   # step report success having called no model.
   @optional_module_keys [:llm]
-  @all_keys @module_keys ++ @optional_module_keys ++ [:alert_on_empty, :lock_keys]
+  @all_keys @module_keys ++ @optional_module_keys ++ [:alert_on_empty, :lock_keys, :pipelines]
 
   # Every key whose value is installed under a behaviour module's `impl:`.
   @seam_keys [
@@ -144,10 +169,30 @@ defmodule ALLM.Pipeline.Registry do
           "`@seam_keys` validates at compile time and then installs nothing."
   end
 
+  @typedoc "One SST cron schedule entry attached to a pipeline."
+  @type schedule_entry :: %{
+          id: String.t(),
+          cron: String.t(),
+          description: String.t()
+        }
+
+  @typedoc """
+  One per-pipeline metadata entry. `browser` and `schedules` are normalized to
+  their defaults (`false` / `[]`) when a declaration omits them.
+  """
+  @type pipeline_entry :: %{
+          name: atom(),
+          entry: {module(), atom()},
+          browser: boolean(),
+          run_names: [String.t()],
+          schedules: [schedule_entry()]
+        }
+
   @typedoc """
   A validated registry declaration: the four mandatory wiring modules, the
-  optional `llm:` one (`nil` when undeclared), and the two domain collections,
-  normalized (`lock_keys` as a map).
+  optional `llm:` one (`nil` when undeclared), the two domain collections
+  (`lock_keys` normalized as a map), and the per-pipeline metadata list
+  (`[]` when undeclared).
   """
   @type declaration :: %{
           repo: module(),
@@ -156,7 +201,8 @@ defmodule ALLM.Pipeline.Registry do
           lock: module(),
           llm: module() | nil,
           alert_on_empty: [String.t()],
-          lock_keys: %{atom() => atom()}
+          lock_keys: %{atom() => atom()},
+          pipelines: [pipeline_entry()]
         }
 
   @doc """
@@ -171,10 +217,22 @@ defmodule ALLM.Pipeline.Registry do
   two namespaces do not line up (one pipeline module emits several run names by
   mode — extraction plan §3.8a), while `:lock_keys` keys on the cron atom
   `ALLM.Pipeline.Lock.with_lock/2` is called with.
+
+  `:pipelines` (optional, default `[]`) is the per-pipeline metadata list — see
+  "The `pipelines:` declaration" in the moduledoc. Each entry is a map declaring
+  at least `name:` (a unique cron atom), `entry:` (a `{module, function}` tuple)
+  and `run_names:` (a list of `PipelineRun.name` strings); `browser:` (default
+  `false`) and `schedules:` (default `[]`) are optional. It is read through
+  `__registry__(:pipelines)` and is not installed into the application
+  environment.
   """
   defmacro __using__(opts) do
     quote bind_quoted: [opts: opts] do
       @allm_pipeline_registry ALLM.Pipeline.Registry.__validate__!(__MODULE__, opts)
+
+      @doc false
+      @spec __allm_pipeline_registry__?() :: true
+      def __allm_pipeline_registry__?, do: true
 
       @doc """
       Install this registry's declarations into the application environment.
@@ -217,7 +275,8 @@ defmodule ALLM.Pipeline.Registry do
     |> Map.merge(optional)
     |> Map.merge(%{
       alert_on_empty: validate_alert_on_empty!(opts, module),
-      lock_keys: validate_lock_keys!(opts, module)
+      lock_keys: validate_lock_keys!(opts, module),
+      pipelines: validate_pipelines!(opts, module)
     })
   end
 
@@ -321,6 +380,135 @@ defmodule ALLM.Pipeline.Registry do
       raise ArgumentError,
             "#{inspect(module)}: `lock_keys:` must be a keyword list of " <>
               "pipeline atom => canonical atom, got: #{inspect(pairs)}"
+    end
+  end
+
+  # Each entry is validated to the full shape its `@type pipeline_entry`
+  # declares — `name` an atom, `entry` a `{module, function}` MFA, `run_names` a
+  # list of strings, `browser` a boolean, and each `schedules` element a map of
+  # string `id`/`cron`/`description` — then normalized so `browser`/`schedules`
+  # are always present. Downstream readers (`Runner`, the `names` task, 6.4's SST
+  # codegen) can then read those fields without a per-field default or shape
+  # check. `name` and schedule `id` uniqueness are whole-list invariants and
+  # checked across the normalized set.
+  @spec validate_pipelines!(keyword(), module()) :: [pipeline_entry()]
+  defp validate_pipelines!(opts, module) do
+    pipelines = Keyword.get(opts, :pipelines, [])
+
+    unless is_list(pipelines) do
+      raise ArgumentError,
+            "#{inspect(module)}: `pipelines:` must be a list of maps, got: #{inspect(pipelines)}"
+    end
+
+    normalized = Enum.map(pipelines, &normalize_pipeline_entry!(&1, module))
+    assert_unique_pipeline_names!(normalized, module)
+    assert_unique_schedule_ids!(normalized, module)
+    normalized
+  end
+
+  @spec normalize_pipeline_entry!(term(), module()) :: pipeline_entry()
+  defp normalize_pipeline_entry!(entry, module) when is_map(entry) do
+    for key <- [:name, :entry, :run_names] do
+      unless Map.has_key?(entry, key) do
+        raise ArgumentError,
+              "#{inspect(module)}: each `pipelines:` entry must declare `#{key}:`, " <>
+                "missing in #{inspect(entry)}"
+      end
+    end
+
+    unless is_atom(entry.name) and not is_nil(entry.name) do
+      raise ArgumentError,
+            "#{inspect(module)}: `name:` in a `pipelines:` entry must be an atom, " <>
+              "got: #{inspect(entry.name)}"
+    end
+
+    case entry.entry do
+      {mod, fun} when is_atom(mod) and is_atom(fun) ->
+        :ok
+
+      other ->
+        raise ArgumentError,
+              "#{inspect(module)}: `entry:` for `#{inspect(entry.name)}` must be a " <>
+                "{module, function} tuple, got: #{inspect(other)}"
+    end
+
+    unless is_list(entry.run_names) and Enum.all?(entry.run_names, &is_binary/1) do
+      raise ArgumentError,
+            "#{inspect(module)}: `run_names:` for `#{inspect(entry.name)}` must be a list of " <>
+              "strings, got: #{inspect(entry.run_names)}"
+    end
+
+    normalized = Map.merge(%{browser: false, schedules: []}, entry)
+
+    unless is_boolean(normalized.browser) do
+      raise ArgumentError,
+            "#{inspect(module)}: `browser:` for `#{inspect(entry.name)}` must be a boolean, " <>
+              "got: #{inspect(normalized.browser)}"
+    end
+
+    unless is_list(normalized.schedules) do
+      raise ArgumentError,
+            "#{inspect(module)}: `schedules:` for `#{inspect(entry.name)}` must be a list of " <>
+              "maps, got: #{inspect(normalized.schedules)}"
+    end
+
+    schedules = Enum.map(normalized.schedules, &normalize_schedule!(&1, entry.name, module))
+    Map.put(normalized, :schedules, schedules)
+  end
+
+  defp normalize_pipeline_entry!(entry, module) do
+    raise ArgumentError,
+          "#{inspect(module)}: each `pipelines:` entry must be a map, got: #{inspect(entry)}"
+  end
+
+  # A schedule feeds 6.4's SST codegen and has no consumer until then, so its
+  # shape has no other guard — a missing `cron`/`description` would otherwise
+  # drift silently into a committed `sst/scraper.ts`. Validated here to the same
+  # bar as `validate_lock_keys!`/`validate_alert_on_empty!`.
+  @spec normalize_schedule!(term(), atom(), module()) :: schedule_entry()
+  defp normalize_schedule!(schedule, name, module) when is_map(schedule) do
+    for key <- [:id, :cron, :description] do
+      value = Map.get(schedule, key)
+
+      unless is_binary(value) do
+        raise ArgumentError,
+              "#{inspect(module)}: each `schedules:` entry for `#{inspect(name)}` must declare a " <>
+                "string `#{key}:`, got: #{inspect(value)} in #{inspect(schedule)}"
+      end
+    end
+
+    schedule
+  end
+
+  defp normalize_schedule!(schedule, name, module) do
+    raise ArgumentError,
+          "#{inspect(module)}: each `schedules:` entry for `#{inspect(name)}` must be a map, " <>
+            "got: #{inspect(schedule)}"
+  end
+
+  @spec assert_unique_pipeline_names!([pipeline_entry()], module()) :: :ok
+  defp assert_unique_pipeline_names!(pipelines, module) do
+    names = Enum.map(pipelines, & &1.name)
+
+    case names -- Enum.uniq(names) do
+      [] ->
+        :ok
+
+      dupes ->
+        raise ArgumentError, "#{inspect(module)}: duplicate pipeline name(s) #{inspect(dupes)}"
+    end
+  end
+
+  @spec assert_unique_schedule_ids!([pipeline_entry()], module()) :: :ok
+  defp assert_unique_schedule_ids!(pipelines, module) do
+    ids = Enum.flat_map(pipelines, fn entry -> Enum.map(entry.schedules, & &1.id) end)
+
+    case ids -- Enum.uniq(ids) do
+      [] ->
+        :ok
+
+      dupes ->
+        raise ArgumentError, "#{inspect(module)}: duplicate schedule id(s) #{inspect(dupes)}"
     end
   end
 end
