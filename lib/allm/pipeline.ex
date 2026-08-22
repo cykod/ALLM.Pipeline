@@ -358,12 +358,16 @@ defmodule ALLM.Pipeline do
   here because the difference is what a porter has to decide, and it is not
   visible from either pipeline's flag name:
 
-  | Host implementation | Meaning | Ports as |
+  Most of these hosts are now ported (Phase 5), so the "Host implementation"
+  column is the *pre-port* shape and the "Ports as" column is what each shipped;
+  only `ProjectRefreshPipeline` remains hand-written.
+
+  | Pre-port host implementation | Meaning | Ported as |
   |---|---|---|
-  | `PoiThumbnailPipeline` (`run_dry/2`) | **Skip everything.** Resolve the working set, log a section per item, complete. No step runs. | `dry_run:` |
-  | `ProjectRefreshPipeline` | **Skip everything.** Compute the cohorts, log the summary, invoke no sub-pipeline. | `dry_run:` |
-  | `VideoPipeline` | **Skip only the WRITE.** The LLM match step still runs and still spends tokens; only `apply_assignments/1` is skipped. | a `skip_when: {:opt, :dry_run, false}` on the write stage |
-  | `RvcsPipeline` | **Skip only the WRITE.** Agenda and minutes are still fetched and transformed; only the loader is skipped. It also increments `meetings_processed` on the dry path, which the framework version does not. | a `skip_when: {:opt, :dry_run, false}` on the write stage |
+  | `PoiThumbnailPipeline` (was `run_dry/2`) | **Skip everything.** Resolve the working set, log a section per item, complete. No step runs. | `dry_run:` hook (Phase 5.8) |
+  | `ProjectRefreshPipeline` | **Skip everything.** Compute the cohorts, log the summary, invoke no sub-pipeline. | not ported — stays hand-written |
+  | `VideoPipeline` | **Skip only the WRITE.** The LLM match step still runs and still spends tokens; only `apply_assignments/1` is skipped. | a `skip_when: {:opt, :dry_run, false}` body branch (Phase 5.7) |
+  | `RvcsPipeline` | **Skip only the WRITE.** Agenda and minutes are still fetched and transformed; only the loader is skipped. It also increments `meetings_processed` on the dry path, which the framework version does not. | a `skip_when: {:opt, :dry_run, false}` body branch (Phase 5.7) |
 
   A pipeline wanting the second meaning does **not** declare `dry_run:`; it
   keeps a `skip_when:` on its write stage, which is already expressible and
