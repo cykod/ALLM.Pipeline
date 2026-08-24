@@ -4,37 +4,19 @@ defmodule ALLM.Pipeline.Text do
   Postgres will accept it, whitespace normalization, and head+tail truncation
   for oversized artifact bodies.
 
-  ## ⚠️ `scrub/1` and `scrub_strings/1` are a deliberate DUPLICATE of `Amesbury.TextSanitizer`
+  ## `scrub/1` / `scrub_strings/1` are the single implementation
 
-  The other copy is `apps/amesbury/lib/amesbury/text_sanitizer.ex`. Neither is
-  generated from the other, so per root `CLAUDE.md`'s hand-mirrored-list rule the
-  pair carries a **machine drift guard**:
-  `apps/amesbury_scraper/test/amesbury_scraper/text_parity_test.exs` calls both
-  implementations on one shared fixture table plus a deterministic random byte
-  corpus and asserts they agree. That test lives in the host tree because it is
-  the only one that can see both modules, and **batch 1.D left it there** when it
-  moved the rest of the framework tests into `apps/allm_pipeline/test/` (2026-08-14
-  — this used to read "1.D must not move it"). Each moduledoc naming the other is
-  the human index; the parity test is the enforcement.
+  These were duplicated in the host as `Amesbury.TextSanitizer` for Phases 1–6
+  (the core `amesbury` app could not yet name `ALLM.Pipeline.*`), guarded against
+  drift by a host-side parity test. **Phase 7.2 (2026-08-24) converged them**:
+  the core app took the `{:allm_pipeline, in_umbrella: true}` dependency (7.1),
+  `Amesbury.TextSanitizer` and the parity test were deleted, and every scrub call
+  site — `Amesbury.Government` (×3) plus `AmesburyScraper`'s `LLMEngine` and
+  `DocumentExtractionClient` — re-points here. This module is now the only copy,
+  and no code path calls back into `Amesbury.*`.
 
-  It is a copy rather than a move because `Amesbury.Government` calls
-  `TextSanitizer.scrub/1` and `scrub_strings/1` at three sites
-  (`grep -anE "TextSanitizer\\.(scrub|scrub_strings)\\(" apps/amesbury/lib/amesbury/government.ex`
-  → `:1864`, `:1908`, `:2424`, measured 2026-08-13). Moving the module
-  would force `{:allm_pipeline, in_umbrella: true}` into `apps/amesbury` — the
-  *core* app — which the extraction plan's Decision #2 defers to Phase 7. A
-  package headed for hex must own this code regardless; there is no end state in
-  which `ALLM.Pipeline.Text` calls back into `Amesbury.*`.
-
-  The duplication is inert for the length of Phases 1–6: each copy has its own
-  test, the parity test above pins that they agree, and neither calls the other.
-  **Phase 7 retires it** — when the core app takes the dependency,
-  `Amesbury.TextSanitizer` either `defdelegate`s here or is deleted with its
-  three call sites re-pointed (and the parity test goes with it: a module
-  delegating to another cannot drift). Until then, a fix to one is a fix owed to
-  the other.
-
-  See `steering/2026-08-10_ALLM_PIPELINE_PHASE_1.md` §5.2.
+  See `steering/2026-08-10_ALLM_PIPELINE_EXTRACTION.md` §3.9 (the copy→converge
+  sequence) and `steering/2026-08-24_ALLM_PIPELINE_PHASE_7.md` §7.2.
   """
 
   @typedoc """
