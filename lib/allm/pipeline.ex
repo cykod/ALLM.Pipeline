@@ -64,13 +64,17 @@ defmodule ALLM.Pipeline do
   keep the decision **inside the body** and return `{{:skipped, payload},
   updated_acc}`. `meeting_agenda` does exactly that; the reasoning is
   `steering/2026-08-20_ALLM_PIPELINE_PHASE_4_RECORDS.md` → 4.2 Deviations D-8 and
-  D-9.
+  D-9. Since Phase 7.4 the body ALSO calls `Executor.log_skipped/4` before that
+  return, so the skip is a visible `:skipped` step log with its reason — the
+  count still rides the accumulator (the log adds observability, not the count).
 
   (Phase 4 had a declarative `gate:` fan_out option that looked like the way to
   express "skip this item". It wrote **no step log** and could not touch the
   accumulator, so declaring it zeroed any skip count silently and in every place
   at once. It was removed in Phase 4.5.3 for exactly that reason —
-  `steering/ALLM_PIPELINE_DSL.md` §4.2 carries the lesson.)
+  `steering/ALLM_PIPELINE_DSL.md` §4.2 carries the lesson. Phase 7.4 did NOT
+  resurrect it: the skip log is written by an ordinary body call that keeps the
+  `{{:skipped, payload}, acc}` return, not by a declarative option.)
 
   ## The scope is the SKELETON, not the body
 
@@ -195,9 +199,16 @@ defmodule ALLM.Pipeline do
   Three rules follow:
 
   * A **skip is lineage-transparent**: the next stage's `input_step_id` is the
-    last *successfully executed* step's log id. A skip writes no step log in
-    Phase 4 (D8) — `StepLog.log_skipped/2` exists with no framework caller, and
-    promoting it is a behaviour change a structural-identity gate cannot absorb.
+    last *successfully executed* step's log id — a skip row never becomes the
+    lineage PARENT of what follows. Since Phase 7.4 a `*ProcessingDecision`
+    skip DOES write a step log (a visible `:skipped` row via
+    `Executor.log_skipped/4` → `StepLog.create_skipped/4`), parented like the
+    processed step would have been, so it appears in `build_lineage_tree/1` at
+    the position the work would occupy — but as a sibling leaf, not an ancestor
+    (exactly like a `section`). Through Phase 6 the skip wrote nothing at all
+    (D8); promoting it was a behaviour change a structural-identity gate could
+    not absorb, which is why it waited for Phase 7 (the first phase whose gate
+    is not structural identity).
     A skip is also **subject-transparent**: `prev` stays whatever the stage
     BEFORE the skip produced, so the next stage silently receives it. Three
     paths do this — `skip_when:` fired, a body returning `{:skipped, _}`, and

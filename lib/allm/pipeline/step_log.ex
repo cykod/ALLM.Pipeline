@@ -298,7 +298,12 @@ defmodule ALLM.Pipeline.StepLog do
   end
 
   @doc """
-  Log step as skipped.
+  Log an already-started step as skipped (UPDATE path).
+
+  Takes a `%StepLog{}` whose `started_at` is set and closes it `:skipped`,
+  computing `duration_ms` from that timestamp. This is NOT the path a
+  `*ProcessingDecision` skip takes — that decision happens *before* any step log
+  exists (no struct, no `started_at`), so it uses `create_skipped/4` instead.
   """
   @spec log_skipped(t(), String.t()) :: {:ok, t()} | {:error, Ecto.Changeset.t()}
   def log_skipped(step_log, reason) do
@@ -313,6 +318,45 @@ defmodule ALLM.Pipeline.StepLog do
       error: %{reason: reason}
     })
     |> repo().update()
+  end
+
+  @doc """
+  Create a zero-duration `:skipped` step from scratch — the visible record of a
+  gate decision that declined to process an item.
+
+  Unlike `log_skipped/2` (which UPDATES a row a step already started), this is a
+  CREATE path: a `*ProcessingDecision` skip fires before any step log exists, so
+  there is no `%StepLog{}` and no `started_at` to diff against — `started_at` and
+  `completed_at` are both `now`, giving `duration_ms: 0`. Promoted to a `Store`
+  callback and wired to the three `ProcessingDecision` skip branches in Phase 7.4
+  so a skip is a queryable `:skipped` row (counted by `get_pipeline_stats/1`)
+  rather than the invisible `{:skipped, …}` return it was through Phase 6.
+
+  `reason` is an arbitrary term (the pipelines pass a `{scraper_identifier,
+  reason}` payload). It is made jsonb-safe by `Encodable.encode/1` — which
+  flattens the tuple to a list and scrubs binaries — and stored under
+  `output_data["reason"]` (the audit-artifact column, as `log_summary/4` uses,
+  NOT `error`: a skip is a benign decision, not a failure). `input_step_id`
+  should be the same lineage parent the processed step would have carried, so the
+  skip appears in `build_lineage_tree/1` at the position the work would occupy.
+  """
+  @spec create_skipped(Ecto.UUID.t(), String.t(), term(), Ecto.UUID.t() | nil) ::
+          {:ok, t()} | {:error, Ecto.Changeset.t()}
+  def create_skipped(pipeline_run_id, step_type, reason, input_step_id \\ nil) do
+    now = DateTime.utc_now()
+
+    %__MODULE__{}
+    |> changeset(%{
+      pipeline_run_id: pipeline_run_id,
+      step_type: step_type,
+      status: :skipped,
+      started_at: now,
+      completed_at: now,
+      duration_ms: 0,
+      input_step_id: input_step_id,
+      output_data: %{"reason" => Encodable.encode(reason)}
+    })
+    |> repo().insert()
   end
 
   @doc """

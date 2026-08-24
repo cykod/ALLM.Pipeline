@@ -42,12 +42,16 @@ defmodule ALLM.Pipeline.Store do
   `PipelineRun.borrow/1`, `owner?/1` and `assume_ownership/1` are pure struct
   operations with no backend involvement, so they stay on the schema module
   rather than becoming adapter surface — which also keeps the mint and the
-  strip in one place each. `StepLog.log_skipped/2`, `PipelineRun.list/1`,
+  strip in one place each. `StepLog.log_skipped/2` (the UPDATE-an-existing-row
+  skip path), `PipelineRun.list/1`,
   `count/1`, `get_with_steps/1` and the lineage/query functions are absent for
   a different reason: nothing in the framework calls them today (their callers
   are the host's review UI), and the extraction plan §3.2 routes host reads
   through a separate `ALLM.Pipeline.Query`. Add a callback when a framework
-  caller appears, not before.
+  caller appears, not before — which is exactly what happened for the CREATE
+  skip path: Phase 7.4 wired the three `ProcessingDecision` skip branches to
+  write a visible `:skipped` row, so `StepLog.create_skipped/4` earned the
+  `log_skipped/4` callback below.
 
   ## Configuration
 
@@ -146,6 +150,22 @@ defmodule ALLM.Pipeline.Store do
   @callback log_section(
               run_id :: Ecto.UUID.t(),
               title :: String.t(),
+              input_step_id :: Ecto.UUID.t() | nil
+            ) :: {:ok, step()} | {:error, Ecto.Changeset.t()}
+
+  @doc """
+  Record a zero-duration `:skipped` step — the visible record of a gate decision
+  that declined to process an item.
+
+  A create-from-scratch path (`StepLog.create_skipped/4`), distinct from the
+  update-an-existing-row `StepLog.log_skipped/2`: a `*ProcessingDecision` skip
+  fires before any step log exists. `reason` is made jsonb-safe and stored;
+  `input_step_id` is the lineage parent the processed step would have carried.
+  """
+  @callback log_skipped(
+              run_id :: Ecto.UUID.t(),
+              step_type :: String.t(),
+              reason :: term(),
               input_step_id :: Ecto.UUID.t() | nil
             ) :: {:ok, step()} | {:error, Ecto.Changeset.t()}
 

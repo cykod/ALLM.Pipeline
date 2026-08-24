@@ -183,6 +183,22 @@ defmodule ALLM.Pipeline.Executor do
   end
 
   @doc """
+  Write a visible `:skipped` step log for a gate decision that declined to
+  process an item — the record a `fan_out` body writes before it returns
+  `{{:skipped, payload}, acc}`.
+
+  `input_step_id` is the fan-out's parent (`Context.input_step_id(ctx)`), so the
+  skip lands in the lineage tree at the position the processed step would have
+  occupied. `reason` is stored jsonb-safe (see `StepLog.create_skipped/4`). The
+  metric increment stays in the body — this call adds the LOG, not the count.
+  """
+  @spec log_skipped(PipelineRun.t(), String.t(), term(), Ecto.UUID.t() | nil) ::
+          {:ok, StepLog.t()} | {:error, Ecto.Changeset.t()}
+  def log_skipped(pipeline_run, step_type, reason, input_step_id \\ nil) do
+    store().log_skipped(pipeline_run.id, step_type, reason, input_step_id)
+  end
+
+  @doc """
   Mark pipeline run as completed with statistics.
 
   Requires an owning handle — see `PipelineRun.complete/2`. The guard lives on

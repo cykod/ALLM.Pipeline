@@ -46,6 +46,8 @@ defmodule ALLM.Pipeline.SentinelStore do
   @impl true
   def log_summary(_id, _type, _data, _parent), do: raise("SentinelStore: log_summary")
   @impl true
+  def log_skipped(_id, _type, _reason, _parent), do: raise("SentinelStore: log_skipped")
+  @impl true
   def get_step(_id), do: raise("SentinelStore: get_step not stubbed")
 end
 

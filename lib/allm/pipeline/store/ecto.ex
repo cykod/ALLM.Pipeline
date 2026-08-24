@@ -95,6 +95,13 @@ defmodule ALLM.Pipeline.Store.Ecto do
   defdelegate log_section(run_id, title, input_step_id), to: StepLog
 
   @impl true
+  @spec log_skipped(Ecto.UUID.t(), String.t(), term(), Ecto.UUID.t() | nil) ::
+          {:ok, StepLog.t()} | {:error, Ecto.Changeset.t()}
+  defdelegate log_skipped(run_id, step_type, reason, input_step_id),
+    to: StepLog,
+    as: :create_skipped
+
+  @impl true
   @spec log_summary(Ecto.UUID.t(), String.t(), map(), Ecto.UUID.t() | nil) ::
           {:ok, StepLog.t()} | {:error, Ecto.Changeset.t()}
   defdelegate log_summary(run_id, step_type, output_data, input_step_id), to: StepLog

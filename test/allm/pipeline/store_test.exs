@@ -338,6 +338,69 @@ defmodule ALLM.Pipeline.StoreTest do
     end
   end
 
+  describe "log_skipped/4 — the visible skip row (Phase 7.4)" do
+    test "writes a :skipped row queryable by run id, with the reason round-tripping" do
+      run = new_run()
+
+      {:ok, skip} =
+        Store.Ecto.log_skipped(run.id, "meeting_skipped", {"01072025-3400", :up_to_date}, nil)
+
+      # Guard: a mutant writing `status: :success` fails here.
+      assert skip.status == :skipped
+      assert skip.step_type == "meeting_skipped"
+      assert skip.duration_ms == 0
+
+      # Re-read from the DB (not the in-memory changeset) — the reason payload
+      # round-trips as a jsonb list under output_data["reason"]. Guard: a mutant
+      # dropping the reason (or storing it in a column jsonb can't hold) fails.
+      reread = StepLog.get(skip.id)
+      assert reread.status == :skipped
+      assert reread.output_data == %{"reason" => ["01072025-3400", "up_to_date"]}
+    end
+
+    test "the skip appears in build_lineage_tree/1 at its parent's depth" do
+      run = new_run()
+      parent = new_step(run)
+
+      {:ok, skip} =
+        Store.Ecto.log_skipped(run.id, "meeting_skipped", {"id", :reason}, parent.id)
+
+      {:ok, tree} = StepLog.build_lineage_tree(skip.id)
+      ids_by_depth = Map.new(tree, &{&1.depth, &1.id})
+
+      # depth 0 = the skip itself, depth 1 = its lineage parent. Guard: a mutant
+      # passing `nil` for input_step_id detaches the skip — the tree would then
+      # be just [skip] and the depth-1 assertion fails.
+      assert ids_by_depth[0] == skip.id
+      assert ids_by_depth[1] == parent.id
+    end
+
+    test "a nil parent leaves the skip a root (nothing above it)" do
+      run = new_run()
+
+      {:ok, skip} =
+        Store.Ecto.log_skipped(run.id, "meeting_skipped", {"id", :reason}, nil)
+
+      {:ok, tree} = StepLog.build_lineage_tree(skip.id)
+      assert [%{id: id, depth: 0, input_step_id: nil}] = tree
+      assert id == skip.id
+    end
+
+    test "get_pipeline_stats/1 counts the skip under :skipped, not :failed" do
+      run = new_run()
+
+      {:ok, _} = Store.Ecto.log_skipped(run.id, "meeting_skipped", {"id", :reason}, nil)
+
+      stats = Store.Ecto.pipeline_stats(run.id)
+
+      # Guard: a status other than :skipped lands in the wrong bucket.
+      assert stats.skipped == 1
+      assert stats.failed == 0
+      assert stats.successful == 0
+      assert stats.total_steps == 1
+    end
+  end
+
   describe "what Store deliberately does NOT own" do
     test "borrow/1, owner?/1 and assume_ownership/1 stay on PipelineRun" do
       # Pure struct operations with no backend involvement. Keeping them off the
