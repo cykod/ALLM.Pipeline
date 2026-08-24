@@ -41,7 +41,7 @@ defmodule ALLM.Pipeline.ArtifactStore do
   `Artifacts.impl/0`, which recognizes its own scheme and rejects the rest.
   """
 
-  alias ALLM.Pipeline.Artifacts
+  alias ALLM.Pipeline.{Artifacts, Telemetry}
 
   @type store_result ::
           {:ok, url :: String.t(), size :: non_neg_integer(), checksum :: String.t()}
@@ -79,13 +79,27 @@ defmodule ALLM.Pipeline.ArtifactStore do
       end
 
     meta = %{size_bytes: original_size, checksum: checksum, compressed: compress}
+    adapter = Artifacts.impl()
 
-    case Artifacts.impl().put(step_id, content_to_store, content_type, meta) do
+    result = adapter.put(step_id, content_to_store, content_type, meta)
+
+    # Consumer-less public integration surface (see `ALLM.Pipeline.Telemetry`);
+    # `compressed_bytes` is the payload the adapter actually stored.
+    Telemetry.artifact_store(
+      %{bytes: original_size, compressed_bytes: byte_size(content_to_store)},
+      %{adapter: adapter, outcome: store_outcome(result)}
+    )
+
+    case result do
       {:ok, url} -> {:ok, url, original_size, checksum}
       {:error, :too_large} -> store_in_s3()
       {:error, reason} -> {:error, reason}
     end
   end
+
+  @spec store_outcome({:ok, String.t()} | {:error, term()}) :: :ok | term()
+  defp store_outcome({:ok, _url}), do: :ok
+  defp store_outcome({:error, reason}), do: reason
 
   @doc """
   Retrieve artifact content by URL, decompressed.

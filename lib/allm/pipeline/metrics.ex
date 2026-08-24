@@ -7,7 +7,9 @@ defmodule ALLM.Pipeline.Metrics do
   import Ecto.Query
   require Logger
 
-  alias ALLM.Pipeline.{Config, PipelineMetric, PipelineRun}
+  alias ALLM.Pipeline.{Config, PipelineMetric, PipelineRun, StepLog, Telemetry}
+
+  @queue_time_handler_id "allm-pipeline-queue-time"
 
   @type funnel :: %{
           optional(:found) => non_neg_integer(),
@@ -35,6 +37,61 @@ defmodule ALLM.Pipeline.Metrics do
   """
   @spec expects_data?(String.t() | nil) :: boolean()
   def expects_data?(pipeline_name), do: pipeline_name in Config.alert_on_empty()
+
+  @doc """
+  Attach the built-in `[:allm_pipeline, :step, :stop]` handler that writes
+  `step_logs.queue_time_ms` from the emitted `queue_time` measurement.
+
+  The one named consumer of `[:allm_pipeline, :step, :stop]` (see
+  `ALLM.Pipeline.Telemetry`). Idempotent across hot reload — the caller
+  (`AmesburyScraper.Application.start/2`) detaches first, since
+  `:telemetry.attach/4` answers `{:error, :already_exists}` on a duplicate
+  handler id.
+  """
+  @spec attach_step_handler() :: :ok | {:error, :already_exists}
+  def attach_step_handler do
+    :telemetry.attach(
+      @queue_time_handler_id,
+      Telemetry.step_stop_event(),
+      &__MODULE__.handle_step_stop/4,
+      nil
+    )
+  end
+
+  @doc "Detach the `queue_time_ms` handler (hot-reload support)."
+  @spec detach_step_handler() :: :ok | {:error, :not_found}
+  def detach_step_handler, do: :telemetry.detach(@queue_time_handler_id)
+
+  @doc """
+  `:telemetry` handler for `[:allm_pipeline, :step, :stop]`: writes
+  `queue_time_ms` (the measured backlog wait, converted native→ms) onto the
+  step-log row named by `metadata.step_id`.
+
+  Touches only the `queue_time_ms` column — the step-log structural-identity
+  property from Phases 1-6 holds for every other column. Best-effort: a write
+  failure (e.g. a child task with no shared sandbox connection under test) is
+  logged and swallowed so telemetry never fails a run, and the handler is not
+  detached by `:telemetry` for a transient error.
+
+  Only fires the write when `queue_time` is an integer — a plain
+  (non-`fan_out`) step emits `queue_time: nil` and leaves the column untouched.
+  """
+  @spec handle_step_stop([atom()], map(), map(), term()) :: :ok
+  def handle_step_stop(_event, %{queue_time: queue_time}, %{step_id: step_id}, _config)
+      when is_integer(queue_time) and is_binary(step_id) do
+    ms = System.convert_time_unit(queue_time, :native, :millisecond)
+
+    from(s in StepLog, where: s.id == ^step_id)
+    |> repo().update_all(set: [queue_time_ms: ms])
+
+    :ok
+  rescue
+    e ->
+      Logger.warning("queue_time_ms handler failed for step #{step_id}: #{Exception.message(e)}")
+      :ok
+  end
+
+  def handle_step_stop(_event, _measurements, _metadata, _config), do: :ok
 
   @doc """
   Record one normalized metrics row for `run` and `entity_type`. `funnel` is a map of any

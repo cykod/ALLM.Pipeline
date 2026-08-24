@@ -376,6 +376,14 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
     concurrency = resolve_concurrency(stage.concurrency || default_concurrency, opts)
     source_parent = state.parent
 
+    # Captured ONCE, before any item is scheduled: the dispatch reference every
+    # item's `queue_time` is measured against (`worker_start - queue_since`).
+    # Threaded through `opts` so it reaches `Executor.run_step/5` via
+    # `step_opts/1`, where the step telemetry is emitted. Non-zero for every
+    # item after the first even at `concurrency: 1`. See
+    # `ALLM.Pipeline.Telemetry`'s `queue_time` section.
+    opts = Keyword.put(opts, :queue_since, System.monotonic_time())
+
     Logger.info(
       "[#{stage.name}] fanning out over #{length(items)} item(s) at concurrency #{concurrency}"
     )

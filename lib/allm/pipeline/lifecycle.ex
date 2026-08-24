@@ -56,7 +56,7 @@ defmodule ALLM.Pipeline.Lifecycle do
   two).
   """
 
-  alias ALLM.Pipeline.{Encodable, Executor, PipelineRun}
+  alias ALLM.Pipeline.{Encodable, Executor, PipelineRun, Telemetry}
   alias ALLM.Pipeline.Dsl.Resource
 
   require Logger
@@ -139,6 +139,16 @@ defmodule ALLM.Pipeline.Lifecycle do
     # deliberately — code review 4.1 F8.
     case PipelineRun.complete(owning, merge_teardown(metadata, teardown_errors)) do
       {:ok, run} ->
+        # The canonical settle point, so `[:allm_pipeline, :run, :stop]` fires
+        # here for every DSL / `owned_run/4` run. `duration` is native units
+        # derived from the persisted wall-clock timestamps (there is no
+        # monotonic run-start reference on the ownership handle). See
+        # `ALLM.Pipeline.Telemetry`'s run-family accounting.
+        Telemetry.run_stop(
+          %{duration: run_duration(owning.started_at, run.completed_at)},
+          %{name: run.name, run_id: run.id, trigger: run.trigger, status: run.status}
+        )
+
         {:ok, value, run}
 
       {:error, reason} ->
@@ -153,13 +163,36 @@ defmodule ALLM.Pipeline.Lifecycle do
 
   def settle(_label, owning, {:error, reason}, teardown_errors) do
     owning |> record_teardown(teardown_errors) |> Executor.fail_pipeline_run(reason)
+
+    Telemetry.run_stop(
+      %{duration: run_duration(owning.started_at, DateTime.utc_now())},
+      %{name: owning.name, run_id: owning.id, trigger: owning.trigger, status: :failed}
+    )
+
     {:error, reason}
   end
 
   def settle(_label, owning, {:raised, kind, reason, stacktrace}, teardown_errors) do
     owning |> record_teardown(teardown_errors) |> Executor.fail_pipeline_run({kind, reason})
+
+    Telemetry.run_exception(
+      %{duration: run_duration(owning.started_at, DateTime.utc_now())},
+      %{name: owning.name, run_id: owning.id, kind: kind, reason: reason}
+    )
+
     :erlang.raise(kind, reason, stacktrace)
   end
+
+  # Run `duration` in native time units, derived from the persisted wall-clock
+  # timestamps — the ownership handle carries no monotonic run-start reference,
+  # and the run family is a consumer-less integration surface (see
+  # `ALLM.Pipeline.Telemetry`). `started_at` is set by `create_pipeline_run/3`
+  # before `settle/4` ever runs, so the `nil` clause is defensive only.
+  @spec run_duration(DateTime.t() | nil, DateTime.t()) :: integer()
+  defp run_duration(nil, _to), do: 0
+
+  defp run_duration(from, to),
+    do: to |> DateTime.diff(from, :microsecond) |> System.convert_time_unit(:microsecond, :native)
 
   @doc """
   Run `fun` under a fresh, fully-guarded `PipelineRun`.

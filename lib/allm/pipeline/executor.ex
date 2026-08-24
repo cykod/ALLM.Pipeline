@@ -29,6 +29,7 @@ defmodule ALLM.Pipeline.Executor do
     Step,
     Store,
     LLMCallLog,
+    Telemetry,
     Text
   }
 
@@ -70,7 +71,17 @@ defmodule ALLM.Pipeline.Executor do
       {:ok, pipeline_run} ->
         # `Repo.update` carries `changeset.data`'s virtual fields through, so
         # the completion token minted by `create/3` survives `start/1`.
-        store().start_run(pipeline_run)
+        case store().start_run(pipeline_run) do
+          {:ok, run} = ok ->
+            # The single run-creation point, so `[:allm_pipeline, :run, :start]`
+            # fires once per self-owned run (a borrowed pipeline never gets
+            # here). See `ALLM.Pipeline.Telemetry`'s run-family accounting.
+            Telemetry.run_start(%{name: run.name, run_id: run.id, trigger: run.trigger})
+            ok
+
+          error ->
+            error
+        end
 
       error ->
         error
@@ -367,15 +378,41 @@ defmodule ALLM.Pipeline.Executor do
     # {:error, _}, and rescued-exception paths alike.
     LLMCallLog.activate()
 
+    # Structured metadata so every log line the step emits is correlatable
+    # (extraction plan §3.7). Set BEFORE the step runs — set after, the step's
+    # own log lines would carry no run/step id.
+    Logger.metadata(
+      run_id: pipeline_run.id,
+      step_id: step_log.id,
+      step_type: step_log.step_type,
+      pipeline_name: pipeline_run.name
+    )
+
+    meta = %{step_type: step_log.step_type, run_id: pipeline_run.id, step_id: step_log.id}
+    started_mono = System.monotonic_time()
+    queue_time = queue_time_from(opts, started_mono)
+
+    Telemetry.step_start(meta)
+
     # Execute the step with exception handling
     try do
-      case step_module.execute(context, input_struct) do
-        {:ok, output_struct} ->
-          handle_success(step_module, step_log, output_struct, opts)
+      result =
+        case step_module.execute(context, input_struct) do
+          {:ok, output_struct} ->
+            handle_success(step_module, step_log, output_struct, opts)
 
-        {:error, reason} ->
-          handle_failure(step_log, reason, opts)
-      end
+          {:error, reason} ->
+            handle_failure(step_log, reason, opts)
+        end
+
+      # AFTER the step-log row is persisted, so the queue_time_ms handler finds
+      # the row. `elem(result, 0)` is `:ok` | `:error`.
+      Telemetry.step_stop(
+        %{duration: System.monotonic_time() - started_mono, queue_time: queue_time},
+        Map.put(meta, :status, elem(result, 0))
+      )
+
+      result
     rescue
       e ->
         # Log the exception and update step log
@@ -383,7 +420,28 @@ defmodule ALLM.Pipeline.Executor do
           "Step #{step_module} raised exception: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}"
         )
 
-        handle_failure(step_log, e, opts)
+        result = handle_failure(step_log, e, opts)
+
+        Telemetry.step_exception(
+          %{duration: System.monotonic_time() - started_mono, queue_time: queue_time},
+          Map.merge(meta, %{kind: :error, reason: e})
+        )
+
+        result
+    end
+  end
+
+  # `queue_time` is the backlog wait an item spent behind earlier fan-out items
+  # / for a concurrency slot before its step began — measured from the fan-out
+  # stage's dispatch timestamp (`:queue_since`, native monotonic), threaded here
+  # by `ALLM.Pipeline.Dsl.Runtime`. It is NOT `started_at - inserted_at`, which
+  # `StepLog.log_start/4` makes ~0 for every step. `nil` for a plain
+  # (non-`fan_out`) stage, which has no queue.
+  @spec queue_time_from(keyword(), integer()) :: integer() | nil
+  defp queue_time_from(opts, started_mono) do
+    case Keyword.get(opts, :queue_since) do
+      since when is_integer(since) -> started_mono - since
+      _ -> nil
     end
   end
 
