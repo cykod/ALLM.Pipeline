@@ -23,6 +23,12 @@ defmodule ALLM.Pipeline.TestRepo.Migrations.CreatePipelineTables do
   only). Column ORDER differs from the host (the host added columns by ALTER);
   the parity comparison sorts by column name, and nothing reads ordinal
   position.
+
+  After ANY edit to this file, re-run the schema-parity queries (Phase 8.1
+  criterion 6) — the standing re-run site is the host twin,
+  `AmesburyScraper.Pipeline.FrameworkBoundaryGuardsTest`
+  (`apps/amesbury_scraper/test/amesbury_scraper/pipeline/framework_boundary_guards_test.exs`
+  in the Amesbury umbrella).
   """
 
   use Ecto.Migration
