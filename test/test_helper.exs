@@ -13,7 +13,13 @@
 {dynamo_exclusions, dynamo_message} = ALLM.Pipeline.Artifacts.Dynamo.exclusions()
 if dynamo_message, do: IO.puts(dynamo_message)
 
-ExUnit.start(exclude: dynamo_exclusions)
+# Same shape for the live S3 round-trip test (Phase 7.5): `:s3` / `:skip_unless_s3`
+# are excluded when MinIO is unreachable, so a clone without the media stack up
+# skips rather than fails.
+{s3_exclusions, s3_message} = ALLM.Pipeline.Artifacts.S3.exclusions()
+if s3_message, do: IO.puts(s3_message)
+
+ExUnit.start(exclude: dynamo_exclusions ++ s3_exclusions)
 
 # The package's DB-backed tests (`store_test.exs`) check the sandbox out
 # explicitly, which requires `:manual` mode. Set it HERE rather than relying on

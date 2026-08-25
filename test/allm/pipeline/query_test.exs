@@ -188,10 +188,14 @@ defmodule ALLM.Pipeline.QueryTest do
     end
 
     test "fetch_artifact/1 matches ArtifactStore.fetch/1" do
-      # An s3:// url hits ArtifactStore's unimplemented arm — a hermetic, adapter-
-      # free parity check that needs no stored artifact.
-      assert Query.fetch_artifact("s3://bucket/key") == ArtifactStore.fetch("s3://bucket/key")
-      assert Query.fetch_artifact("s3://bucket/key") == {:error, :s3_not_implemented}
+      # A scheme no adapter owns — a hermetic parity check that needs no stored
+      # artifact and reaches no backend (every adapter rejects an unrecognized
+      # URL with `{:error, {:invalid_artifact_url, url}}` before any I/O). Phase
+      # 7.5 made `s3://` real, so an `s3://` URL would now try the network; this
+      # asserts the delegation, not the removed `:s3_not_implemented` stub.
+      url = "bogus://nothing/here"
+      assert Query.fetch_artifact(url) == ArtifactStore.fetch(url)
+      assert {:error, {:invalid_artifact_url, ^url}} = Query.fetch_artifact(url)
     end
   end
 end

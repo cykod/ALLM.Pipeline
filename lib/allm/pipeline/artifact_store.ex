@@ -27,18 +27,29 @@ defmodule ALLM.Pipeline.ArtifactStore do
   - DynamoDB: `dynamo://table_name/artifact_id`
   - Filesystem: `file:///path/to/artifact`
   - Memory: `memory://artifact_id`
-  - S3: `s3://bucket_name/key` (for artifacts that do not fit a DynamoDB item)
+  - S3: `s3://bucket_name/key`
 
-  ## Tiering is still hard-coded, and Phase 7 replaces it
+  ## Tiering is an adapter choice (Phase 7)
 
-  `store/4` routes oversize payloads to S3 and the read paths recognize an
-  `s3://` URL, but S3 itself is unimplemented — so an oversize artifact is
-  discarded with `{:error, :s3_not_implemented}`, which is why
-  `ALLM.Pipeline.Executor.build_envelope/3` still truncates its LLM envelope in
-  two rounds. Those `s3://` arms are the tier router's residue, not adapter
-  knowledge: `Artifacts.Tiered` (extraction plan §3.6, Phase 7) subsumes both
-  by making the tier list an adapter choice. Every other URL is handed to
-  `Artifacts.impl/0`, which recognizes its own scheme and rejects the rest.
+  This module no longer routes by size or special-cases an `s3://` URL. Every
+  URL is handed to `Artifacts.impl/0`, which for the production wiring is
+  `ALLM.Pipeline.Artifacts.Tiered` — it measures the post-encode size and routes
+  small→DynamoDB / large→S3 on `put/4`, and dispatches `fetch`/`delete`/`exists?`
+  by URL scheme. An oversize artifact now has a real home, which is why
+  `ALLM.Pipeline.Executor.build_envelope/3` no longer truncates its LLM envelope
+  in two rounds.
+
+  ## The gunzip is bounded (memory-safety)
+
+  `fetch/1` gunzips a stored payload with an EXPLICIT decompressed-size ceiling
+  (`max_decompressed_bytes/0`, default 64 MB), returning
+  `{:error, :artifact_too_large}` rather than inflating an unbounded amount into
+  memory. The ceiling is a fixed memory-safety budget — what one `fetch` may
+  safely hold — chosen INDEPENDENTLY of any store's capacity: `Tiered`/`S3`
+  removed the 400 KB DynamoDB bound, so "the max stored size" is undefined, and a
+  cap generous enough to inflate a legitimate huge artifact whole would still
+  admit a decompression bomb of that size. A genuinely huge artifact simply
+  cannot be fetched whole into memory — the correct posture.
   """
 
   alias ALLM.Pipeline.{Artifacts, Telemetry}
@@ -46,6 +57,12 @@ defmodule ALLM.Pipeline.ArtifactStore do
   @type store_result ::
           {:ok, url :: String.t(), size :: non_neg_integer(), checksum :: String.t()}
   @type fetch_result :: {:ok, binary()} | {:error, term()}
+
+  # An explicit memory-safety budget for a single decompressing `fetch/1`, NOT
+  # derived from any store's capacity — see the "gunzip is bounded" moduledoc
+  # section. Overridable per environment (a test uses a small value to prove the
+  # bound without allocating the real ceiling).
+  @default_max_decompressed_bytes 64 * 1024 * 1024
 
   @doc """
   Store artifact and return URL.
@@ -91,9 +108,15 @@ defmodule ALLM.Pipeline.ArtifactStore do
     )
 
     case result do
-      {:ok, url} -> {:ok, url, original_size, checksum}
-      {:error, :too_large} -> store_in_s3()
-      {:error, reason} -> {:error, reason}
+      {:ok, url} ->
+        {:ok, url, original_size, checksum}
+
+      # With the `Tiered` adapter an oversize payload routes to the large tier
+      # internally and never reaches here. A host still on a single DynamoDB
+      # adapter gets the honest `:too_large` (the artifact does not fit and there
+      # is no configured large tier) rather than the old fake `:s3_not_implemented`.
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -109,11 +132,9 @@ defmodule ALLM.Pipeline.ArtifactStore do
   compression is this layer's concern.
   """
   @spec fetch(String.t()) :: fetch_result()
-  def fetch("s3://" <> _rest), do: fetch_from_s3()
-
   def fetch(url) do
     case Artifacts.impl().fetch(url) do
-      {:ok, %{content: content, compressed: true}} -> {:ok, :zlib.gunzip(content)}
+      {:ok, %{content: content, compressed: true}} -> bounded_gunzip(content)
       {:ok, %{content: content}} -> {:ok, content}
       {:error, reason} -> {:error, reason}
     end
@@ -123,42 +144,69 @@ defmodule ALLM.Pipeline.ArtifactStore do
   Delete artifact by URL.
   """
   @spec delete(String.t()) :: :ok | {:error, term()}
-  def delete("s3://" <> _rest) do
-    # TODO: Implement S3 deletion (Phase 7 — `Artifacts.S3`).
-    # Answers `:s3_not_implemented`, the same atom `store_in_s3/0` and
-    # `fetch_from_s3/0` use for the identical condition. It read
-    # `:not_implemented` until the Phase 1 polish pass, which made it the only
-    # occurrence of that atom in the repo — three names for one unbuilt tier.
-    {:error, :s3_not_implemented}
-  end
-
   def delete(url), do: Artifacts.impl().delete(url)
 
   @doc """
   Check if artifact exists.
   """
   @spec exists?(String.t()) :: boolean()
-  def exists?("s3://" <> _rest) do
-    # TODO: Implement S3 exists check
-    false
-  end
-
   def exists?(url), do: Artifacts.impl().exists?(url)
+
+  @doc """
+  The decompressed-size ceiling `fetch/1` enforces, in bytes (default 64 MB).
+
+  A memory-safety budget, overridable per environment via
+  `config :amesbury_scraper, ALLM.Pipeline.ArtifactStore, max_decompressed_bytes: N`.
+  """
+  @spec max_decompressed_bytes() :: pos_integer()
+  def max_decompressed_bytes do
+    Application.get_env(:amesbury_scraper, __MODULE__, [])
+    |> Keyword.get(:max_decompressed_bytes, @default_max_decompressed_bytes)
+  end
 
   # Private functions
 
-  @spec store_in_s3() :: {:error, :s3_not_implemented}
-  defp store_in_s3 do
-    # TODO: Implement S3 storage for large artifacts (Phase 7 — `Artifacts.S3`).
-    # Until then an artifact the configured adapter refuses is DISCARDED, which
-    # is why `Executor.build_envelope/3` truncates rather than relying on this.
-    {:error, :s3_not_implemented}
+  # Streaming gunzip with a hard ceiling: `:zlib.safeInflate/2` yields bounded
+  # chunks, so a decompression bomb is stopped once the accumulated inflated size
+  # passes `max_decompressed_bytes/0` — the full inflated payload is never
+  # allocated. Returns `{:error, :artifact_too_large}` in that case.
+  @spec bounded_gunzip(binary()) :: fetch_result()
+  defp bounded_gunzip(gzipped) do
+    z = :zlib.open()
+
+    try do
+      # 31 = 15 (max window) + 16 (gzip header autodetect), matching `:zlib.gunzip/1`.
+      :zlib.inflateInit(z, 31)
+      inflate_loop(z, :zlib.safeInflate(z, gzipped), [], 0, max_decompressed_bytes())
+    catch
+      # Malformed/corrupt gzip stream — `:zlib` throws `:data_error`. Report it
+      # rather than crashing the caller (the review UI fetches arbitrary rows).
+      :error, reason -> {:error, {:inflate_failed, reason}}
+    after
+      :zlib.close(z)
+    end
   end
 
-  @spec fetch_from_s3() :: {:error, :s3_not_implemented}
-  defp fetch_from_s3 do
-    # TODO: Implement S3 fetch
-    {:error, :s3_not_implemented}
+  @spec inflate_loop(
+          :zlib.zstream(),
+          {:continue | :finished, iodata()},
+          iodata(),
+          non_neg_integer(),
+          pos_integer()
+        ) :: fetch_result()
+  defp inflate_loop(z, {status, output}, acc, total, limit) do
+    total = total + IO.iodata_length(output)
+
+    cond do
+      total > limit ->
+        {:error, :artifact_too_large}
+
+      status == :continue ->
+        inflate_loop(z, :zlib.safeInflate(z, []), [acc, output], total, limit)
+
+      true ->
+        {:ok, IO.iodata_to_binary([acc, output])}
+    end
   end
 
   @spec compute_checksum(binary()) :: String.t()

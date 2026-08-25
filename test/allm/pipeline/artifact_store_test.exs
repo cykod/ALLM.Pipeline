@@ -38,11 +38,27 @@ defmodule ALLM.Pipeline.ArtifactStoreTest do
   use ExUnit.Case, async: false
 
   alias ALLM.Pipeline.ArtifactStore
+  alias ALLM.Pipeline.Artifacts
   alias ALLM.Pipeline.Artifacts.Dynamo
 
   @moduletag :dynamo
 
   setup do
+    # Pin the DynamoDB adapter directly. The boot default is now
+    # `Artifacts.Tiered` (Phase 7.5), which routes oversize payloads to S3
+    # instead of refusing them — but this file tests the wrapper against
+    # DynamoDB specifically, where an oversize payload's honest answer is
+    # `{:error, :too_large}` (no large tier). `Tiered`'s size routing has its own
+    # test (`artifacts/tiered_test.exs`).
+    previous = Application.get_env(:amesbury_scraper, Artifacts)
+    Application.put_env(:amesbury_scraper, Artifacts, impl: Dynamo)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:amesbury_scraper, Artifacts, previous),
+        else: Application.delete_env(:amesbury_scraper, Artifacts)
+    end)
+
     case Dynamo.create_table() do
       :ok -> :ok
       {:error, {"ResourceInUseException", _}} -> :ok
@@ -153,13 +169,15 @@ defmodule ALLM.Pipeline.ArtifactStoreTest do
       assert {:ok, ^content} = ArtifactStore.fetch(url)
     end
 
-    test "an incompressible artifact whose stored payload exceeds the item limit still routes to S3" do
+    test "an incompressible artifact whose stored payload exceeds the item limit is refused by Dynamo" do
       step_id = Ecto.UUID.generate()
       # Random bytes do not gzip, and base64 then inflates them by a third, so
-      # 400KB of noise cannot fit a DynamoDB item however it is encoded.
+      # 400KB of noise cannot fit a DynamoDB item however it is encoded. With the
+      # Dynamo adapter alone there is no large tier, so it refuses honestly (under
+      # `Tiered` this same payload routes to S3 — see `tiered_test.exs`).
       content = :crypto.strong_rand_bytes(400 * 1024)
 
-      assert {:error, :s3_not_implemented} =
+      assert {:error, :too_large} =
                ArtifactStore.store(step_id, content, "application/octet-stream")
     end
 
@@ -169,7 +187,7 @@ defmodule ALLM.Pipeline.ArtifactStoreTest do
       # so with `compress: false` it does NOT fit.
       content = String.duplicate("Z", 320 * 1024)
 
-      assert {:error, :s3_not_implemented} =
+      assert {:error, :too_large} =
                ArtifactStore.store(step_id, content, "text/plain", compress: false)
     end
 
@@ -195,11 +213,11 @@ defmodule ALLM.Pipeline.ArtifactStoreTest do
       assert {:ok, ^content} = ArtifactStore.fetch(url)
     end
 
-    test "one byte past the ceiling routes to S3" do
+    test "one byte past the ceiling is refused by Dynamo" do
       step_id = Ecto.UUID.generate()
       content = String.duplicate("Z", div(Dynamo.max_payload_bytes(), 4) * 3 + 1)
 
-      assert {:error, :s3_not_implemented} =
+      assert {:error, :too_large} =
                ArtifactStore.store(step_id, content, "text/plain", compress: false)
     end
   end

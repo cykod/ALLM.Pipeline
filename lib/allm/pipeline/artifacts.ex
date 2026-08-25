@@ -42,18 +42,20 @@ defmodule ALLM.Pipeline.Artifacts do
   "Precedence"). Adapters keep resolving their own values (table names, roots,
   buckets) at runtime regardless.
 
-  ## Phase 1 adapters
+  ## Adapters
 
   | Adapter | URL scheme | Notes |
   |---|---|---|
-  | `ALLM.Pipeline.Artifacts.Dynamo` | `dynamo://` | the default; production |
+  | `ALLM.Pipeline.Artifacts.Dynamo` | `dynamo://` | fits a 400KB item; the small tier |
+  | `ALLM.Pipeline.Artifacts.S3` | `s3://` | the large tier — oversize bodies (Phase 7.5); optional `ex_aws_s3` dep |
+  | `ALLM.Pipeline.Artifacts.Tiered` | routes by size | the production default: `{small: Dynamo, large: S3}` |
   | `ALLM.Pipeline.Artifacts.Filesystem` | `file://` | a fresh clone runs pipelines with zero cloud infra |
   | `ALLM.Pipeline.Artifacts.Memory` | `memory://` | tests; dies with the VM |
 
-  `Artifacts.S3` and `Artifacts.Tiered` are Phase 7 — until `S3` exists, the
-  wrapper's oversize branch returns `{:error, :s3_not_implemented}` and the
-  artifact is discarded, which is why `Executor.build_envelope/3` still
-  truncates.
+  Since Phase 7.5 `Tiered` gives an oversize artifact a real home (S3), so the
+  wrapper no longer discards it and `Executor.build_envelope/3` no longer drops
+  bodies to fit a DynamoDB item — it applies only a single pathological-size
+  sanity bound.
   """
 
   @typedoc """

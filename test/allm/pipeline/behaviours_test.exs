@@ -49,7 +49,9 @@ defmodule ALLM.Pipeline.BehavioursTest do
   # {behaviour, adapters, default impl}
   @seams [
     {Store, [Store.Ecto], Store.Ecto},
-    {Artifacts, [Artifacts.Dynamo, Artifacts.Filesystem, Artifacts.Memory], Artifacts.Dynamo},
+    {Artifacts,
+     [Artifacts.Dynamo, Artifacts.Filesystem, Artifacts.Memory, Artifacts.S3, Artifacts.Tiered],
+     Artifacts.Dynamo},
     {Lock, [Lock.Advisory, Lock.Noop], Lock.Noop}
   ]
 

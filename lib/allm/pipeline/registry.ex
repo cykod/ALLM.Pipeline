@@ -69,6 +69,30 @@ defmodule ALLM.Pipeline.Registry do
   `Runner` does. That keeps the leaf boundary intact — the package task reads
   `name`/`browser` only, never `entry`.
 
+  ## The `artifacts:` tuple form
+
+  `artifacts:` is the one seam that also accepts an `{module, keyword}` tuple:
+
+      artifacts: {ALLM.Pipeline.Artifacts.Tiered,
+                  small: ALLM.Pipeline.Artifacts.Dynamo,
+                  large: ALLM.Pipeline.Artifacts.S3}
+
+  The module selects the adapter (installed under `:impl`, exactly as the
+  bare-module form is); the keyword carries that adapter's own wiring — a tiered
+  adapter's `small:` / `large:` / `threshold:`. Those opts install under the
+  **adapter's own config key** (`ALLM.Pipeline.Artifacts.Tiered` here), where
+  every adapter already reads its runtime values (`Artifacts.Filesystem`'s
+  `:root`, `Artifacts.S3`'s `:bucket`, `Artifacts.Dynamo`'s `:dynamo`) — NOT
+  beside `:impl` on the `ALLM.Pipeline.Artifacts` seam key, which selects the
+  adapter and carries nothing else. Written with `put_new` semantics like the
+  seam keys, so a config-file override of the adapter's own key wins per
+  environment. `store:` / `lock:` / `llm:` / `repo:` keep the strict module-only
+  contract — a tuple there raises "must be a module" (pinned by
+  `registry_test.exs`). `small:` / `large:` are module wiring (compile-time
+  appropriate); a `threshold:` is a policy constant, not an env-specific VALUE
+  like a table name — the adapter defaults it to the DynamoDB item capacity when
+  omitted, so the declaration usually names only `small:` / `large:`.
+
   ## Which module at compile time, which value at runtime
 
   The declaration is evaluated where the host `use`s it, so **module wiring is
@@ -193,11 +217,17 @@ defmodule ALLM.Pipeline.Registry do
   optional `llm:` one (`nil` when undeclared), the two domain collections
   (`lock_keys` normalized as a map), and the per-pipeline metadata list
   (`[]` when undeclared).
+
+  `artifacts_opts` is the keyword list an `artifacts: {module, keyword}`
+  declaration carries (`[]` for the bare-module form) — a tiered adapter's
+  `small:` / `large:` / `threshold:` wiring. See "The `artifacts:` tuple form"
+  in the moduledoc.
   """
   @type declaration :: %{
           repo: module(),
           store: module(),
           artifacts: module(),
+          artifacts_opts: keyword(),
           lock: module(),
           llm: module() | nil,
           alert_on_empty: [String.t()],
@@ -281,12 +311,24 @@ defmodule ALLM.Pipeline.Registry do
       unknown -> raise ArgumentError, unknown_message(module, unknown)
     end
 
-    modules = Map.new(@module_keys, &{&1, fetch_module!(opts, &1, module)})
+    # `:artifacts` is validated by `fetch_artifacts!/2`, not the strict
+    # module-only `fetch_module!/3` the other three go through: it is the one
+    # seam that accepts an `{module, keyword}` form so a tiered adapter can carry
+    # `small:` / `large:` / `threshold:`. `store:` / `lock:` / `repo:` keep the
+    # strict "must be a module" contract (pinned by `registry_test.exs`).
+    modules =
+      @module_keys
+      |> Enum.reject(&(&1 == :artifacts))
+      |> Map.new(&{&1, fetch_module!(opts, &1, module)})
+
     optional = Map.new(@optional_module_keys, &{&1, optional_module!(opts, &1, module)})
+    {artifacts_module, artifacts_opts} = fetch_artifacts!(opts, module)
 
     modules
     |> Map.merge(optional)
     |> Map.merge(%{
+      artifacts: artifacts_module,
+      artifacts_opts: artifacts_opts,
       alert_on_empty: validate_alert_on_empty!(opts, module),
       lock_keys: validate_lock_keys!(opts, module),
       pipelines: validate_pipelines!(opts, module)
@@ -329,6 +371,28 @@ defmodule ALLM.Pipeline.Registry do
       Application.put_env(@otp_app, behaviour, Keyword.put_new(existing, :impl, impl))
     end
 
+    install_artifacts_opts(declaration)
+
+    :ok
+  end
+
+  # An `artifacts: {module, keyword}` declaration carries the adapter's own
+  # wiring (a tiered adapter's `small:` / `large:` / `threshold:`). It installs
+  # under the ADAPTER's own config key — exactly where every adapter already
+  # reads its runtime values (`Artifacts.Filesystem`'s `:root`, `Artifacts.S3`'s
+  # `:bucket`, `Artifacts.Dynamo`'s `:dynamo`) — NOT beside `:impl` on the
+  # `ALLM.Pipeline.Artifacts` seam key, which selects the adapter and carries
+  # nothing else. `put_new` at the whole-key level, matching the seam asymmetry
+  # above: a config-file `config :amesbury_scraper, <Adapter>, …` override wins,
+  # per environment. The bare-module form carries `[]` and installs nothing.
+  @spec install_artifacts_opts(declaration()) :: :ok
+  defp install_artifacts_opts(%{artifacts_opts: []}), do: :ok
+
+  defp install_artifacts_opts(%{artifacts: adapter, artifacts_opts: opts}) do
+    if is_nil(Application.get_env(@otp_app, adapter)) do
+      Application.put_env(@otp_app, adapter, opts)
+    end
+
     :ok
   end
 
@@ -358,6 +422,35 @@ defmodule ALLM.Pipeline.Registry do
                 "unreadable from this declaration. #{inspect(@optional_module_keys)} is the " <>
                 "one wiring key a host may omit: the package ships no default for it, so " <>
                 "omitting it raises at the call site rather than degrading."
+    end
+  end
+
+  # `:artifacts` is the ONE seam that accepts a `{module, keyword}` tuple, so a
+  # tiered adapter can carry its `small:` / `large:` / `threshold:` wiring in the
+  # declaration (architecture §3.6/§3.3). The bare-module and every rejection
+  # path reuse `fetch_module!/3`, so `artifacts: "string"` still raises "must be
+  # a module" and an omitted `artifacts:` still raises "requires" — the tuple is
+  # purely additive. `store:` / `lock:` / `llm:` / `repo:` never reach here and
+  # keep the strict module-only contract. Returns `{module, opts}`; opts is `[]`
+  # for the bare form.
+  @spec fetch_artifacts!(keyword(), module()) :: {module(), keyword()}
+  defp fetch_artifacts!(opts, module) do
+    case Keyword.fetch(opts, :artifacts) do
+      {:ok, {adapter, adapter_opts}} ->
+        unless is_atom(adapter) and not is_nil(adapter) and not is_boolean(adapter) and
+                 Keyword.keyword?(adapter_opts) do
+          raise ArgumentError,
+                "#{inspect(module)}: `artifacts:` as a tuple must be {module, keyword}, " <>
+                  "got: #{inspect({adapter, adapter_opts})}"
+        end
+
+        {adapter, adapter_opts}
+
+      _ ->
+        # A bare module, a non-module, or an omitted key — all handled by the
+        # strict path (returns the module, or raises "must be a module" /
+        # "requires"). `artifacts:` is the only tuple-accepting seam.
+        {fetch_module!(opts, :artifacts, module), []}
     end
   end
 

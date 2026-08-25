@@ -383,27 +383,7 @@ defmodule ALLM.Pipeline.ArtifactsTest do
     end
   end
 
-  describe "the S3 tier is still the wrapper's, and still unimplemented" do
-    setup do: use_memory()
-
-    test "an s3:// URL never reaches the configured adapter" do
-      assert {:error, :s3_not_implemented} = ArtifactStore.fetch("s3://bucket/key")
-      assert {:error, :s3_not_implemented} = ArtifactStore.delete("s3://bucket/key")
-      refute ArtifactStore.exists?("s3://bucket/key")
-    end
-
-    test "all three read/write arms answer the unbuilt tier with ONE atom" do
-      # `delete/1` answered `:not_implemented` through Phase 1 — the only
-      # occurrence of that atom in the repo, for the identical condition its
-      # two siblings 30 lines away call `:s3_not_implemented`. Asserted as a
-      # SET so a fourth `s3://` arm cannot reintroduce a third spelling.
-      answers =
-        MapSet.new([
-          ArtifactStore.fetch("s3://bucket/key"),
-          ArtifactStore.delete("s3://bucket/key")
-        ])
-
-      assert MapSet.to_list(answers) == [{:error, :s3_not_implemented}]
-    end
-  end
+  # (Phase 7.5 removed the "S3 tier is unimplemented" describe block — `s3://`
+  # URLs now route through a real `Artifacts.S3` adapter. Its round-trip lives in
+  # `artifacts/s3_test.exs`; the `Tiered` size routing in `artifacts/tiered_test.exs`.)
 end

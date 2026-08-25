@@ -62,12 +62,15 @@ defmodule ALLMPipeline.MixProject do
       # centre of gravity is LLM pipelines (extraction plan §3.1).
       {:allm, "~> 0.4.2"},
 
-      # Optional, gated per artifact adapter. `Artifacts.Dynamo` needs both;
-      # a host that configures a different adapter need not carry them.
-      # `ex_aws_s3` is NOT a dependency in this phase — there is no S3 adapter
-      # until Phase 7.
+      # Optional, gated per artifact adapter. `Artifacts.Dynamo` needs
+      # `ex_aws`/`ex_aws_dynamo`; `Artifacts.S3` (Phase 7) needs
+      # `ex_aws`/`ex_aws_s3`. A host that configures a different adapter need not
+      # carry them — each adapter checks `Code.ensure_loaded?/1` and degrades to
+      # `{:error, :s3_unavailable}` (S3) / a skipped test (Dynamo) when its dep
+      # is absent.
       {:ex_aws, "~> 2.5", optional: true},
-      {:ex_aws_dynamo, "~> 4.2", optional: true}
+      {:ex_aws_dynamo, "~> 4.2", optional: true},
+      {:ex_aws_s3, "~> 2.5", optional: true}
     ]
   end
 end

@@ -66,6 +66,19 @@ defmodule ALLM.Pipeline.RegistryTest do
       lock: Minimal.Lock
   end
 
+  # `artifacts:` is the one seam that accepts an `{module, keyword}` tuple so a
+  # tiered adapter can carry its own wiring (Phase 7.5). `store:`/`lock:`/`llm:`
+  # keep the strict module-only contract, pinned in the rejection describe below.
+  defmodule TieredFixture do
+    @moduledoc false
+    use ALLM.Pipeline.Registry,
+      repo: RegistryTest.Repo,
+      store: RegistryTest.Store,
+      artifacts:
+        {RegistryTest.Tiered, small: RegistryTest.Small, large: RegistryTest.Large, threshold: 10},
+      lock: RegistryTest.Lock
+  end
+
   describe "install/0 feeds the keys the framework already reads" do
     test "the repo lands where ALLM.Pipeline.Config.repo/0 looks for it" do
       Application.delete_env(:amesbury_scraper, :repo)
@@ -160,6 +173,68 @@ defmodule ALLM.Pipeline.RegistryTest do
 
       assert :ok = Fixture.install()
       assert Enum.map(@env_keys, &Application.get_env(:amesbury_scraper, &1)) == first
+    end
+  end
+
+  describe "the artifacts: {module, keyword} tuple form" do
+    setup do
+      # These tests write adapter-own config keys the module setup does not track.
+      on_exit(fn ->
+        Application.delete_env(:amesbury_scraper, RegistryTest.Tiered)
+        Application.delete_env(:amesbury_scraper, Minimal.Artifacts)
+      end)
+
+      :ok
+    end
+
+    test "the module lands under the seam :impl, exactly as the bare-module form does" do
+      Application.delete_env(:amesbury_scraper, Artifacts)
+      Application.delete_env(:amesbury_scraper, RegistryTest.Tiered)
+
+      assert :ok = TieredFixture.install()
+
+      assert Artifacts.impl() == RegistryTest.Tiered
+    end
+
+    test "the adapter opts install under the ADAPTER's own config key, not beside :impl" do
+      Application.delete_env(:amesbury_scraper, Artifacts)
+      Application.delete_env(:amesbury_scraper, RegistryTest.Tiered)
+
+      assert :ok = TieredFixture.install()
+
+      # The opts land where the adapter reads them — its own module key —
+      # keeping the seam key `:impl`-only.
+      assert Application.get_env(:amesbury_scraper, RegistryTest.Tiered) ==
+               [small: RegistryTest.Small, large: RegistryTest.Large, threshold: 10]
+
+      refute Keyword.has_key?(Application.get_env(:amesbury_scraper, Artifacts), :small)
+
+      # And the declaration carries them for tooling.
+      assert TieredFixture.__registry__(:artifacts) == RegistryTest.Tiered
+
+      assert TieredFixture.__registry__(:artifacts_opts) ==
+               [small: RegistryTest.Small, large: RegistryTest.Large, threshold: 10]
+    end
+
+    test "a config-file value for the adapter key outranks the installed opts (put_new)" do
+      Application.delete_env(:amesbury_scraper, Artifacts)
+      # Models a config file setting the adapter's own key before install/0.
+      Application.put_env(:amesbury_scraper, RegistryTest.Tiered, small: ConfigFile.Small)
+
+      assert :ok = TieredFixture.install()
+
+      assert Application.get_env(:amesbury_scraper, RegistryTest.Tiered) == [
+               small: ConfigFile.Small
+             ],
+             "install/0 clobbered a config-file adapter override"
+    end
+
+    test "the bare-module artifacts: form installs no adapter opts" do
+      Application.delete_env(:amesbury_scraper, Minimal.Artifacts)
+
+      assert MinimalFixture.__registry__(:artifacts_opts) == []
+      assert :ok = MinimalFixture.install()
+      assert Application.get_env(:amesbury_scraper, Minimal.Artifacts) == nil
     end
   end
 
@@ -279,6 +354,40 @@ defmodule ALLM.Pipeline.RegistryTest do
         end).message
 
       assert message =~ "repo:"
+      assert message =~ "must be a module"
+    end
+
+    test "the {module, keyword} tuple form is rejected for a NON-artifacts seam" do
+      # The Phase 7.5 widening is `artifacts:`-scoped. A tuple for `store:` (or
+      # any other module seam) must keep failing "must be a module" — a widening
+      # that accepted a tuple for every seam would pass this and is the mutant
+      # this case kills.
+      message =
+        assert_raise(ArgumentError, fn ->
+          compile_registry(repo: A.R, store: {A.S, pool_size: 5}, artifacts: A.A, lock: A.L)
+        end).message
+
+      assert message =~ "store:"
+      assert message =~ "must be a module"
+    end
+
+    test "a malformed artifacts tuple (non-keyword opts) is rejected" do
+      message =
+        assert_raise(ArgumentError, fn ->
+          compile_registry(repo: A.R, store: A.S, artifacts: {A.A, :not_a_keyword}, lock: A.L)
+        end).message
+
+      assert message =~ "artifacts:"
+      assert message =~ "{module, keyword}"
+    end
+
+    test "a non-module artifacts value is still rejected (the bare-module path is unchanged)" do
+      message =
+        assert_raise(ArgumentError, fn ->
+          compile_registry(repo: A.R, store: A.S, artifacts: "A.A", lock: A.L)
+        end).message
+
+      assert message =~ "artifacts:"
       assert message =~ "must be a module"
     end
 

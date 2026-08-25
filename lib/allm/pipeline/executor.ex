@@ -589,28 +589,16 @@ defmodule ALLM.Pipeline.Executor do
 
     json = Jason.encode!(envelope)
 
-    if byte_size(json) > artifact_size_limit() do
+    # A SINGLE sanity pass. Oversize artifacts now have a real large-tier home
+    # (`Artifacts.Tiered` → S3), so the envelope no longer has to fit a DynamoDB
+    # item and the old second, body-dropping round (which existed only to
+    # guarantee a fit and left a `_bodies_dropped` marker) is gone — a large
+    # envelope is stored whole. This bound is a pathological-size guard only: a
+    # runaway single prompt is head+tail windowed once so the envelope cannot
+    # grow unbounded, and whatever that produces is stored as-is.
+    if byte_size(json) > envelope_sanity_limit() do
       truncated = %{envelope | calls: Enum.map(indexed_calls, &truncate_call/1)}
-      truncated_json = Jason.encode!(truncated)
-
-      # A single huge prompt is reliably brought under budget by the per-call
-      # head+tail truncation above. But a high-fan-out step (hundreds of calls)
-      # can sum over the limit even after truncation, since the per-call window
-      # is bounded but the call count is not. Re-measure: if STILL over, apply a
-      # second, harder reduction that deterministically fits by dropping each
-      # call's heavy bodies (messages/response_text) to a stub while keeping the
-      # per-call metadata. This guarantees we never route to the unimplemented
-      # S3 path and silently lose the artifact.
-      if byte_size(truncated_json) > artifact_size_limit() do
-        dropped =
-          envelope
-          |> Map.put(:calls, Enum.map(indexed_calls, &drop_call_bodies/1))
-          |> Map.put(:_bodies_dropped, true)
-
-        Jason.encode!(dropped)
-      else
-        truncated_json
-      end
+      Jason.encode!(truncated)
     else
       json
     end
@@ -620,9 +608,10 @@ defmodule ALLM.Pipeline.Executor do
   defp step_type_string(nil), do: nil
   defp step_type_string(step_module), do: to_string(step_module.step_type())
 
-  # Head+tail window used when truncating an oversized prompt/response so the
-  # artifact still fits a DynamoDB item. We never rely on the (unimplemented) S3
-  # path for oversize. The truncation itself lives on `Text.truncate/2`.
+  # Head+tail window used when truncating a pathologically-large prompt/response
+  # so one runaway call cannot bloat the envelope unbounded. Oversize envelopes
+  # otherwise route whole to the large tier (`Artifacts.Tiered`). The truncation
+  # itself lives on `Text.truncate/2`.
   @truncation_window Text.default_window()
 
   @spec truncate_call(map()) :: map()
@@ -631,23 +620,6 @@ defmodule ALLM.Pipeline.Executor do
     |> Map.update(:messages, [], fn messages -> Enum.map(messages, &truncate_message/1) end)
     |> Map.update(:response_text, nil, &truncate_text/1)
     |> Map.put(:_truncated, true)
-  end
-
-  # Harder reduction for the high-fan-out case: drop the heavy bodies
-  # (messages/response_text) to short stubs, keeping the per-call metadata (seq,
-  # schema_name, model, usage, outcome, duration_ms, …). Guarantees the envelope
-  # fits under the dynamo limit regardless of call count.
-  @body_dropped_stub "[dropped: envelope over size limit]"
-
-  @spec drop_call_bodies(map()) :: map()
-  defp drop_call_bodies(call) do
-    call
-    |> Map.put(:messages, @body_dropped_stub)
-    |> Map.update(:response_text, nil, fn
-      nil -> nil
-      _ -> @body_dropped_stub
-    end)
-    |> Map.put(:_bodies_dropped, true)
   end
 
   @spec truncate_message(map()) :: map()
@@ -672,14 +644,12 @@ defmodule ALLM.Pipeline.Executor do
     end)
   end
 
-  # A CONSERVATIVE pre-gzip bound on the envelope, not ArtifactStore's gate.
-  # ArtifactStore now routes dynamo-vs-S3 on the post-gzip, post-base64 payload,
-  # which for JSON is far smaller than this — so an envelope kept under 400KB of
-  # raw JSON is guaranteed to fit a DynamoDB item. The truncation below therefore
-  # over-truncates slightly; it stays until `Artifacts.S3` exists (design doc §3.6,
-  # Phase 7), because until then an oversize artifact is silently discarded.
-  @spec artifact_size_limit() :: pos_integer()
-  defp artifact_size_limit, do: 400 * 1024
+  # A single pathological-size sanity bound for the LLM-call envelope, NOT a
+  # DynamoDB-fit requirement (oversize envelopes route to the large tier). Set
+  # generously above a normal large envelope and well below `ArtifactStore`'s
+  # 64 MB gunzip ceiling, so a truncated envelope always inflates on fetch.
+  @spec envelope_sanity_limit() :: pos_integer()
+  defp envelope_sanity_limit, do: 4 * 1024 * 1024
 
   # Runs BEFORE `execute_step`'s try/rescue, so anything that raises here escapes
   # `run_step/5` into a `Task.async_stream` fan-out — which LINKS its children, so
