@@ -41,6 +41,18 @@ settled as option (b) in batch 1.B, not a Phase-1 shim. Do not add a second
 set of modules exposing one is **exactly** `[ALLM.Pipeline.Config]`, and a
 generated `repo/0` on a host adapter would fail it.
 
+**Adding a mandatory `@callback` to a package behaviour means stubbing it on
+EVERY in-tree implementer in the same batch — test doubles included.**
+`behaviours_test.exs`'s conformance scan iterates only production `lib/` adapters
+(`Application.spec(:allm_pipeline, :modules)` excludes test modules), so a test
+double like `SentinelStore` (`test/allm/pipeline/executor_store_dispatch_test.exs`)
+that misses the new callback is invisible to that guard — it surfaces only as a
+test-compile warning. `mix precommit`'s `test --warnings-as-errors` now turns that
+warning into a hard red, so the gate catches it, but stub it proactively rather
+than discovering it at the gate. Declare `@optional_callbacks` only if the callback
+is genuinely optional for an adapter. (Phase 7.4's `Store.log_skipped/4` shipped a
+missing `SentinelStore` stub for exactly this reason.)
+
 ## 2. `mix test` runs from the umbrella root. Only from there.
 
 ```bash
