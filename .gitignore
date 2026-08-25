@@ -13,3 +13,7 @@ erl_crash.dump
 
 # Editor/OS noise
 .DS_Store
+
+# Local environment files (secrets never belong in the repo)
+.env
+.env.*

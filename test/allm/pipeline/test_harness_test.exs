@@ -24,8 +24,9 @@ defmodule ALLM.Pipeline.TestHarnessTest do
     # Guards the wrong-implementation a silently-failed install would leave:
     # `Artifacts.impl/0` falls back to `Artifacts.Dynamo` when the seam key is
     # absent, so asserting the resolved value alone could observe the fallback.
-    # Pin the raw env first (AGENT_IMPLEMENTATION_SPEC: "pin the raw
-    # application env, never only the resolved value").
+    # Pin the raw env first (AGENT_IMPLEMENTATION_SPEC, in the Amesbury
+    # umbrella repo: "pin the raw application env, never only the resolved
+    # value").
     raw = Application.get_env(:amesbury_scraper, ALLM.Pipeline.Artifacts, [])
     assert raw[:impl] == ALLM.Pipeline.Artifacts.Tiered
 

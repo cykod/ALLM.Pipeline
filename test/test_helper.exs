@@ -22,8 +22,14 @@
 # expected failure from printing an alarming error before the operator message.
 squelched_level = Logger.level()
 Logger.configure(level: :none)
-_ = ALLM.Pipeline.Artifacts.Dynamo.create_table()
-Logger.configure(level: squelched_level)
+
+try do
+  _ = ALLM.Pipeline.Artifacts.Dynamo.create_table()
+after
+  # `after`, not a bare next line: if `create_table/0` ever raises, the level
+  # must still be restored or the whole suite runs with Logger silenced.
+  Logger.configure(level: squelched_level)
+end
 
 {dynamo_exclusions, dynamo_message} = ALLM.Pipeline.Artifacts.Dynamo.exclusions()
 if dynamo_message, do: IO.puts(dynamo_message)

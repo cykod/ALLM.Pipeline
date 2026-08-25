@@ -72,4 +72,7 @@ runnable** (readonly mount — `_build` can't be written); run it on the host.
 
 The config namespace is `:amesbury_scraper` — a deliberate non-goal of the
 extraction (renaming it is deferred until a second consumer makes the name a
-real API; see `config/test.exs`).
+real API; see `config/test.exs`). It is also why every standalone test run
+opens with Mix's multi-line "You have configured application
+`:amesbury_scraper` … but the application is not available" notice: the config
+names an app this repo does not compile. Expected and harmless here.
