@@ -6,7 +6,7 @@ defmodule ALLM.Pipeline.TelemetryTest do
   `started_at - inserted_at`), `Logger.metadata` is set before a step runs, and
   a raising handler does not fail the run.
 
-  DB-backed, per `apps/allm_pipeline/CLAUDE.md` §3. `async: false` because it
+  DB-backed, per this repo's `CLAUDE.md` §3. `async: false` because it
   attaches/detaches VM-global `:telemetry` handlers.
   """
 

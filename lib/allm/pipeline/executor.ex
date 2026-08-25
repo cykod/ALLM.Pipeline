@@ -701,8 +701,8 @@ defmodule ALLM.Pipeline.Executor do
   # hand-rolled `defstruct`s with no DSL today. Calling `cast/1` on those would
   # raise `UndefinedFunctionError` right where a raise is most expensive, so they
   # keep the module comparison. That set's MEMBERSHIP is machine-guarded from the
-  # host tree, where the Step modules can be named:
-  # `apps/amesbury_scraper/test/amesbury_scraper/pipeline/step_schema_census_test.exs`
+  # host tree (the Amesbury umbrella repo), where the Step modules can be named:
+  # `apps/amesbury_scraper/test/amesbury_scraper/pipeline/step_schema_census_test.exs` there
   # (`AmesburyScraper.Pipeline.StepSchemaCensusTest`) enumerates every Step's
   # `input_schema/0` / `output_schema/0` and pins the non-DSL set exactly, so a
   # new one cannot appear here silently. Re-derive by running that test, not by

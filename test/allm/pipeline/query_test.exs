@@ -2,7 +2,7 @@ defmodule ALLM.Pipeline.QueryTest do
   @moduledoc """
   Pins `ALLM.Pipeline.Query`, the read-only host-facing facade.
 
-  DB-backed: checks the host repo out per `apps/allm_pipeline/CLAUDE.md` §3.
+  DB-backed: checks the repo out per this repo's `CLAUDE.md` §3.
   `Query` reads no application env and holds no state, so these tests are
   `async: true` — each checks out its own sandboxed connection.
 

@@ -5,11 +5,10 @@ step logs, artifact lineage (DynamoDB/S3-tiered), run lifecycle ownership, and
 a declarative pipeline DSL (`use ALLM.Pipeline`).
 
 Extracted from the [Amesbury City project](https://www.amesbury.city)'s
-umbrella (Phases 1–7 of the ALLM pipeline extraction plan), where it remains
-the production consumer. (Note: the umbrella re-points here as a path
-dependency in Phases 8.2–8.3; until then it still builds its in-tree
-`apps/allm_pipeline/` copy.) Not yet published to hex; the `package()`
-metadata in `mix.exs` is publish-readiness only.
+umbrella (Phases 1–8 of the ALLM pipeline extraction plan), which remains the
+production consumer — it consumes this repo as a path dependency. Not yet
+published to hex; the `package()` metadata in `mix.exs` is publish-readiness
+only.
 
 ## What's here
 
@@ -62,10 +61,6 @@ mix dialyzer    # separate manual step, matching the host convention
 ```
 
 ## Host consumption (the Amesbury umbrella)
-
-> **Note:** the mechanism below lands in Phases 8.2–8.3 of the extraction
-> plan; until then the umbrella still builds its in-tree `apps/allm_pipeline/`
-> copy.
 
 The umbrella consumes this repo as `{:allm_pipeline, path: ...}` — sibling
 checkout at `~/Projects/ALLM.Pipeline` on the host, readonly bind mount at

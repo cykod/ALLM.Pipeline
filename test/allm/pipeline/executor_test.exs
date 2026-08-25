@@ -5,7 +5,7 @@ defmodule ALLM.Pipeline.ExecutorTest do
   ## The sandbox setup, and why it is not a `DataCase`
 
   Moved here from `apps/amesbury_scraper/test/` in batch 1.D. The package tree
-  deliberately depends on no umbrella app, so it cannot see
+  deliberately depends on no host app, so it cannot see
   `AmesburyScraper.DataCase` — the four lines below are a faithful port of that
   template's `setup_sandbox/1`, including its `shared: not tags[:async]`, so an
   `async: true` file keeps behaving exactly as it did before the move. The repo
@@ -930,24 +930,10 @@ defmodule ALLM.Pipeline.ExecutorTest do
       # "every borrowed-run read goes through borrowed_run/1"
       # (`apps/amesbury_scraper/test/amesbury_scraper/pipeline/framework_boundary_guards_test.exs`
       # in the Amesbury umbrella).
-      root = Path.join([__DIR__, "..", "..", ".."])
-      lib = Path.join(root, "lib")
-
-      # A grep guard whose success signal is "found nothing" fails OPEN: a
-      # zero-file glob makes every filter below yield `[]`, and the test reports
-      # green while guarding nothing (root CLAUDE.md: "whenever a procedure's
-      # success signal is 'nothing changed', add a step confirming something
-      # did"). The floor sits well under the live count (40 on 2026-08-25 —
-      # `find lib -name '*.ex' | wc -l`, the command to re-derive rather than
-      # trust the integer).
-      matched = lib |> Path.join("**/*.ex") |> Path.wildcard()
-
-      assert length(matched) > 10,
-             "the guard glob matched only #{length(matched)} files under #{lib} — " <>
-               "the tree moved and this test is no longer scanning it. Re-point the guard."
-
+      # Glob + fail-open floor live in the shared scaffold (extracted in Phase
+      # 8.4, Rule of 3 — see `ALLM.Pipeline.TestSupport.LibScan`'s moduledoc).
       offenders =
-        matched
+        ALLM.Pipeline.TestSupport.LibScan.lib_files!()
         # Only `ALLM.Pipeline.Executor` itself may read the opt directly —
         # matched by path suffix, not basename: it is the property that made
         # the exemption safe to begin with.
@@ -963,7 +949,7 @@ defmodule ALLM.Pipeline.ExecutorTest do
           File.read!(path) =~
             ~r/Keyword\.(fetch!?|get|get_lazy|pop!?|pop_lazy|take)\(\s*\w+,\s*:pipeline_run|\w+\[:pipeline_run\]/
         end)
-        |> Enum.map(&Path.relative_to(&1, root))
+        |> Enum.map(&Path.relative_to(&1, ALLM.Pipeline.TestSupport.LibScan.root()))
 
       assert offenders == [],
              "these modules read a borrowed run directly instead of via " <>

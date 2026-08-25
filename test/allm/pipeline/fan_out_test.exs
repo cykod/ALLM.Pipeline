@@ -40,25 +40,13 @@ defmodule ALLM.Pipeline.FanOutTest do
   describe "the Task.async_stream site set" do
     test "every fan-out in the repo is a known site, with a known call count" do
       # Scans THIS repo's `lib/` only (Phase 8.1 narrowing — the host tree is a
-      # different repo; see the @sites comment for the host twin).
-      root = Path.join([__DIR__, "..", "..", ".."])
-      lib = Path.join(root, "lib")
-
-      # FLOOR FIRST. A grep guard whose success signal is "found nothing" fails
-      # OPEN: a zero-file glob makes the filter below yield `[]` and the test
-      # reports green while guarding nothing. The floor sits well under the
-      # live count — 40 on 2026-08-25 (`find lib -name '*.ex' | wc -l`, which
-      # is the command to re-derive rather than trust the integer). It is
-      # deliberately slack: a floor tracking the real count would red on every
-      # file added.
-      matched = lib |> Path.join("**/*.ex") |> Path.wildcard()
-
-      assert length(matched) > 10,
-             "the guard glob matched only #{length(matched)} files under #{lib} — " <>
-               "the tree moved and this test is no longer scanning it. Re-point the guard."
+      # different repo; see the @sites comment for the host twin). Glob +
+      # fail-open floor live in the shared scaffold (extracted in Phase 8.4,
+      # Rule of 3 — see `ALLM.Pipeline.TestSupport.LibScan`'s moduledoc).
+      root = ALLM.Pipeline.TestSupport.LibScan.root()
 
       found =
-        matched
+        ALLM.Pipeline.TestSupport.LibScan.lib_files!()
         |> Enum.map(fn path ->
           count =
             path
@@ -99,11 +87,10 @@ defmodule ALLM.Pipeline.FanOutTest do
       # module most likely to regain a fan-out. Markdown table rows are the only
       # lines starting with `|`.
       #
-      # Phase 8.1 allowance: the table still carries the four HOST sites' rows.
-      # This test asserts @sites ⊆ rows only, so those rows are documented-but-
-      # not-scanned here — the moduledoc is frozen through 8.1-8.3 (`lib/`
-      # byte-identity invariant) and its rewrite (own row + a pointer to the
-      # host twin) is owned by 8.4's package-repo sweep.
+      # (The 8.1-era allowance for the four HOST rows is gone: 8.4's
+      # package-repo sweep rewrote the moduledoc to its own row plus a pointer
+      # to the host twin, so the table and @sites now cover the same tree. The
+      # assertion stays ⊆-directional — extra prose rows are the pointer's.)
       rows =
         FanOut
         |> moduledoc!()
@@ -132,18 +119,17 @@ defmodule ALLM.Pipeline.FanOutTest do
       end
     end
 
-    test "the Sites table's scope line covers BOTH trees" do
-      # It said `apps/amesbury_scraper/lib` while the framework's own
-      # `Dsl.Runtime.run_concurrent/7` — the first real fan-out in
-      # `apps/allm_pipeline/lib` — had no row: defensible as written, and wrong
-      # for two subphases (`.work/HANDOFF.md`, 4.1 code review F10.2).
-      #
-      # Phase 8.1 note: the moduledoc's "in this repo — both trees" phrasing is
-      # umbrella-era prose, frozen through 8.1-8.3 by the `lib/` byte-identity
-      # invariant; 8.4's package-repo sweep rewrites it (and this test with it).
+    test "the Sites table's scope line covers this repo" do
+      # Historical shape of the defect (4.1 code review F10.2, `.work/HANDOFF.md`):
+      # the scope line once said `apps/amesbury_scraper/lib` while the
+      # framework's own `Dsl.Runtime.run_concurrent/7` had no row — defensible
+      # as written, and wrong for two subphases. Since the Phase 8.4 rewrite
+      # the moduledoc scopes its table to "in this repo" and points at the host
+      # twin for the host sites; this pins both halves of that phrasing.
       doc = moduledoc!(FanOut)
 
       assert doc =~ "in this repo"
+      assert doc =~ "FrameworkBoundaryGuardsTest"
       refute doc =~ "Every `Task.async_stream` in `apps/amesbury_scraper/lib`"
     end
   end

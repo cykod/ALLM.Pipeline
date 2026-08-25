@@ -4,7 +4,7 @@ defmodule ALLM.Pipeline.Dsl.RuntimeTest do
   threading, fan-out, the accumulator channel, skips, delays, metrics and the
   terminal write.
 
-  DB-backed, per `apps/allm_pipeline/CLAUDE.md` §3 — the DSL's whole job is to
+  DB-backed, per this repo's `CLAUDE.md` §3 — the DSL's whole job is to
   write `pipeline_runs` and `step_logs` rows, so an in-memory test of it would
   observe nothing.
 

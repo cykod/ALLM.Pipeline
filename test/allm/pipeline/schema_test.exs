@@ -2,9 +2,9 @@ defmodule ALLM.Pipeline.SchemaTest do
   @moduledoc """
   The first test file `ALLM.Pipeline.Schema` has ever had.
 
-  Every fixture below is package-owned: `apps/allm_pipeline` declares no
-  umbrella dependency, so naming a host schema here would not compile — and
-  that is the point, not an inconvenience (`apps/allm_pipeline/CLAUDE.md` §1).
+  Every fixture below is package-owned: the package declares no host
+  dependency, so naming a host schema here would not compile — and
+  that is the point, not an inconvenience (this repo's `CLAUDE.md` §1).
 
   Two things this file deliberately does NOT assert, because they are the other
   half of a two-layer design that lives in `ALLM.Pipeline.StepLog`:
@@ -392,7 +392,7 @@ defmodule ALLM.Pipeline.SchemaTest do
 
     test "reports a field repeated in a KEYWORD LIST" do
       # The keyword list is the dominant production construction shape — every
-      # `Input.new/1` / `Output.new/1` call site in `apps/amesbury_scraper/lib`
+      # `Input.new/1` / `Output.new/1` call site in the host's `apps/amesbury_scraper/lib`
       # passes one, while a JSON-decoded map structurally cannot carry both an
       # atom and a string form of one key. So this, not the map case above, is
       # the shape a real caller collides on.

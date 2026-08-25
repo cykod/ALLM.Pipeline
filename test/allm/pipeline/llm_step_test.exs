@@ -5,14 +5,15 @@ defmodule ALLM.Pipeline.LLMStepTest do
 
   **Not `async: true`.** Every test here routes the engine call through
   `ALLM.Pipeline.LLM.impl/0`, which reads `:amesbury_scraper` application env —
-  global to the VM, and carrying `Amesbury.Pipelines`' real declaration at boot.
-  Per `apps/allm_pipeline/CLAUDE.md` §5 the value this tree depends on is
+  global to the VM, and carrying the test registry's declaration at boot
+  (a host registry's, when run inside a host VM).
+  Per this repo's `CLAUDE.md` §5 the value this tree depends on is
   established and restored here rather than observed.
 
-  Every fixture is package-owned: `apps/allm_pipeline` declares no umbrella
+  Every fixture is package-owned: the package declares no host
   dependency, so naming a host step or the host's `LLMEngine` would not compile.
-  The host adapter's own conformance is pinned in
-  `apps/amesbury_scraper/test/amesbury_scraper/pipelines/llm_test.exs`.
+  The host adapter's own conformance is pinned in the Amesbury repo:
+  `apps/amesbury_scraper/test/amesbury_scraper/pipelines/llm_test.exs` there.
   """
 
   use ExUnit.Case, async: false

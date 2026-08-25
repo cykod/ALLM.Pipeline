@@ -5,7 +5,7 @@ defmodule ALLM.Pipeline.Dsl.ResourceTest do
   construct exists for — teardown running on **every** exit path, catching all
   three kinds, and BEFORE the terminal write (Phase 4 D3).
 
-  DB-backed per `apps/allm_pipeline/CLAUDE.md` §3: D3's ordering discriminator
+  DB-backed per this repo's `CLAUDE.md` §3: D3's ordering discriminator
   is what `PipelineRun.complete/2` actually wrote to the row, which an in-memory
   test cannot observe.
 

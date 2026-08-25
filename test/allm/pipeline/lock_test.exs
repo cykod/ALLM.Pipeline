@@ -26,8 +26,8 @@ defmodule ALLM.Pipeline.LockTest do
   key — but those four names are Amesbury's `lock_keys:` DECLARATION, which
   batch 1.C moved off the framework and onto `Amesbury.Pipelines` precisely so
   the framework would stop naming host pipelines. Re-asserting them from the
-  package tree puts that knowledge back one tree over, so they moved to
-  `apps/amesbury_scraper/test/amesbury/pipelines_declared_values_test.exs`
+  package tree puts that knowledge back one tree over, so they moved to the
+  Amesbury repo's `apps/amesbury_scraper/test/amesbury/pipelines_declared_values_test.exs`
   instead — the same carve-out `metrics_test.exs`'s three membership tests took,
   for the same reason.
 

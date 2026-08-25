@@ -8,8 +8,8 @@ defmodule ALLM.Pipeline.Lock.Advisory do
   intact so the guarantee can be brought back deliberately rather than
   reconstructed from scratch. The serialization mapping it applies is no longer
   its own — batch 1.C moved it onto the host's `ALLM.Pipeline.Registry`
-  (`lock_keys:`); the host-side membership guard is
-  `apps/amesbury_scraper/test/amesbury/pipelines_test.exs`, and
+  (`lock_keys:`); the host-side membership guard is the Amesbury repo's
+  `apps/amesbury_scraper/test/amesbury/pipelines_test.exs`, and its
   `runner_test.exs` still pins the derived lock keys.
 
   ## Mechanism
@@ -127,7 +127,7 @@ defmodule ALLM.Pipeline.Lock.Advisory do
   end
 
   # The host's Ecto repo, resolved at RUNTIME. `allm_pipeline` deliberately
-  # depends on no umbrella app (see `apps/allm_pipeline/mix.exs`), so this tree
+  # depends on no host app (see this repo's `mix.exs`), so this tree
   # cannot `alias Amesbury.Repo` — that is a compile error here, by design.
   @spec repo() :: module()
   defp repo, do: Config.repo()

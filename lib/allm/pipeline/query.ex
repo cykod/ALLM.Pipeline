@@ -7,8 +7,9 @@ defmodule ALLM.Pipeline.Query do
   module instead of hosts reaching into three schemas directly — the host cutover
   (Phase 7.2) routes `Amesbury.Government`'s provenance/lineage reads through this
   module rather than hand-writing raw `"step_logs"` / `"pipeline_runs"` queries to
-  avoid inverting the umbrella dependency (a dependency that, since Phase 7.1,
-  `apps/amesbury` may legitimately declare).
+  avoid inverting the host->package dependency (a dependency that, since
+  Phase 7.1, the host's core app may legitimately declare — an in-umbrella dep
+  then, the Phase 8 path dep now).
 
   ## Read-only by contract
 

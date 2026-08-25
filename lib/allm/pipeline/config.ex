@@ -2,8 +2,8 @@ defmodule ALLM.Pipeline.Config do
   @moduledoc """
   Resolves the host-supplied collaborators the package cannot name directly.
 
-  `allm_pipeline` deliberately depends on no umbrella app (see
-  `apps/allm_pipeline/mix.exs`), so `Amesbury.Repo` is not on this tree's
+  `allm_pipeline` deliberately depends on no host app (see this repo's
+  `mix.exs`), so a host repo like `Amesbury.Repo` is not on this tree's
   compile path — a literal `alias Amesbury.Repo` here is a compile error at
   `--warnings-as-errors`, which is the enforcement the omission exists to buy.
   The repo is therefore looked up at RUNTIME instead.

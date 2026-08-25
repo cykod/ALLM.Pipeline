@@ -2,11 +2,12 @@ defmodule ALLM.Pipeline.Schema.JsonSchemaTest do
   @moduledoc """
   The derived strict-mode JSON schema.
 
-  Every fixture is package-owned: `apps/allm_pipeline` declares no umbrella
+  Every fixture is package-owned: the package declares no host
   dependency, so naming a host schema here would not compile
-  (`apps/allm_pipeline/CLAUDE.md` §1). The one assertion this file *cannot*
+  (this repo's `CLAUDE.md` §1). The one assertion this file *cannot*
   make for that reason — that a derived schema is a fixed point of
-  `AmesburyScraper.Transformers.LLMEngine.normalize_schema/1` — lives in
+  `AmesburyScraper.Transformers.LLMEngine.normalize_schema/1` — lives in the
+  Amesbury repo:
   `apps/amesbury_scraper/test/amesbury_scraper/transformers/derived_schema_normalization_test.exs`.
   What stands in for it here is `assert_strict!/1`, which re-checks the same
   invariants structurally at every depth.

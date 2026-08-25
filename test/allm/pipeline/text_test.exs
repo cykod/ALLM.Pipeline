@@ -5,18 +5,13 @@ defmodule ALLM.Pipeline.TextTest do
 
   alias ALLM.Pipeline.Text
 
-  # The `scrub/1` and `scrub_strings/1` cases below deliberately mirror
-  # `apps/amesbury/test/amesbury/text_sanitizer_test.exs`. The two modules are a
-  # hand-maintained duplicate pair (see `ALLM.Pipeline.Text`'s moduledoc), so
-  # each side carries its own coverage rather than one side testing "the"
-  # implementation.
-  #
-  # These two files being hand-mirrored is exactly why they cannot be the drift
-  # guard: a change applied to one implementation plus its own suite is green on
-  # both sides. The guard that compares the IMPLEMENTATIONS is
-  # `apps/amesbury_scraper/test/amesbury_scraper/text_parity_test.exs` (the only
-  # tree that can see both modules). Phase 7 collapses the modules, these two
-  # test files, and that guard.
+  # HISTORY: the `scrub/1` and `scrub_strings/1` cases below deliberately
+  # mirrored the host's `text_sanitizer_test.exs` while `Amesbury.TextSanitizer`
+  # was a hand-maintained duplicate of this module, drift-guarded by a
+  # host-side parity test. Phase 7.2 (2026-08-24) collapsed the pair —
+  # `TextSanitizer`, its test file, and the parity guard are deleted, and this
+  # module is the only copy (see `ALLM.Pipeline.Text`'s moduledoc). These
+  # cases are now simply this module's own coverage.
 
   describe "scrub/1" do
     test "passes nil through" do

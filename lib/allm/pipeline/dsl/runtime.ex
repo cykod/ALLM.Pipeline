@@ -17,7 +17,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   rather than trusting this list:
 
       grep -oEn '\b(Executor|PipelineRun|Metrics|FanOut|Lifecycle)\.[a-z_]+[!?]?\(' \
-        apps/allm_pipeline/lib/allm/pipeline/dsl/runtime.ex apps/allm_pipeline/lib/allm/pipeline/lifecycle.ex \
+        lib/allm/pipeline/dsl/runtime.ex lib/allm/pipeline/lifecycle.ex \
         | sed 's/^[0-9]*://' | sort -u
 
   The load-bearing claim is the stronger negative one: this module reaches a
@@ -33,7 +33,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   and is passed to no hook and to no return value. (`run_borrowed/4` never sees
   one: on that path the umbrella owns the run and this pipeline terminates
   nothing.) Re-derive rather than trusting the list:
-  `grep -n 'owning' apps/allm_pipeline/lib/allm/pipeline/dsl/runtime.ex`. Every `Context` a stage body, `over:`,
+  `grep -n 'owning' lib/allm/pipeline/dsl/runtime.ex`. Every `Context` a stage body, `over:`,
   `input:`, `skip_when:` or `summarize` hook receives is built from
   `PipelineRun.borrow/1`'s projection, so a body reading `ctx.pipeline_run`
   cannot complete its own parent run. `returns: :run` hands back the completed

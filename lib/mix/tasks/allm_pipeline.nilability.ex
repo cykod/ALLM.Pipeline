@@ -49,7 +49,7 @@ defmodule Mix.Tasks.AllmPipeline.Nilability do
   verify nothing and the invariant root `CLAUDE.md` tells operators to trust
   would be tautological.
 
-  Per the umbrella `CLAUDE.md` § "A rule enforced in more than one shape needs
+  Per the Amesbury repo's root `CLAUDE.md` § "A rule enforced in more than one shape needs
   a MEMBERSHIP guard", a deliberate mirror still has to be *declared* (this
   section, and the matching comment above `Schema.nilable_tail?/1`) and
   *pinned*. The pin is the "drift guard" describe in

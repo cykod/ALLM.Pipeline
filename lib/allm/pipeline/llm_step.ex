@@ -33,7 +33,8 @@ defmodule ALLM.Pipeline.LLMStep do
   | `execute/2` | a thin composition of the three above, **overridable** |
 
   It also injects `@behaviour ALLM.Pipeline.Step`. That is not decoration:
-  `apps/amesbury_scraper/test/amesbury_scraper/pipeline/step_schema_census_test.exs`
+  the host-side census (in the Amesbury umbrella repo,
+  `apps/amesbury_scraper/test/amesbury_scraper/pipeline/step_schema_census_test.exs`)
   derives the Step population two independent ways — by the attribute and by the
   exported callbacks — and asserts the sets are equal, so generating the
   callbacks without the attribute fails that test by name.

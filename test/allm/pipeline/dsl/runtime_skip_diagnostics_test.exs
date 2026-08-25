@@ -15,7 +15,7 @@ defmodule ALLM.Pipeline.Dsl.RuntimeSkipDiagnosticsTest do
   BEFORE `capture_log`'s handler sees anything). Raising the level for the
   duration is safe only in an async-false module — the same reason
   `committee_pipeline_test.exs`'s `capture_info/1` lives in an async-false file.
-  DB-backed per `apps/allm_pipeline/CLAUDE.md` §3.
+  DB-backed per this repo's `CLAUDE.md` §3.
   """
   use ExUnit.Case, async: false
 

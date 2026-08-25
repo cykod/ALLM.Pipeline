@@ -1,39 +1,53 @@
 # ALLM.Pipeline — Agent Guide
 
-The extracted pipeline framework: `ALLM.Pipeline.*`. A **leaf** umbrella app headed
-for hex (extraction plan Phase 8), so it is developed in-tree with no version skew
-against the published copy.
+The extracted pipeline framework: `ALLM.Pipeline.*`, a **standalone repo** since
+Phase 8 of the extraction plan (`steering/2026-08-25_ALLM_PIPELINE_PHASE_8.md`
+in the Amesbury repo). It is hex-**ready** (`package()` metadata, MIT LICENSE)
+but **not published** — its one consumer, the Amesbury umbrella
+(`~/Projects/amesbury`), consumes it as a **path dep**: this sibling checkout on
+the host, a readonly bind mount at `/workspaces/ALLM.Pipeline` in the Amesbury
+devcontainer, and a `vendor/allm_pipeline` copy staged by the umbrella's
+`scripts/deploy.sh` for production Docker builds. Publishing trigger: a second
+consumer, or the user asks.
 
 Its size carries no literal here on purpose — every file this package gains
 re-breaks one, and the two that used to live on this line had drifted by 2.4
-(`24`/`15` written, `25`/`18` measured). Re-derive instead:
+(`24`/`15` written, `25`/`18` measured). Re-derive instead, from this repo's
+root:
 
 ```bash
-find apps/allm_pipeline/lib  -name '*.ex'       | wc -l   # lib files
-find apps/allm_pipeline/test -name '*_test.exs' | wc -l   # test files
+find lib  -name '*.ex'       | wc -l   # lib files
+find test -name '*_test.exs' | wc -l   # test files
 ```
 
-> Read the umbrella `/CLAUDE.md` and `/AGENTS.md` first. What the framework *does*
-> — Step, Executor, StepLog, ArtifactStore, the `:content` convention, artifact
-> lineage — is documented in `apps/amesbury_scraper/CLAUDE.md` §1, from the
-> consumer's side. This file is only the things that are specific to working
-> **inside** this app and that the code does not make obvious.
+> What the framework *does* — Step, Executor, StepLog, ArtifactStore, the
+> `:content` convention, artifact lineage — is documented from the consumer's
+> side in the Amesbury repo: `apps/amesbury_scraper/CLAUDE.md` §1 there, plus
+> the pipeline sections of its root `CLAUDE.md`. This file is only the things
+> that are specific to working **inside** this repo and that the code does not
+> make obvious.
 
 ---
 
 ## 1. The dep list's omission is the architecture
 
-`mix.exs` deliberately declares **no** umbrella dependency — no `{:amesbury,
-in_umbrella: true}`, none of the others. It looks like an oversight; it is the
-whole point. Naming `Amesbury.*` or `AmesburyScraper.*` anywhere in `lib/` is a
-**compile error**, not a review finding somebody has to notice. Do not "fix" it,
-and do not add a dep to make a reach compile — the reach is the bug.
+`mix.exs` deliberately declares **no** host dependency — nothing from the
+Amesbury umbrella or any other consumer. It looks sparse; it is the whole
+point. Naming `Amesbury.*` or `AmesburyScraper.*` (or any consumer's namespace)
+anywhere in `lib/` is a **compile error**, not a review finding somebody has to
+notice — the omitted in-umbrella dep enforced this in the umbrella era, and the
+repo boundary now enforces it even harder. Do not "fix" it, and do not add a
+dep to make a reach compile — the reach is the bug.
 
 Host collaborators resolve at **runtime** instead, through the host's
-`use ALLM.Pipeline.Registry` declaration (`Amesbury.Pipelines`), installed from
-`AmesburyScraper.Application.start/2`. The config namespace is `:amesbury_scraper`
-in Phase 1, hardcoded in `Config`, `Store`, `Artifacts`, `Lock`, `LLM`, `LLMCallLog`
-and `Artifacts.Dynamo`.
+`use ALLM.Pipeline.Registry` declaration (Amesbury's is `Amesbury.Pipelines`,
+installed from `AmesburyScraper.Application.start/2`; this repo's own suite
+installs `ALLM.Pipeline.TestSupport.Registry` from `test/test_helper.exs`).
+The config namespace is `:amesbury_scraper`, hardcoded in `Config`, `Store`,
+`Artifacts`, `Lock`, `LLM`, `LLMCallLog` and `Artifacts.Dynamo` — a host app's
+name on a standalone package's config keys is ugly but legal (an atom is an
+atom), and keeping it was a recorded Phase 8 non-goal; the rename trigger is a
+second consumer.
 
 **`ALLM.Pipeline.Config.repo/0` is the single, permanent host-repo handle** —
 settled as option (b) in batch 1.B, not a Phase-1 shim. Do not add a second
@@ -43,45 +57,73 @@ generated `repo/0` on a host adapter would fail it.
 
 **Adding a mandatory `@callback` to a package behaviour means stubbing it on
 EVERY in-tree implementer in the same batch — test doubles included.**
-`behaviours_test.exs`'s conformance scan iterates only production `lib/` adapters
-(`Application.spec(:allm_pipeline, :modules)` excludes test modules), so a test
-double like `SentinelStore` (`test/allm/pipeline/executor_store_dispatch_test.exs`)
-that misses the new callback is invisible to that guard — it surfaces only as a
-test-compile warning. `mix precommit`'s `test --warnings-as-errors` now turns that
-warning into a hard red, so the gate catches it, but stub it proactively rather
-than discovering it at the gate. Declare `@optional_callbacks` only if the callback
+`behaviours_test.exs`'s conformance scan iterates
+`Application.spec(:allm_pipeline, :modules)` — which **does** include
+`elixirc_paths(:test)` support modules (`TestRepo`, the test registry and
+`TargetDeclaration` all appear in it; verified by execution in Phase 8.1 —
+what the spec excludes is modules defined inside `.exs` test FILES). So a test
+double like `SentinelStore` (`test/allm/pipeline/executor_store_dispatch_test.exs`,
+an `.exs`-defined module) that misses the new callback is invisible to that
+guard — it surfaces only as a test-compile warning. `mix precommit`'s
+`test --warnings-as-errors` turns that warning into a hard red, so the gate
+catches it, but stub it proactively rather than discovering it at the gate. Declare `@optional_callbacks` only if the callback
 is genuinely optional for an adapter. (Phase 7.4's `Store.log_skipped/4` shipped a
 missing `SentinelStore` stub for exactly this reason.)
 
-## 2. `mix test` runs from the umbrella root. Only from there.
+## 2. `mix test` runs from THIS repo's root, standalone
 
 ```bash
-mix test apps/allm_pipeline/test     # from /workspaces/amesbury
+mix test        # from ~/Projects/ALLM.Pipeline — creates + migrates allm_pipeline_test itself
+mix precommit   # compile --warnings-as-errors + format + test --warnings-as-errors
 ```
 
-`cd apps/allm_pipeline && mix test` **does not work** and the error does not
-point at the cause (measured 2026-08-14):
+The harness is self-contained (Phase 8.1). The `test` alias runs
+`ecto.create` / `ecto.migrate -r ALLM.Pipeline.TestRepo` against
+`priv/test_repo/migrations/` — **test-harness DDL only**; production migrations
+stay in the host ("table names are contract"), and the DDL is
+schema-parity-checked against the host's `amesbury_test` (the re-run site is
+named in the migration's own moduledoc). `test/test_helper.exs` installs
+`ALLM.Pipeline.TestSupport.Registry` (TestRepo + `Store.Ecto` + Tiered
+artifacts + `Lock.Noop`; deliberately **no `llm:`** — `ALLM.Pipeline.LLM.impl/0`
+raising when unwired is designed behaviour and no package test may depend on a
+wired LLM), then starts the TestRepo before `Sandbox.mode/2` — the package has
+no supervision tree (`application/0` carries no `mod:`), so nothing else would
+start it. `test/allm/pipeline/test_harness_test.exs` pins that wiring.
 
-```
-error: module Dotenvy is not loaded and could not be found
-  │ 2 │ import Dotenvy
-  └─ /workspaces/amesbury/config/runtime.exs:2
-** (CompileError) /workspaces/amesbury/config/runtime.exs: cannot compile file
-```
+Environment: host Postgres at `localhost:5432` (`DATABASE_HOST`/`DATABASE_USER`
+env overrides, same shape as the umbrella's test config); DynamoDB Local at
+`localhost:4028` with the **distinct** table `allm_pipeline_artifacts_test`
+(bootstrapped idempotently by `test_helper.exs` — the `:dynamo` exclusion probe
+keys on the table existing, so without the bootstrap a fresh clone with the
+stack UP would exclude the dynamo tests; see §4); MinIO at `localhost:4026`
+(bucket `amesbury-artifacts-test`, shared with the umbrella suite — keys are
+per-test unique). Toolchain pin: `.tool-versions`
+(erlang 27.1.2 / elixir 1.17.3-otp-27). The suite runs on the **host**: inside
+the Amesbury devcontainer this repo is mounted **readonly**, so `_build`
+cannot be written there.
 
-`config_path` points at the umbrella's `config/config.exs`, which pulls in
-`runtime.exs`, which imports `Dotenvy` — a dep this app does not (and should not)
-declare. An earlier note attributed this to `Config.repo/0`; it is `Dotenvy`, and
-it happens before any of this app's code runs.
+**Two-gate reality** (the Amesbury repo's root `CLAUDE.md` → "Continuous
+Integration"): the umbrella's `mix precommit` no longer
+compiles-with-warnings-as-errors, formats, or tests this tree — a path dep
+compiles without `--warnings-as-errors`, the umbrella's `.formatter.exs` no
+longer reaches it, and this `test/` tree is never on the umbrella's load path
+(a non-umbrella path dep compiles with dep-internal `Mix.env() == :prod`).
+Every package change gates with THIS repo's `mix precommit`. One asymmetric
+extra: the umbrella compiles this package under whatever toolchain compiles
+the umbrella (that host's global is Elixir 1.19.5/OTP 28), so the package must
+also stay warning-free there — checked from the umbrella root with
+`mix deps.compile allm_pipeline --force 2>&1 | grep -c 'warning:'` → 0.
 
-Running from the root also starts every umbrella app, which is what makes
-`Config.repo/0` resolve and the registry get installed — both of which the tests
-below depend on.
+(The umbrella-era failure this section used to document — `cd
+apps/allm_pipeline && mix test` dying in the umbrella's `runtime.exs` on a
+missing `Dotenvy` — died with the extraction: the standalone `mix.exs` carries
+no umbrella `config_path` and this repo has its own `config/`.)
 
 ## 3. DB-backed tests
 
-The package owns Ecto schemas and no repo. A DB-backed test checks the host repo
-out by handle:
+The package owns Ecto schemas and no production repo. A DB-backed test checks
+out whatever `Config.repo/0` resolves to — in this repo's suite that is the
+test-only `ALLM.Pipeline.TestRepo`, installed by the test registry:
 
 ```elixir
 setup do
@@ -90,9 +132,10 @@ setup do
 end
 ```
 
-`:manual` mode is set by **this package's own** `test/test_helper.exs`, not
-borrowed from a sibling app's — a test tree that silently borrows the host's
-harness is the same leak `mix.exs`'s omitted dep prevents for `lib/`. The failure
+`:manual` mode is set by **this repo's own** `test/test_helper.exs` — a test
+tree that silently borrowed a host harness would be the same leak `mix.exs`'s
+omitted dep prevents for `lib/` (and is structurally impossible now that the
+host lives in a different repo). The failure
 mode if that ever regresses is not a clean red: under `:auto` every query gets its
 own rolled-back transaction, so `create_run/3` succeeds and `get_run/1` returns
 `nil` one line later, which reads as an adapter bug. `store_test.exs` pins the
@@ -102,18 +145,24 @@ a `Task` would inherit and an unrelated process has not).
 ## 4. `:dynamo` exclusion — the measured behaviour
 
 `test_helper.exs` takes the probe, the operator message **and** the tag list from
-`ALLM.Pipeline.Artifacts.Dynamo.exclusions/0` — one implementation, shared with
-the host's `test_helper.exs`. Do not hand-copy the tag list back.
+`ALLM.Pipeline.Artifacts.Dynamo.exclusions/0` — one implementation, which the
+Amesbury umbrella's `test_helper.exs` ALSO calls from its repo (the shared
+function is the cross-repo drift guard; do not hand-copy the tag list back in
+either tree). Before computing exclusions, `test_helper.exs` attempts an
+idempotent `Dynamo.create_table()` — the probe keys on the TABLE existing, and
+the only other `create_table/0` callers are `:dynamo`-tagged setups that run
+only when NOT excluded, a chicken-and-egg that silently excluded the whole
+dynamo set on a fresh clone with the stack up (Phase 8.1 deviation D1).
 
-Measured 2026-08-14, both directions:
+Measured 2026-08-25 (Phase 8.1, standalone), both directions:
 
 | DynamoDB | Result |
 |---|---|
-| up | `3 doctests, 226 tests, 0 failures`, **no** `Excluding tags` line |
-| down (`DYNAMODB_ENDPOINT=http://127.0.0.1:9`) | `3 doctests, 226 tests, 0 failures, 19 excluded` |
+| up | `3 doctests, 600 tests, 0 failures`, **no** `Excluding tags` line |
+| down (`DYNAMODB_ENDPOINT=http://127.0.0.1:9`) | `3 doctests, 600 tests, 0 failures, 20 excluded` + the operator message |
 
 Note what this means for testing `exclusions/0` itself: ExUnit exits 0 whether it
-excludes 0 or 19, so a mutant of it leaves a green suite. **The two-direction run
+excludes 0 or 20, so a mutant of it leaves a green suite. **The two-direction run
 above is its only discriminating observable** — re-run the pair rather than
 mutating it.
 
@@ -121,9 +170,13 @@ mutating it.
 
 The compiler enforces the boundary for **names** in `lib/`. It is blind to
 **runtime state**, and every leak found in Phase 1 came through the test tree:
-`lock_test.exs` spent a batch asserting `Lock.impl() == Noop` while
-`Amesbury.Pipelines` was installing exactly `Noop` at boot, so it observed the
-host's declaration and could not have seen the framework's fallback change.
+`lock_test.exs` spent a batch asserting `Lock.impl() == Noop` while the host's
+registry (`Amesbury.Pipelines`, in the umbrella era) was installing exactly
+`Noop` at boot, so it observed the host's declaration and could not have seen
+the framework's fallback change. The same shape exists standalone — the
+installer is now `ALLM.Pipeline.TestSupport.Registry` from `test_helper.exs`,
+and a test that observes what IT installs is observing the harness, not the
+framework.
 
 So: a package test that reads or writes `Application.get_env(:amesbury_scraper,
 …)` **establishes the value it depends on and restores it**, and is `async: false`
@@ -146,8 +199,9 @@ end
 Reference implementations: `lock_test.exs`, `registry_test.exs`,
 `executor_store_dispatch_test.exs`. The carve-out test when deciding whether an
 assertion belongs here at all is *"does it depend on a value this tree does not
-own?"* — not *"does it compile here?"*. Host-owned values live in
-`apps/amesbury_scraper/test/amesbury/pipelines_declared_values_test.exs`.
+own?"* — not *"does it compile here?"*. Host-owned values live in the
+**Amesbury umbrella repo**:
+`apps/amesbury_scraper/test/amesbury/pipelines_declared_values_test.exs` there.
 
 ## 6. `Registry.__install__/1`'s `put_new` / `put` asymmetry is deliberate
 
@@ -179,10 +233,10 @@ own files and that the code does not make obvious. Re-derive the set rather than
 trusting a count:
 
 ```bash
-ls apps/allm_pipeline/lib/allm/pipeline.ex \
-   apps/allm_pipeline/lib/allm/pipeline/dsl.ex \
-   apps/allm_pipeline/lib/allm/pipeline/dsl/*.ex \
-   apps/allm_pipeline/lib/allm/pipeline/lifecycle.ex
+ls lib/allm/pipeline.ex \
+   lib/allm/pipeline/dsl.ex \
+   lib/allm/pipeline/dsl/*.ex \
+   lib/allm/pipeline/lifecycle.ex
 ```
 
 **A hook is quoted AST, not a value, and it has to stay that way.**
@@ -362,7 +416,8 @@ applied at one splice site leaves the other broken. `concurrency:` shipped dead
 at both levels for three subphases with its own sibling comment asserting the
 opposite; the first production declaration is what found it, not the tests.
 Corollary for closing a subphase: record per construct whether a **production**
-declaration exists.
-`grep -rn '<option>:' apps --include '*.ex' | grep -v /test/` returning `0` is a
-finding to state, not a pass — four constructs shipped green here because
-nothing consumed them.
+declaration exists — and production declarations live in the CONSUMER's repo,
+so run the census from the Amesbury umbrella root:
+`grep -rn '<option>:' apps --include '*.ex' | grep -v /test/` there returning
+`0` is a finding to state, not a pass — four constructs shipped green here
+because nothing consumed them.

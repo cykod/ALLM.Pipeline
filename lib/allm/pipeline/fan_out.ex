@@ -1,12 +1,12 @@
 defmodule ALLM.Pipeline.FanOut do
   @moduledoc """
-  The canonical home for this repo's fan-out safety rule, plus the one helper
+  The canonical home for the fan-out safety rule, plus the one helper
   every `Task.async_stream` site shares.
 
   ## The rule (measured, do not re-derive)
 
   `Task.async_stream` **links** its children. With `trap_exit` off — every
-  process in this repo; `grep -rn "trap_exit" apps/` finds no `Process.flag/2`
+  process in this repo; `grep -rn "trap_exit" lib/` finds no `Process.flag/2`
   call — a child that raises **or** exits kills the *calling* process before the
   stream can emit anything for that element. With `trap_exit` on it emits
   `{:exit, reason}` normally.
@@ -32,34 +32,31 @@ defmodule ALLM.Pipeline.FanOut do
 
   ## Sites
 
-  Every `Task.async_stream` **in this repo** — both trees, not just the host's —
-  either fans out work that is total by construction, or wraps its per-item work
-  in a `catch`:
+  Every `Task.async_stream` **in this repo** either fans out work that is total
+  by construction, or wraps its per-item work in a `catch`:
 
   | Site | How it is kept safe |
   |---|---|
   | `ALLM.Pipeline.Dsl.Runtime.run_concurrent/7` | always-on `catch` via `guarded_item/6` — the concurrent path is unconditionally wrapped, which is link safety (the sequential path calls `run_item/6` directly and is NOT wrapped) |
-  | `Scrapers.HttpScraper.fetch_many/2` | `safe_fetch/2` (`catch`) |
-  | `Pipelines.PoiThumbnailStep.generate_for_pois/6` | `safe_generate_one/7` (`catch`) |
-  | `Processors.DocumentTextCollector.execute/2` | `safe_collect_text/1` (`catch`) |
-  | `Services.ProjectScaleRescale.run/1` | `rescore/3` (`rescue` + `catch`) |
 
-  A sequential sibling, `Pipelines.ProjectRefreshPipeline.safe_run/2`, uses the
-  same `catch` for the same reason (an exit is not an exception) even though it
-  has no link hazard.
+  The rule spans repos, and each repo's table covers its own tree. The
+  **host's** sites — four `apps/amesbury_scraper/lib` fan-outs as of Phase 8,
+  plus a sequential `catch` sibling — are tabled and machine-guarded in the
+  Amesbury umbrella repo by `AmesburyScraper.Pipeline.FrameworkBoundaryGuardsTest`
+  ("fan-out site census"), the host twin of this repo's guard. A new consumer
+  repo that fans out owes itself the same pair: a Sites table beside its code
+  and a census test pinning it.
 
-  `Pipelines.CommitteePipeline` carried three rows here until Phase 4.4 ported
-  it onto `use ALLM.Pipeline`. Its detail, transform and load fan-outs are now
-  the framework's single site above — which is the DSL centralizing fan-out, and
-  a **behaviour change** for that pipeline, since its hand-written fan-outs
-  deliberately wrapped nothing. That change is declared in `CommitteePipeline`'s
-  own moduledoc.
+  (`Pipelines.CommitteePipeline`, in the host, carried three rows here until
+  Phase 4.4 ported it onto `use ALLM.Pipeline` — its detail, transform and load
+  fan-outs are now the framework's single site above, a declared behaviour
+  change recorded in that pipeline's own moduledoc.)
 
-  The table's MEMBERSHIP is machine-guarded by
-  `apps/allm_pipeline/test/allm/pipeline/fan_out_test.exs`, which scans both
-  `lib/` trees and fails by name when the site set changes. What it cannot check
-  is the right-hand column — how each site is kept safe — so a new fan-out still
-  has to add its own row by hand.
+  This table's MEMBERSHIP is machine-guarded by
+  `test/allm/pipeline/fan_out_test.exs`, which scans this repo's `lib/` and
+  fails by name when the site set changes. What it cannot check is the
+  right-hand column — how each site is kept safe — so a new fan-out still has
+  to add its own row by hand.
   """
 
   require Logger

@@ -44,16 +44,18 @@ defmodule ALLM.Pipeline.StoreTest do
 
   ## Where this test lives, and why it can
 
-  In the package's own tree, despite needing a database. `apps/allm_pipeline`
-  depends on no umbrella app, so it cannot `alias Amesbury.Repo` — but a
-  `mix test` from the UMBRELLA ROOT starts every umbrella app, so the host repo
-  is running and reachable through `ALLM.Pipeline.Config.repo/0`, which is
-  exactly how package code reaches it in production. Measured 2026-08-14.
+  In the package's own tree, despite needing a database. The package depends on
+  no host app, so it cannot `alias` a host repo — instead the standalone
+  harness (Phase 8.1) installs `ALLM.Pipeline.TestRepo` through the test
+  registry in `test/test_helper.exs`, so the repo is reachable through
+  `ALLM.Pipeline.Config.repo/0` — which is exactly how package code reaches a
+  host's repo in production. (In the umbrella era this worked for a different
+  reason: `mix test` from the umbrella root started every umbrella app,
+  measured 2026-08-14.)
 
   *Reachable* is not the same as *checkout-able*: `Sandbox.checkout/1` below
-  needs the repo in `:manual` mode, and this package's own
-  `test/test_helper.exs` is what puts it there. It deliberately does not lean
-  on a sibling umbrella app's helper having run first — see the comment there.
+  needs the repo in `:manual` mode, and this repo's own `test/test_helper.exs`
+  is what puts it there — see the comment there.
 
   **Not `async: true`** — the sandbox is checked out explicitly rather than
   through a `DataCase` this tree cannot see.

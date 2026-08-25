@@ -2,8 +2,8 @@ defmodule ALLM.Pipeline.LLM do
   @moduledoc """
   The seam through which the package calls a host's LLM engine.
 
-  `apps/allm_pipeline` declares no umbrella dependency (see
-  `apps/allm_pipeline/CLAUDE.md` §1), so `ALLM.Pipeline.LLMStep` **cannot name**
+  The package declares no host dependency (see this repo's `CLAUDE.md` §1),
+  so `ALLM.Pipeline.LLMStep` **cannot name**
   `AmesburyScraper.Transformers.LLMEngine`. The engine is reached at RUNTIME
   through `impl/0` instead, exactly as the repo is reached through
   `ALLM.Pipeline.Config.repo/0` and the persistence adapter through

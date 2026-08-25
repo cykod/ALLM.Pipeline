@@ -6,7 +6,7 @@ defmodule ALLM.Pipeline.ArtifactStoreTest do
 
   Moved from `apps/amesbury_scraper/test/` in batch 1.D, where it was
   `use AmesburyScraper.DynamoCase`. **That template did not move with it**: six
-  other host test files still `use` it —
+  other host test files (in the Amesbury umbrella repo) still `use` it —
 
       # Anchored to the DECLARATION form, not the bare name: a substring grep now
       # also matches this moduledoc, §5.5, the host `test_helper.exs`'s prose and

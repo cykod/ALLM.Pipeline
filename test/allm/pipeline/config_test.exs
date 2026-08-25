@@ -29,7 +29,7 @@ defmodule ALLM.Pipeline.ConfigTest do
   setup do
     # The host installs all three of these at `:amesbury_scraper` boot, so each
     # test establishes the value it depends on and restores what it found (see
-    # apps/allm_pipeline/CLAUDE.md §5).
+    # this repo's CLAUDE.md §5).
     originals =
       Map.new([:repo, :alert_on_empty, :lock_keys], fn key ->
         {key, Application.fetch_env(:amesbury_scraper, key)}

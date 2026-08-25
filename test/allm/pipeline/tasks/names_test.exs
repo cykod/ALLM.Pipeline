@@ -3,10 +3,10 @@ defmodule Mix.Tasks.AllmPipeline.NamesTest do
   Pins the `mix allm_pipeline.names` task's pure rendering and the registry's
   `pipelines:` contract from the PACKAGE side.
 
-  The package names no host module (`apps/allm_pipeline/CLAUDE.md` §1), so this
+  The package names no host module (this repo's `CLAUDE.md` §1), so this
   test drives a throwaway fixture registry rather than `Amesbury.Pipelines`. The
   host-side parity (registry metadata == `Runner`'s hand-maintained lists) lives
-  in `apps/amesbury_scraper/test/amesbury_scraper/runner_test.exs`, which can
+  in the Amesbury repo's `apps/amesbury_scraper/test/amesbury_scraper/runner_test.exs`, which can
   name the host.
   """
 

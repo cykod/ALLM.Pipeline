@@ -5,7 +5,7 @@ defmodule ALLM.Pipeline.FanOutReduceTest do
   `ALLM.Pipeline.FanOutTest`, which machine-guards the `Task.async_stream` site
   set; `reduce/5` adds none (it is sequential-only) so that guard stays green.
 
-  DB-backed, per `apps/allm_pipeline/CLAUDE.md` §3: the lineage assertions
+  DB-backed, per this repo's `CLAUDE.md` §3: the lineage assertions
   observe real `step_logs` rows, so an in-memory test of them would see nothing.
 
   Each test names the wrong implementation it rejects.

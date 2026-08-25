@@ -23,9 +23,9 @@ defmodule Mix.Tasks.AllmPipeline.Names do
 
   ## Host-agnostic registry discovery
 
-  This is a **package** task and the package names no host module (a
-  `{:amesbury, in_umbrella: true}` dep is a deliberate compile error — see
-  `apps/allm_pipeline/CLAUDE.md` §1). So it finds the registry the same way
+  This is a **package** task and the package names no host module (a host
+  dep is deliberately absent, so the reach is a compile error — see this
+  repo's `CLAUDE.md` §1). So it finds the registry the same way
   `Mix.Tasks.AllmPipeline.Nilability` finds schema modules: it enumerates every
   loaded module via `Application.loaded_applications/0` + `Application.spec/2` and
   keeps the one exporting the `__allm_pipeline_registry__?/0` marker that

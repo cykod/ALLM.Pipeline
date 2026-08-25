@@ -19,10 +19,10 @@ defmodule ALLM.Pipeline.TestSupport.TargetDeclaration do
   It is a **fixture, not the port**. It runs nothing; `dsl_test.exs` only reads
   its `__pipeline__/1`. Two consequences to keep in mind when editing it:
 
-  * The module name is a package name. `apps/allm_pipeline` deliberately
-    declares no umbrella dependency, so `AmesburyScraper.Pipelines.*` and its
+  * The module name is a package name. The package deliberately
+    declares no host dependency, so `AmesburyScraper.Pipelines.*` and its
     real Steps cannot be named here — that is a compile error by design
-    (`apps/allm_pipeline/CLAUDE.md` §1). The *shape* is what is being proven,
+    (this repo's `CLAUDE.md` §1). The *shape* is what is being proven,
     not the names.
   * Every hook below is a `defp`. That is the point of the atom form: a hook
     atom expands to a local capture at `__before_compile__`, when the function

@@ -118,29 +118,15 @@ defmodule ALLM.Pipeline.EncodableTest do
       # uniqueness"
       # (`apps/amesbury_scraper/test/amesbury_scraper/pipeline/framework_boundary_guards_test.exs`
       # in the Amesbury umbrella).
-      root = Path.join([__DIR__, "..", "..", ".."])
-      lib = Path.join(root, "lib")
-
-      # A grep guard whose success signal is "found nothing" fails OPEN: a
-      # zero-file glob makes every filter below yield `[]` and reports green
-      # while guarding nothing (root CLAUDE.md: "whenever a procedure's success
-      # signal is 'nothing changed', add a step confirming something did"). The
-      # floor is set well under the live count (40 on 2026-08-25 —
-      # `find lib -name '*.ex' | wc -l`) so ordinary growth/removal doesn't
-      # trip it; only a tree that MOVED does.
-      matched = lib |> Path.join("**/*.ex") |> Path.wildcard()
-
-      assert length(matched) > 10,
-             "the guard glob matched only #{length(matched)} files under #{lib} — " <>
-               "the tree moved and this test is no longer scanning it. Re-point the guard."
-
+      # Glob + fail-open floor live in the shared scaffold (extracted in Phase
+      # 8.4, Rule of 3 — see `ALLM.Pipeline.TestSupport.LibScan`'s moduledoc).
       offenders =
-        matched
+        ALLM.Pipeline.TestSupport.LibScan.lib_files!()
         |> Enum.reject(&(Path.basename(&1) == "encodable.ex"))
         |> Enum.filter(fn path ->
           File.read!(path) =~ ~r/def(p)?\s+(normalize_metadata|stringify_keys)\s*\(/
         end)
-        |> Enum.map(&Path.relative_to(&1, root))
+        |> Enum.map(&Path.relative_to(&1, ALLM.Pipeline.TestSupport.LibScan.root()))
 
       assert offenders == [],
              "these modules re-implement jsonb normalization instead of calling " <>

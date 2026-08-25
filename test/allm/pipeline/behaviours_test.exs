@@ -31,7 +31,7 @@ defmodule ALLM.Pipeline.BehavioursTest do
 
   Its scope is **modules inside `:allm_pipeline`**, which is the right scope for
   a package guard but narrower than "the SET" alone implies: a host-side adapter
-  living in `apps/amesbury_scraper` is invisible to it. If one ever ships, this
+  living in a consumer repo (Amesbury's `apps/amesbury_scraper`) is invisible to it. If one ever ships, this
   guard must grow a second application to walk.
 
   `Store.Memory` is deliberately absent from the store's adapter list and is
@@ -64,8 +64,8 @@ defmodule ALLM.Pipeline.BehavioursTest do
   # which the package can supply, and a silently-neutral default would let a step
   # report success having called no model.
   #
-  # Their conformance is asserted on the HOST side, where the adapter lives:
-  # `apps/amesbury_scraper/test/amesbury_scraper/pipelines/llm_test.exs`. This
+  # Their conformance is asserted on the HOST side, where the adapter lives
+  # (Amesbury repo: `apps/amesbury_scraper/test/amesbury_scraper/pipelines/llm_test.exs`). This
   # file's scope is modules inside `:allm_pipeline`, which is why it can see the
   # behaviour and not its only implementation.
   @host_seams [LLM]
@@ -162,7 +162,7 @@ defmodule ALLM.Pipeline.BehavioursTest do
       listed = for {behaviour, adapters, _default} <- @seams, a <- adapters, do: {behaviour, a}
 
       assert Enum.sort(discovered) == Enum.sort(listed),
-             "a module in apps/allm_pipeline declares a seam @behaviour without joining @seams " <>
+             "a module in this package declares a seam @behaviour without joining @seams " <>
                "(or @seams lists an adapter that no longer declares one)"
     end
 
@@ -178,7 +178,7 @@ defmodule ALLM.Pipeline.BehavioursTest do
       assert length(discovered) >= length(registered)
 
       assert Enum.sort(discovered) == Enum.sort(registered),
-             "a behaviour was added to apps/allm_pipeline without joining @seams, @host_seams " <>
+             "a behaviour was added to this package without joining @seams, @host_seams " <>
                "or @not_seams — decide which it is rather than letting it default to unguarded"
     end
   end
@@ -221,9 +221,9 @@ defmodule ALLM.Pipeline.BehavioursTest do
     # default would let a step report success having called no model), and a
     # wired one must resolve at runtime rather than at compile time.
     #
-    # `Amesbury.Pipelines` installs a real `llm:` at boot in this VM, so the
-    # unwired half is only observable by deleting the key and restoring it —
-    # `apps/allm_pipeline/CLAUDE.md` §5.
+    # A host registry (or config) may have installed a real `llm:` in this VM,
+    # so the unwired half is only observable by deleting the key and restoring
+    # it — this repo's `CLAUDE.md` §5.
     test "impl/0 raises when the host declared none, and resolves one when it did" do
       for behaviour <- @host_seams do
         original = Application.get_env(:amesbury_scraper, behaviour)

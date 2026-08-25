@@ -5,7 +5,7 @@ defmodule ALLM.Pipeline.StepLogSerializationTest.Fixtures do
   Every schema here is defined in the test tree on purpose: a module absent from
   `Application.spec(:allm_pipeline, :modules)` cannot be mistaken for a shipped
   part of the package, and the package tree may not name a host module at all
-  (`apps/allm_pipeline/CLAUDE.md` §1). The two `AgendaFlagged` / `AgendaLogged`
+  (this repo's `CLAUDE.md` §1). The two `AgendaFlagged` / `AgendaLogged`
   schemas are the Phase 2 gate: the SAME field name, divergent flags, which the
   pre-2.2 global-by-field-name drop list made unsayable.
   """
@@ -113,7 +113,7 @@ defmodule ALLM.Pipeline.StepLogSerializationTest do
   package-owned fixtures. Discharges the Phase 2 coverage item `.work/HANDOFF.md`
   carried from batch 1.D: the package had **no** test for `StepLog`.
 
-  This file answers *"is the contract right"*.
+  This file answers *"is the contract right"*. The Amesbury repo's
   `apps/amesbury_scraper/test/amesbury_scraper/pipeline/step_log_test.exs`
   answers *"does it work on Amesbury's real steps"* — a different question, which
   is why that file stayed host-side and must not be folded in here.

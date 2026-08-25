@@ -13,7 +13,7 @@ defmodule ALLM.Pipeline.Artifacts.Memory do
 
   The `Agent` is started on demand and named after this module, matching
   `ALLM.Pipeline.LLMCallLog` — the package declares no supervision tree
-  (`apps/allm_pipeline/mix.exs` has no `mod:`), so there is nothing to start it
+  (this repo's `mix.exs` has no `mod:`), so there is nothing to start it
   under. It is process-global, therefore **shared across concurrent tests**:
   ids collide across tests unless each generates its own, and `gc/1` with no
   options purges everything. Call `gc/1` in a `setup` block rather than

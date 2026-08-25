@@ -9,7 +9,8 @@ defmodule ALLM.Pipeline.Text do
   These were duplicated in the host as `Amesbury.TextSanitizer` for Phases 1–6
   (the core `amesbury` app could not yet name `ALLM.Pipeline.*`), guarded against
   drift by a host-side parity test. **Phase 7.2 (2026-08-24) converged them**:
-  the core app took the `{:allm_pipeline, in_umbrella: true}` dependency (7.1),
+  the host's core app took its own `:allm_pipeline` dependency (7.1 — an
+  in-umbrella dep then; the Phase 8 path dep now),
   `Amesbury.TextSanitizer` and the parity test were deleted, and every scrub call
   site — `Amesbury.Government` (×3) plus `AmesburyScraper`'s `LLMEngine` and
   `DocumentExtractionClient` — re-points here. This module is now the only copy,

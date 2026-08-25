@@ -10,7 +10,7 @@ defmodule ALLM.Pipeline.MetricsTest do
   `ordinance_scrape` / `poi_thumbnails` out. Those names are host domain
   knowledge, which batch 1.C moved OUT of the framework and onto
   `Amesbury.Pipelines`; re-asserting them here would put it straight back, one
-  tree over. They live in
+  tree over. They live in the Amesbury repo's
   `apps/amesbury_scraper/test/amesbury/pipelines_declared_values_test.exs`,
   beside `pipelines_test.exs`'s derived-SET guard, which is where
   `pipelines_test.exs`'s own moduledoc says the concrete values stay pinned.
@@ -226,7 +226,7 @@ defmodule ALLM.Pipeline.MetricsTest do
     end
 
     # The two `found: 0` cases — one allowlisted name, one not — moved to
-    # `apps/amesbury_scraper/test/amesbury/pipelines_declared_values_test.exs`
+    # the Amesbury repo's `apps/amesbury_scraper/test/amesbury/pipelines_declared_values_test.exs`
     # in batch 1.D, together with the whole `expects_data?/1` describe. All
     # three depend on WHICH names Amesbury declares under `alert_on_empty:`,
     # which is host domain knowledge; see this module's moduledoc.

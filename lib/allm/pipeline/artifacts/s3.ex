@@ -99,9 +99,14 @@ defmodule ALLM.Pipeline.Artifacts.S3 do
     if reachable?() do
       {[], nil}
     else
+      endpoint =
+        Application.get_env(:amesbury_scraper, __MODULE__, [])
+        |> Keyword.get(:endpoint, "the default AWS endpoint")
+
       {[:s3, :skip_unless_s3],
-       "\n[test_helper] S3/MinIO is unreachable at #{inspect(bucket())} — excluding " <>
-         ":s3 / :skip_unless_s3 tests. Start it with " <>
+       "\n[test_helper] S3/MinIO is unreachable at #{endpoint} " <>
+         "(bucket #{inspect(bucket())}) — excluding :s3 / :skip_unless_s3 tests. " <>
+         "Start the local stack — in the Amesbury umbrella repo that is " <>
          "`docker-compose -f docker-compose.dev.yml up -d minio`.\n"}
     end
   end
