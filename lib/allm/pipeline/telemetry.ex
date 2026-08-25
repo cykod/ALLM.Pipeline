@@ -79,33 +79,16 @@ defmodule ALLM.Pipeline.Telemetry do
   @step_exception [:allm_pipeline, :step, :exception]
   @artifact_store [:allm_pipeline, :artifact, :store]
 
+  # Only `step_stop_event/0` is exported: it is the one event name with a live
+  # consumer (`ALLM.Pipeline.Metrics.attach_step_handler/0`). The other six
+  # families have no consumer today, so an accessor apiece would be YAGNI public
+  # surface — a host attaches to them by their documented literal name (the
+  # `## Events` table above), the same way the pre-existing `LLMTelemetry` does.
+  # Re-add a `*_event/0` accessor the day a consumer references that event by
+  # name rather than by literal.
   @doc "The `[:allm_pipeline, :step, :stop]` event name (the queue_time handler attaches to it)."
   @spec step_stop_event() :: [atom(), ...]
   def step_stop_event, do: @step_stop
-
-  @doc "The `[:allm_pipeline, :step, :start]` event name."
-  @spec step_start_event() :: [atom(), ...]
-  def step_start_event, do: @step_start
-
-  @doc "The `[:allm_pipeline, :step, :exception]` event name."
-  @spec step_exception_event() :: [atom(), ...]
-  def step_exception_event, do: @step_exception
-
-  @doc "The `[:allm_pipeline, :run, :start]` event name."
-  @spec run_start_event() :: [atom(), ...]
-  def run_start_event, do: @run_start
-
-  @doc "The `[:allm_pipeline, :run, :stop]` event name."
-  @spec run_stop_event() :: [atom(), ...]
-  def run_stop_event, do: @run_stop
-
-  @doc "The `[:allm_pipeline, :run, :exception]` event name."
-  @spec run_exception_event() :: [atom(), ...]
-  def run_exception_event, do: @run_exception
-
-  @doc "The `[:allm_pipeline, :artifact, :store]` event name."
-  @spec artifact_store_event() :: [atom(), ...]
-  def artifact_store_event, do: @artifact_store
 
   @doc "Emit `[:allm_pipeline, :run, :start]`."
   @spec run_start(map()) :: :ok

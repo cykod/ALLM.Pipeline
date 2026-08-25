@@ -114,6 +114,12 @@ defmodule ALLM.Pipeline.Query do
   @spec fetch_artifact(String.t()) :: {:ok, binary()} | {:error, term()}
   def fetch_artifact(url), do: ArtifactStore.fetch(url)
 
+  # One point-get per examined hop: the shared `build_lineage_tree/1` CTE does not
+  # SELECT `llm_artifact_url`, so this re-fetches each candidate step to read it.
+  # A deliberate tradeoff — widening the shared CTE's SELECT would change
+  # `lineage_tree/1`'s output shape. `Enum.find_value` short-circuits on the first
+  # hit and lineage chains are short, so the walk is bounded and this debug path
+  # is rare.
   @spec step_llm_artifact_url(Ecto.UUID.t()) :: String.t() | nil
   defp step_llm_artifact_url(step_id) do
     case StepLog.get(step_id) do

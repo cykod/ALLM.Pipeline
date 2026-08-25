@@ -82,47 +82,30 @@ defmodule ALLM.Pipeline.Artifacts.S3Test do
     end
   end
 
-  # MinIO does not pre-create the artifacts bucket, so the test does. Idempotent:
-  # a 409 (bucket already there) is fine.
+  # MinIO does not pre-create the artifacts bucket, so the test does. Only the
+  # genuinely-idempotent outcomes collapse to `:ok`; any other error (a real 500,
+  # auth failure, connection reset) `flunk`s at its cause rather than being
+  # swallowed and re-surfacing later as a confusing put/fetch failure.
   defp ensure_bucket! do
     bucket = S3.bucket()
     request = ExAws.S3.put_bucket(bucket, region())
 
-    case ExAws.request(request, ex_aws_config()) do
+    case ExAws.request(request, S3.ex_aws_config()) do
       {:ok, _} ->
         :ok
 
+      # Bucket already there — idempotent success (409, or BucketAlreadyOwnedByYou
+      # on some MinIO builds).
       {:error, {:http_error, 409, _}} ->
         :ok
 
-      # BucketAlreadyOwnedByYou / already exists on some MinIO builds.
-      {:error, {:http_error, _status, %{body: body}}} ->
+      {:error, {:http_error, _status, %{body: body}}} = error ->
         if is_binary(body) and String.contains?(body, "BucketAlreadyOwnedByYou"),
           do: :ok,
-          else: :ok
+          else: flunk("MinIO bucket setup failed: #{inspect(error)}")
 
-      _ ->
-        :ok
-    end
-  end
-
-  # Same construction as the adapter's private `ex_aws_config/0`, reading the
-  # same config key — a test may not call a private helper.
-  defp ex_aws_config do
-    config = Application.get_env(:amesbury_scraper, S3, [])
-    base = if region = Keyword.get(config, :region), do: [region: region], else: []
-
-    case Keyword.get(config, :endpoint) do
-      nil ->
-        base
-
-      endpoint ->
-        uri = URI.parse(endpoint)
-
-        base
-        |> Keyword.put(:host, uri.host)
-        |> Keyword.put(:port, uri.port)
-        |> Keyword.put(:scheme, "#{uri.scheme}://")
+      {:error, reason} ->
+        flunk("MinIO bucket setup failed: #{inspect(reason)}")
     end
   end
 

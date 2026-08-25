@@ -396,7 +396,12 @@ defmodule ALLM.Pipeline.Executor do
 
     # Structured metadata so every log line the step emits is correlatable
     # (extraction plan §3.7). Set BEFORE the step runs — set after, the step's
-    # own log lines would carry no run/step id.
+    # own log lines would carry no run/step id. Snapshot the prior metadata and
+    # restore it in the `after` below: on the sequential/driver process these
+    # keys would otherwise linger past the step, tagging unrelated later log
+    # lines with a stale step id.
+    prior_metadata = Logger.metadata()
+
     Logger.metadata(
       run_id: pipeline_run.id,
       step_id: step_log.id,
@@ -444,6 +449,10 @@ defmodule ALLM.Pipeline.Executor do
         )
 
         result
+    after
+      # Restore the process's pre-step Logger metadata so the step-scoped keys
+      # do not linger on the driver process after the step (success or raise).
+      Logger.reset_metadata(prior_metadata)
     end
   end
 

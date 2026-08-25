@@ -271,8 +271,14 @@ defmodule ALLM.Pipeline.Artifacts.S3 do
   # `:endpoint` is configured (local MinIO/localstack) its host/port/scheme are
   # threaded through so S3 requests hit it instead of real AWS — mirroring
   # `Amesbury.Media.S3.aws_config/0`. Region falls back to the ExAws default.
+  #
+  # Exposed `@doc false` (not `defp`) so `s3_test.exs` exercises the real config
+  # threading instead of hand-copying it — the sanctioned escape hatch for a
+  # test that may not call a private helper (see `CLAUDE.md`,
+  # `MeetingSummaryTransformer.meeting_summary_schema/0`).
+  @doc false
   @spec ex_aws_config() :: keyword()
-  defp ex_aws_config do
+  def ex_aws_config do
     config = Application.get_env(:amesbury_scraper, __MODULE__, [])
     base = if region = Keyword.get(config, :region), do: [region: region], else: []
 

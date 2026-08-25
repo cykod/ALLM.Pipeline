@@ -55,6 +55,14 @@ defmodule ALLM.Pipeline.Artifacts.Tiered do
   def put(id, content, content_type, meta) do
     {small, large} = tiers()
 
+    # NOTE: the routing metric is hard-coded to `Dynamo.encoded_size/1` (base64
+    # inflation) and `threshold/0` defaults to DynamoDB's item capacity — correct
+    # for the only shipped wiring (`small: Dynamo`), leaky for any other. A
+    # non-Dynamo small tier would inherit Dynamo-shaped routing; only that
+    # adapter's own `:too_large` fallback below would correct a misroute. Left
+    # coupled by YAGNI (one wiring today); derive the size-measure from `small`
+    # when a second small tier lands. Read dispatch (fetch/delete/exists) IS
+    # adapter-agnostic — see the moduledoc.
     adapter =
       if Dynamo.encoded_size(content) <= threshold() do
         small

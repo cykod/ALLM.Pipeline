@@ -385,6 +385,17 @@ defmodule ALLM.Pipeline.Registry do
   # nothing else. `put_new` at the whole-key level, matching the seam asymmetry
   # above: a config-file `config :amesbury_scraper, <Adapter>, …` override wins,
   # per environment. The bare-module form carries `[]` and installs nothing.
+  #
+  # FOOT-GUN (intentional, tested by `registry_test.exs` "a config-file value for
+  # the adapter key outranks the installed opts"): this is whole-key, NOT per-key.
+  # If a config file sets ANY key under the adapter (e.g. only `small:`), the
+  # declaration's `large:` / `threshold:` are NOT merged in — the config file
+  # replaces the opts wholesale, and a partial override then crashes at
+  # `Tiered.tiers/0`'s `Keyword.fetch!(config, :large)` on the first large-tier
+  # put. A config-file override of an adapter's own key must name EVERY key it
+  # relies on. Deliberately not changed to a per-key merge: that would invert the
+  # documented `put_new` contract (moduledoc "The `artifacts:` tuple form") and
+  # the enshrining test.
   @spec install_artifacts_opts(declaration()) :: :ok
   defp install_artifacts_opts(%{artifacts_opts: []}), do: :ok
 
