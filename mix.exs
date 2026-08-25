@@ -5,15 +5,18 @@ defmodule ALLMPipeline.MixProject do
     [
       app: :allm_pipeline,
       version: "0.1.0",
-      build_path: "../../_build",
-      config_path: "../../config/config.exs",
-      deps_path: "../../deps",
-      lockfile: "../../mix.lock",
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
-      deps: deps()
+      deps: deps(),
+      aliases: aliases(),
+      description: description(),
+      package: package()
     ]
+  end
+
+  def cli do
+    [preferred_envs: [precommit: :test]]
   end
 
   # No `mod:` — the package starts no supervision tree. `LLMCallLog` starts its
@@ -28,29 +31,52 @@ defmodule ALLMPipeline.MixProject do
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
+  defp description do
+    "A step-based LLM pipeline framework: typed steps with persistent step logs, " <>
+      "artifact lineage, run lifecycle ownership, and a declarative pipeline DSL."
+  end
+
+  defp package do
+    [
+      licenses: ["MIT"],
+      files: ~w(lib .formatter.exs mix.exs README.md LICENSE CLAUDE.md)
+      # No `links:` until a public remote exists (extraction plan Phase 8,
+      # assumption 2). Publishing itself is a non-goal; this block is
+      # publish-READINESS only.
+    ]
+  end
+
   defp deps do
     [
-      # ⚠️ THE LOAD-BEARING OMISSION: there is deliberately NO
-      # `{:amesbury, in_umbrella: true}` here, and none of the other umbrella
-      # apps either. It looks like a mistake; it is the entire point.
+      # ⚠️ THE LOAD-BEARING OMISSION: there is deliberately NO dependency on any
+      # host application here. It looks sparse; it is the entire point.
       #
-      # `allm_pipeline` is a leaf app headed for hex (extraction plan Phase 8).
-      # Leaving the host out of its dep list makes the umbrella compiler enforce
-      # the dependency direction: any reach back into `Amesbury.*` or
-      # `AmesburyScraper.*` from this tree is a compile error at
-      # `--warnings-as-errors`, not a review finding somebody has to notice.
-      # That is what lets the package be developed in-tree with no version skew
-      # against the published copy.
+      # `allm_pipeline` began life as a leaf app inside the Amesbury umbrella,
+      # where the omitted `{:amesbury, in_umbrella: true}` made the umbrella
+      # compiler enforce the dependency direction. The repo boundary now
+      # enforces the same rule even harder: naming a host module (`Amesbury.*`,
+      # `AmesburyScraper.*`, or any other consumer's namespace) anywhere in
+      # `lib/` is a compile error, not a review finding somebody has to notice.
+      # That is what lets a host consume the package as a path dep with no
+      # version skew.
       #
-      # Host-supplied collaborators are resolved at RUNTIME instead — today just
-      # the Ecto repo, via `ALLM.Pipeline.Config.repo/0`.
-      # See steering/2026-08-10_ALLM_PIPELINE_PHASE_1.md §1, §5.1.
+      # Host-supplied collaborators are resolved at RUNTIME instead — the Ecto
+      # repo and the seam adapters, via `use ALLM.Pipeline.Registry` in the
+      # host (see `ALLM.Pipeline.Registry`'s moduledoc).
 
       # Persistence — the package ships Ecto schemas (`PipelineRun`, `StepLog`,
       # `PipelineMetric`) and raw SQL (`StepLog.build_lineage_tree/1`), but owns
-      # no repo and no migrations. Migrations stay in the host (§5.4).
+      # no repo and no production migrations. Migrations stay in the host
+      # ("table names are contract"); `priv/test_repo/migrations/` is
+      # test-harness DDL only, parity-checked against the host's.
       {:ecto, "~> 3.13"},
       {:ecto_sql, "~> 3.13"},
+
+      # The standalone test harness's `ALLM.Pipeline.TestRepo` uses
+      # `Ecto.Adapters.Postgres`, which cannot load without postgrex. A host
+      # supplies its own repo (and therefore its own driver), so this is
+      # test-only here.
+      {:postgrex, ">= 0.0.0", only: :test},
 
       # Artifact bodies and jsonb-bound metadata.
       {:jason, "~> 1.2"},
@@ -70,7 +96,22 @@ defmodule ALLMPipeline.MixProject do
       # is absent.
       {:ex_aws, "~> 2.5", optional: true},
       {:ex_aws_dynamo, "~> 4.2", optional: true},
-      {:ex_aws_s3, "~> 2.5", optional: true}
+      {:ex_aws_s3, "~> 2.5", optional: true},
+
+      # Dialyzer stays a separate manual step, matching the host convention
+      # (`mix precommit` does not run it).
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+    ]
+  end
+
+  defp aliases do
+    [
+      test: [
+        "ecto.create --quiet -r ALLM.Pipeline.TestRepo",
+        "ecto.migrate --quiet -r ALLM.Pipeline.TestRepo --migrations-path priv/test_repo/migrations",
+        "test"
+      ],
+      precommit: ["compile --warnings-as-errors", "format", "test --warnings-as-errors"]
     ]
   end
 end

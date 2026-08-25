@@ -110,45 +110,37 @@ defmodule ALLM.Pipeline.EncodableTest do
     # this module was created to retire, so pin that no sibling framework module
     # grows a third.
     test "no other pipeline module defines a jsonb-normalizer" do
-      # Scans BOTH trees. The invariant spans the app split: the framework is in
-      # `allm_pipeline`, but a HOST module (a pipeline, a loader) can grow a
-      # second normalizer just as easily, and the guard has to see it.
-      apps = Path.join([__DIR__, "..", "..", "..", ".."])
-
-      trees = [
-        {"allm_pipeline (the framework)", Path.join([apps, "allm_pipeline", "lib"]), 10},
-        {"amesbury_scraper (the host)", Path.join([apps, "amesbury_scraper", "lib"]), 100}
-      ]
+      # Scans THIS repo's `lib/` only. The invariant still spans the repo split
+      # — a HOST module (a pipeline, a loader) can grow a second normalizer just
+      # as easily — but the host tree is a different repo now (Phase 8.1
+      # narrowing). The host half lives in its own twin:
+      # `AmesburyScraper.Pipeline.FrameworkBoundaryGuardsTest`, "normalizer
+      # uniqueness"
+      # (`apps/amesbury_scraper/test/amesbury_scraper/pipeline/framework_boundary_guards_test.exs`
+      # in the Amesbury umbrella).
+      root = Path.join([__DIR__, "..", "..", ".."])
+      lib = Path.join(root, "lib")
 
       # A grep guard whose success signal is "found nothing" fails OPEN: a
       # zero-file glob makes every filter below yield `[]` and reports green
-      # while guarding nothing. Each tree carries its OWN floor so that moving
-      # *one* of them cannot be masked by the other still matching (root
-      # CLAUDE.md: "whenever a procedure's success signal is 'nothing changed',
-      # add a step confirming something did"). Floors are set well under the
-      # counts re-measured 2026-08-14 (24 and 210 — `find apps/<app>/lib -name
-      # '*.ex' | wc -l`) so ordinary growth/removal doesn't trip them; only a
-      # tree that MOVED does. The 2026-08-13 figures this comment used to carry
-      # (18 and 209) predated the framework move.
-      files =
-        Enum.flat_map(trees, fn {label, dir, floor} ->
-          matched = dir |> Path.join("**/*.ex") |> Path.wildcard()
+      # while guarding nothing (root CLAUDE.md: "whenever a procedure's success
+      # signal is 'nothing changed', add a step confirming something did"). The
+      # floor is set well under the live count (40 on 2026-08-25 —
+      # `find lib -name '*.ex' | wc -l`) so ordinary growth/removal doesn't
+      # trip it; only a tree that MOVED does.
+      matched = lib |> Path.join("**/*.ex") |> Path.wildcard()
 
-          assert length(matched) > floor,
-                 "the guard glob matched only #{length(matched)} files under #{dir} " <>
-                   "(#{label}) — that tree moved and this test is no longer scanning " <>
-                   "it. Re-point the guard."
-
-          matched
-        end)
+      assert length(matched) > 10,
+             "the guard glob matched only #{length(matched)} files under #{lib} — " <>
+               "the tree moved and this test is no longer scanning it. Re-point the guard."
 
       offenders =
-        files
+        matched
         |> Enum.reject(&(Path.basename(&1) == "encodable.ex"))
         |> Enum.filter(fn path ->
           File.read!(path) =~ ~r/def(p)?\s+(normalize_metadata|stringify_keys)\s*\(/
         end)
-        |> Enum.map(&Path.relative_to(&1, apps))
+        |> Enum.map(&Path.relative_to(&1, root))
 
       assert offenders == [],
              "these modules re-implement jsonb normalization instead of calling " <>

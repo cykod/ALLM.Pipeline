@@ -1,0 +1,15 @@
+# Build artifacts
+/_build/
+/deps/
+/doc/
+/cover/
+
+# Generated on crash by the VM
+erl_crash.dump
+
+# Elixir language server
+/.elixir_ls/
+/.lexical/
+
+# Editor/OS noise
+.DS_Store

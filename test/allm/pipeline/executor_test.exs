@@ -923,56 +923,47 @@ defmodule ALLM.Pipeline.ExecutorTest do
     # `Keyword.fetch(opts, :pipeline_run)` would hand the inner pipeline an OWNING
     # handle and silently restore the pre-fix clobber.
     test "every borrowed-run read goes through borrowed_run/1" do
-      # Scans BOTH trees. The invariant spans the app split: `borrowed_run/1`
-      # lives in `allm_pipeline`, but the modules that must funnel through it
-      # are host pipelines, and a future framework module could read the opt too.
-      apps = Path.join([__DIR__, "..", "..", "..", ".."])
-
-      trees = [
-        {"allm_pipeline (the framework)", Path.join([apps, "allm_pipeline", "lib"]), 10},
-        {"amesbury_scraper (the host)", Path.join([apps, "amesbury_scraper", "lib"]), 100}
-      ]
+      # Scans THIS repo's `lib/` only. The invariant still spans the repo split
+      # — host pipelines must funnel through `borrowed_run/1` too — but the host
+      # tree is a different repo now (Phase 8.1 narrowing). The host half lives
+      # in its own twin: `AmesburyScraper.Pipeline.FrameworkBoundaryGuardsTest`,
+      # "every borrowed-run read goes through borrowed_run/1"
+      # (`apps/amesbury_scraper/test/amesbury_scraper/pipeline/framework_boundary_guards_test.exs`
+      # in the Amesbury umbrella).
+      root = Path.join([__DIR__, "..", "..", ".."])
+      lib = Path.join(root, "lib")
 
       # A grep guard whose success signal is "found nothing" fails OPEN: a
       # zero-file glob makes every filter below yield `[]`, and the test reports
       # green while guarding nothing (root CLAUDE.md: "whenever a procedure's
       # success signal is 'nothing changed', add a step confirming something
-      # did"). Each tree carries its OWN floor so moving one cannot be masked by
-      # the other still matching. Floors sit well under the counts re-measured
-      # 2026-08-14 (24 and 210) — `find apps/<app>/lib -name '*.ex' | wc -l`.
-      # The 2026-08-13 figures this comment used to carry (18 and 209) predated
-      # the framework move and disagreed with §5.5 two files away.
-      files =
-        Enum.flat_map(trees, fn {label, lib, floor} ->
-          matched = lib |> Path.join("**/*.ex") |> Path.wildcard()
+      # did"). The floor sits well under the live count (40 on 2026-08-25 —
+      # `find lib -name '*.ex' | wc -l`, the command to re-derive rather than
+      # trust the integer).
+      matched = lib |> Path.join("**/*.ex") |> Path.wildcard()
 
-          assert length(matched) > floor,
-                 "the guard glob matched only #{length(matched)} files under #{lib} " <>
-                   "(#{label}) — that tree moved and this test is no longer scanning " <>
-                   "it. Re-point the guard."
-
-          matched
-        end)
+      assert length(matched) > 10,
+             "the guard glob matched only #{length(matched)} files under #{lib} — " <>
+               "the tree moved and this test is no longer scanning it. Re-point the guard."
 
       offenders =
-        files
+        matched
         # Only `ALLM.Pipeline.Executor` itself may read the opt directly —
-        # matched by path suffix, not basename. `amesbury_scraper/runner.ex`
-        # (the cron dispatcher, a DIFFERENT module that keeps its name) is now
-        # in a different tree AND has a different basename, but keep the suffix
-        # match: it is the property that made the exemption safe to begin with.
+        # matched by path suffix, not basename: it is the property that made
+        # the exemption safe to begin with.
         |> Enum.reject(&String.ends_with?(&1, "pipeline/executor.ex"))
         |> Enum.filter(fn path ->
           # Every Keyword READ accessor (`pop` included), any binding name — several
           # pipelines thread a `meeting_opts` rather than a literal `opts` — and the
           # `opts[:pipeline_run]` Access form, which works on keyword lists.
           # `Keyword.put`/`put_new` are deliberately absent: those are the LEND
-          # sites (`video_summary_pipeline.ex:194,433`), which are correct and must
-          # not be flagged. It is the receiving read that has to be funnelled.
+          # sites (host pipelines lending a run to an inner pipeline), which are
+          # correct and must not be flagged. It is the receiving read that has to
+          # be funnelled.
           File.read!(path) =~
             ~r/Keyword\.(fetch!?|get|get_lazy|pop!?|pop_lazy|take)\(\s*\w+,\s*:pipeline_run|\w+\[:pipeline_run\]/
         end)
-        |> Enum.map(&Path.relative_to(&1, apps))
+        |> Enum.map(&Path.relative_to(&1, root))
 
       assert offenders == [],
              "these modules read a borrowed run directly instead of via " <>

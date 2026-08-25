@@ -19,66 +19,46 @@ defmodule ALLM.Pipeline.FanOutTest do
 
   alias ALLM.Pipeline.FanOut
 
-  # `{app-relative path, call-site count}`. Re-derive with:
+  # `{repo-relative path, call-site count}`. Re-derive with:
   #
-  #   python3 scripts/refsweep.py 'Task\.async_stream\(' apps --include '*.ex' \
-  #     --format hits | grep -v '/test/'
+  #   grep -rn 'Task\.async_stream(' lib --include '*.ex'
   #
-  # The paren is load-bearing: `lib/` mentions `Task.async_stream` in prose 24
-  # more times than it calls it — re-derived 2026-08-21, after 4.4's port:
-  # 29 hits without the paren, 5 with (same sweep, `--include '*.ex'`,
-  # `grep -vc '/test/'`). A bare-substring guard would pin comment churn
-  # instead of call sites.
+  # The paren is load-bearing: `lib/` mentions `Task.async_stream` in prose
+  # more times than it calls it — a bare-substring guard would pin comment
+  # churn instead of call sites.
+  #
+  # Phase 8.1 narrowing: this test scans THIS repo's `lib/` only. The four
+  # HOST fan-out sites (poi_thumbnail_step, document_text_collector,
+  # http_scraper, project_scale_rescale) moved to the host twin:
+  # `AmesburyScraper.Pipeline.FrameworkBoundaryGuardsTest`, "fan-out site
+  # census" (`apps/amesbury_scraper/test/amesbury_scraper/pipeline/framework_boundary_guards_test.exs`
+  # in the Amesbury umbrella).
   @sites [
-    {"allm_pipeline/lib/allm/pipeline/dsl/runtime.ex", 1},
-    # `committee_pipeline.ex` had three until Phase 4.4 ported it onto
-    # `use ALLM.Pipeline`: its detail/transform/load fan-outs are now the
-    # framework's one `Task.async_stream`, which is the DSL centralizing fan-out
-    # exactly as designed. This guard failed by name when they went away, which
-    # is it working.
-    {"amesbury_scraper/lib/amesbury_scraper/pipelines/poi_thumbnail_step.ex", 1},
-    {"amesbury_scraper/lib/amesbury_scraper/processors/document_text_collector.ex", 1},
-    {"amesbury_scraper/lib/amesbury_scraper/scrapers/http_scraper.ex", 1},
-    {"amesbury_scraper/lib/amesbury_scraper/services/project_scale_rescale.ex", 1}
+    {"lib/allm/pipeline/dsl/runtime.ex", 1}
   ]
 
   describe "the Task.async_stream site set" do
     test "every fan-out in the repo is a known site, with a known call count" do
-      # Scans BOTH trees: the rule spans the app split — `FanOut` lives in
-      # `allm_pipeline` and most of its consumers are host pipelines.
-      # `Path.join([__DIR__, "..", "..", "..", ".."])` resolves to `apps/` from
-      # both `apps/<app>/test/<ns>/pipeline/` layouts; do NOT "fix" it.
-      apps = Path.join([__DIR__, "..", "..", "..", ".."])
-
-      trees = [
-        {"allm_pipeline (the framework)", Path.join([apps, "allm_pipeline", "lib"]), 10},
-        {"amesbury_scraper (the host)", Path.join([apps, "amesbury_scraper", "lib"]), 100}
-      ]
+      # Scans THIS repo's `lib/` only (Phase 8.1 narrowing — the host tree is a
+      # different repo; see the @sites comment for the host twin).
+      root = Path.join([__DIR__, "..", "..", ".."])
+      lib = Path.join(root, "lib")
 
       # FLOOR FIRST. A grep guard whose success signal is "found nothing" fails
       # OPEN: a zero-file glob makes the filter below yield `[]` and the test
-      # reports green while guarding nothing. Each tree carries its own floor so
-      # moving one cannot be masked by the other still matching. Floors sit well
-      # under the live counts — 35 and 211 on 2026-08-20
-      # (`find apps/<app>/lib -name '*.ex' | wc -l`), which is the command to
-      # re-derive rather than trust these two integers. They are deliberately
-      # slack: a floor tracking the real count would red on every file added.
-      # (Corrected 2026-08-20: this comment read 32 and 216 — drifted in
-      # OPPOSITE directions, so it was never a stale pre-batch measurement.)
-      files =
-        Enum.flat_map(trees, fn {label, lib, floor} ->
-          matched = lib |> Path.join("**/*.ex") |> Path.wildcard()
+      # reports green while guarding nothing. The floor sits well under the
+      # live count — 40 on 2026-08-25 (`find lib -name '*.ex' | wc -l`, which
+      # is the command to re-derive rather than trust the integer). It is
+      # deliberately slack: a floor tracking the real count would red on every
+      # file added.
+      matched = lib |> Path.join("**/*.ex") |> Path.wildcard()
 
-          assert length(matched) > floor,
-                 "the guard glob matched only #{length(matched)} files under #{lib} " <>
-                   "(#{label}) — that tree moved and this test is no longer scanning " <>
-                   "it. Re-point the guard."
-
-          matched
-        end)
+      assert length(matched) > 10,
+             "the guard glob matched only #{length(matched)} files under #{lib} — " <>
+               "the tree moved and this test is no longer scanning it. Re-point the guard."
 
       found =
-        files
+        matched
         |> Enum.map(fn path ->
           count =
             path
@@ -86,19 +66,18 @@ defmodule ALLM.Pipeline.FanOutTest do
             |> then(&Regex.scan(~r/Task\.async_stream\(/, &1))
             |> length()
 
-          {Path.relative_to(path, apps), count}
+          {Path.relative_to(path, root), count}
         end)
         |> Enum.reject(&(elem(&1, 1) == 0))
         |> Enum.sort()
 
       # POSITIVE CONTROL: the scan found something at all. Without it, a regex
       # that stopped matching would report an empty set and the `--` diffs below
-      # would both be empty.
-      # Floor sits BELOW the current set size (5) on purpose: at `>= 5` a
-      # legitimate REMOVAL of a fan-out trips this control first and reports
-      # "the pattern stopped matching" — the wrong diagnosis — instead of
-      # reaching the informative set diff below.
-      assert length(found) >= 4,
+      # would both be empty. With a single-site set this control necessarily
+      # equals the set size, so a legitimate removal of the last fan-out trips
+      # it first — if that ever happens, the fix is updating @sites AND this
+      # floor together, not deleting the control.
+      assert length(found) >= 1,
              "the scan found only #{length(found)} fan-out files — the pattern stopped " <>
                "matching, and the set comparison below would pass vacuously."
 
@@ -119,6 +98,12 @@ defmodule ALLM.Pipeline.FanOutTest do
       # merely DISCUSSED in the moduledoc — including, specifically, the one
       # module most likely to regain a fan-out. Markdown table rows are the only
       # lines starting with `|`.
+      #
+      # Phase 8.1 allowance: the table still carries the four HOST sites' rows.
+      # This test asserts @sites ⊆ rows only, so those rows are documented-but-
+      # not-scanned here — the moduledoc is frozen through 8.1-8.3 (`lib/`
+      # byte-identity invariant) and its rewrite (own row + a pointer to the
+      # host twin) is owned by 8.4's package-repo sweep.
       rows =
         FanOut
         |> moduledoc!()
@@ -152,6 +137,10 @@ defmodule ALLM.Pipeline.FanOutTest do
       # `Dsl.Runtime.run_concurrent/7` — the first real fan-out in
       # `apps/allm_pipeline/lib` — had no row: defensible as written, and wrong
       # for two subphases (`.work/HANDOFF.md`, 4.1 code review F10.2).
+      #
+      # Phase 8.1 note: the moduledoc's "in this repo — both trees" phrasing is
+      # umbrella-era prose, frozen through 8.1-8.3 by the `lib/` byte-identity
+      # invariant; 8.4's package-repo sweep rewrites it (and this test with it).
       doc = moduledoc!(FanOut)
 
       assert doc =~ "in this repo"
