@@ -111,8 +111,15 @@ longer reaches it, and this `test/` tree is never on the umbrella's load path
 Every package change gates with THIS repo's `mix precommit`. One asymmetric
 extra: the umbrella compiles this package under whatever toolchain compiles
 the umbrella (that host's global is Elixir 1.19.5/OTP 28), so the package must
-also stay warning-free there — checked from the umbrella root with
-`mix deps.compile allm_pipeline --force 2>&1 | grep -c 'warning:'` → 0.
+also stay warning-free there. Check it fail-closed from the umbrella root —
+never as a bare `… | grep -c 'warning:'`, whose success signal is emptiness
+(a compile ERROR also produces zero `warning:` lines, and the pipe eats the
+non-zero exit — the exit-code-by-pipe trap):
+
+    mix deps.compile allm_pipeline --force > /tmp/allm-compile.log 2>&1; echo "exit: $?"
+                                            # expect: exit: 0
+    grep -c 'Compiling' /tmp/allm-compile.log   # positive control — expect non-zero
+    grep -c 'warning:' /tmp/allm-compile.log    # expect 0
 
 (The umbrella-era failure this section used to document — `cd
 apps/allm_pipeline && mix test` dying in the umbrella's `runtime.exs` on a
