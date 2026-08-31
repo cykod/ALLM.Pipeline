@@ -16,7 +16,10 @@ defmodule ALLM.Pipeline.TestRepo.Migrations.CreatePipelineTables do
   transcribed — the package DB has no `committees`.)
 
   The package ships NO production migrations — table names are contract and the
-  host's migrations never move. This file is a hand-mirrored copy per the
+  host's migrations never move. This file is therefore also the canonical DDL
+  reference a NEW consumer copies into its own `priv/repo/migrations/` when
+  onboarding (adoption mechanics are in `guides/host_wiring.md`, not here). This
+  file is a hand-mirrored copy per the
   membership-guard rule; its drift guard is the executed column/index/constraint
   parity check against the host's test DB (Phase 8.1 success criterion 6), and
   the source migrations are frozen, so drift is one-directional (edits here

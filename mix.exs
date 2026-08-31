@@ -49,7 +49,12 @@ defmodule ALLMPipeline.MixProject do
       links: %{"GitHub" => @source_url},
       # `HISTORY.md` / `ASKS.md` / `steering` are dev-only and stay out of the
       # tarball; `mix hex.build` strips test-only deps from the metadata itself.
-      files: ~w(lib .formatter.exs mix.exs README.md CHANGELOG.md LICENSE CLAUDE.md)
+      # `guides/` is the consumer-onboarding hexdocs page;
+      # `priv/test_repo/migrations` is the canonical DDL a new host copies (both
+      # ship so a consumer can wire from the tarball alone — see
+      # `guides/host_wiring.md`).
+      files:
+        ~w(lib guides priv/test_repo/migrations .formatter.exs mix.exs README.md CHANGELOG.md LICENSE CLAUDE.md)
     ]
   end
 
@@ -57,7 +62,11 @@ defmodule ALLMPipeline.MixProject do
     [
       main: "readme",
       source_ref: "v#{@version}",
-      extras: ["README.md", "CHANGELOG.md"],
+      extras: [
+        "README.md",
+        "guides/host_wiring.md": [title: "Wiring a host"],
+        "CHANGELOG.md": []
+      ],
       # Prose references to private or `@doc false` targets. ExDoc autolinks
       # any `Mod.fun/arity` in backticks and warns when the target is private
       # or hidden; every entry below is a DELIBERATE reference (the moduledocs

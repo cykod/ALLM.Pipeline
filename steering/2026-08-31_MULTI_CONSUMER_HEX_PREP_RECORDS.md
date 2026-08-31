@@ -200,3 +200,118 @@ DYNAMODB_ENDPOINT=http://127.0.0.1:9 mix test   →  3 doctests, 600 tests, 0 fa
 Run in the devcontainer with `DATABASE_HOST=<compose-pg-ip>
 DATABASE_USER=postgres DATABASE_PASSWORD=postgres` (same environment note as
 subphase 1). Real services, nothing skipped.
+
+---
+
+## Subphase 4 — Consumer onboarding guide + DDL shipping
+
+**Status: Completed** (this repo's gates green — `mix precommit` exit 0, `mix
+docs` clean with the guide rendering 13 live moduledoc autolinks, `mix hex.build`
+packs both `guides/host_wiring.md` and the migration; review gates run and clean —
+functional-review APPROVED (both paths verified in the packed tarball, migration
+moduledoc-only, suite green), code-review ship-as-is (1 cosmetic Low: redundant
+`"CHANGELOG.md": []` in mix.exs, left for polish), security-review no-issues (1
+non-blocking INFO: the newly-shipped migration moduledoc names host details, but
+pre-existing and already shipped via CLAUDE.md — consistent with the design's
+accepted tarball position), design-review N/A (docs/packaging diff)). Umbrella
+schema-parity re-run DEFERRED (sibling repo absent) — safe by construction
+(moduledoc-only edit, zero DDL bytes), carried in HANDOFF for the user's host run.
+
+<details><summary>original "Built, gates pending" status (superseded by the Completed line above)</summary>
+
+Docs + packaging only; no `lib/` behavior change, no DDL byte change. The
+umbrella schema-parity re-run is DEFERRED — the sibling `~/Projects/amesbury`
+repo is absent from this environment (see the deferred note below).
+
+</details>
+
+### What changed
+
+- **`guides/host_wiring.md`** (NEW file; created the `guides/` dir — none
+  existed). A hexdocs extra with the five C4 sections, each **citing** its
+  normative moduledoc home rather than restating it (the design is emphatic
+  that inlining a second copy re-creates the two-sources-of-truth the moduledocs
+  warn about):
+  1. **Registry wiring** — the `use ALLM.Pipeline.Registry` declaration +
+     `install/0` from `Application.start/2`; points at `ALLM.Pipeline.Registry`'s
+     moduledoc for the key-mapping / `put_new` asymmetry / tuple form / when
+     `install/0` runs.
+  2. **The optional `llm:` seam** — undeclared ⇒ `ALLM.Pipeline.LLM.impl/0`
+     raises by design; points at `ALLM.Pipeline.LLM`'s moduledoc.
+  3. **Production DDL adoption** — copy
+     `priv/test_repo/migrations/00000000000001_create_pipeline_tables.exs` into
+     the host's `priv/repo/migrations/`; table names are contract; host owns and
+     freezes them.
+  4. **Artifact infrastructure** — DynamoDB (`:dynamo` `table_name:` +
+     `Dynamo.create_table/0`), S3 bucket, the `Tiered` default; cites the three
+     adapter moduledocs; notes the `ex_aws*` optional deps.
+  5. **Consumer test-suite pattern** — a host test registry, sandbox checkout
+     via `ALLM.Pipeline.Config.repo/0`, and `Artifacts.Dynamo.exclusions/0` as
+     the shared stack-down probe (the cross-repo drift guard, `CLAUDE.md` §4).
+  Neutral `MyApp.*` names throughout, consistent with the subphase-3-swept
+  moduledocs; nothing names Amesbury. The `exclusions/0` example uses the real
+  `{tags, message}` 2-tuple return shape (verified against `dynamo.ex:414` and
+  this repo's own `test/test_helper.exs:34` — an initial draft with an invented
+  `{:exclude, …}`/`:ok` shape was corrected before any gate).
+
+- **`mix.exs`** — two deltas:
+  - `docs.extras` now
+    `["README.md", "guides/host_wiring.md": [title: "Wiring a host"], "CHANGELOG.md": []]`
+    (was `["README.md", "CHANGELOG.md"]`). `docs.main` stays `"readme"`; no
+    `groups_for_extras` in this config, so adding to `extras` is sufficient for
+    the page to render.
+  - `package.files` now
+    `~w(lib guides priv/test_repo/migrations .formatter.exs mix.exs README.md CHANGELOG.md LICENSE CLAUDE.md)`
+    (added `guides` + `priv/test_repo/migrations`), with a comment naming why
+    both ship (wire-from-tarball).
+
+- **Migration moduledoc**
+  (`priv/test_repo/migrations/00000000000001_create_pipeline_tables.exs`) — ONE
+  sentence added to the `@moduledoc` naming this file as the canonical DDL
+  reference a new consumer copies, and pointing adoption mechanics at the guide
+  (not restated here). **DDL untouched** — see the deferred-parity evidence.
+
+- **`README.md` "Host consumption"** — renamed from "Host consumption (the
+  path-dep umbrella)"; generalized to consumers-plural with a lead paragraph
+  pointing new hosts at `guides/host_wiring.md`, and the umbrella-specific
+  detail demoted to a "The path-dep umbrella" subsection ("The first consumer,
+  an internal umbrella…").
+
+### Deferred verification — umbrella schema-parity re-run
+
+The design's checklist item "Re-run the schema-parity check in the umbrella
+(host twin `AmesburyScraper.Pipeline.FrameworkBoundaryGuardsTest`)" CANNOT run
+here: `~/Projects/amesbury` is absent from this environment. It is deferred to
+whenever the umbrella is next available (naturally, subphase-2 lockstep or the
+subphase-5 release preconditions).
+
+**Evidence it is safe to defer:** the migration edit is **moduledoc-only**, so
+schema parity is preserved by construction. `git diff -- priv/test_repo/migrations/`
+shows the entire hunk inside the `@moduledoc` string (lines 18–21 region); the
+diffstat is `4 insertions(+), 1 deletion(-)`, all prose. Zero lines at or below
+`use Ecto.Migration` / inside `change do` (the `create table` / `add` / `create
+index` calls) changed — no column, index, constraint, type, or FK was touched.
+The parity queries compare column/index/constraint sets, none of which a
+moduledoc affects.
+
+### Verification transcript (all run this env, all green)
+
+```
+git diff --stat -- priv/test_repo/migrations/   →  1 file, 4 insertions(+), 1 deletion(-)   (moduledoc-only; DDL unchanged)
+
+mix precommit                          →  EXIT 0  (compile 0 warnings, format clean, 3 doctests 600 tests 0 failures)
+mix docs                               →  EXIT 0, no warning/could-not/broken-ref lines; doc/host_wiring.html generated
+mix hex.build                          →  EXIT 0, allm_pipeline-0.1.0.tar (checksum 4fb4ca11…)
+
+# Both onboarding files ship in the tarball:
+tar -xOf allm_pipeline-*.tar contents.tar.gz | tar -tzf - | grep -E 'guides/|priv/test_repo'
+    →  guides/host_wiring.md
+       priv/test_repo/migrations/00000000000001_create_pipeline_tables.exs
+```
+
+Run in the devcontainer with `DATABASE_HOST=<compose-pg-ip>
+DATABASE_USER=postgres DATABASE_PASSWORD=postgres` (same environment note as
+subphases 1/3). The `.tar` is gitignored; removed after inspection. The
+`[error]`/`[warning]` lines in the `mix precommit` output are deliberate
+test-fixture log output (borrowed-run refusals, deliberate `:boom` failures),
+not compile warnings — the run is 0 failures with `--warnings-as-errors`.

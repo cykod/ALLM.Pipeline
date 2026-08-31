@@ -1,3 +1,23 @@
+## [DOC] Add host-wiring guide and ship canonical DDL in tarball
+*Monday, August 31st at 6pm*
+Subphase 4 of steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md: adds the consumer 
+onboarding path so a new host can wire the framework and create the pipeline 
+tables from the Hex tarball alone. New guides/host_wiring.md is a hexdocs extra 
+with the five C4 sections (registry wiring, the optional llm: seam, production 
+DDL adoption, artifact infrastructure, the consumer test-suite pattern), each 
+citing its normative moduledoc rather than duplicating it. mix.exs adds the 
+guide to docs.extras and adds guides + priv/test_repo/migrations to 
+package.files so both the guide and the parity-checked test-harness migration 
+ship in the tarball; the migration gains one moduledoc sentence naming it the 
+canonical DDL reference (no DDL byte changed). README's host-consumption 
+section is generalized to consumers-plural and points new hosts at the guide. 
+Gates green (600 tests, mix docs clean with 13 live autolinks, tarball contains 
+both paths); the umbrella schema-parity re-run is deferred to the host (sibling 
+repo absent) and is safe by construction given the moduledoc-only migration 
+edit.
+
+---
+
 ## [DOC] Sweep Amesbury host names from lib/ moduledocs for hexdocs
 *Monday, August 31st at 6pm*
 Subphase 3 of steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md: removed every 

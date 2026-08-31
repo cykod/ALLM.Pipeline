@@ -116,12 +116,21 @@ onboarding are in the script's header.
 Publishing does not change the host umbrella, which consumes this repo as a
 path dep until it opts into `{:allm_pipeline, "~> X.Y"}`.
 
-## Host consumption (the path-dep umbrella)
+## Host consumption
 
-The umbrella consumes this repo as `{:allm_pipeline, path: ...}` — sibling
-checkout at `~/Projects/ALLM.Pipeline` on the host, readonly bind mount at
-`/workspaces/ALLM.Pipeline` in its devcontainer (the mount appears only after
-a container rebuild — see the umbrella's `CLAUDE.md` on devcontainer
-declarations), and a vendored copy staged by its `scripts/deploy.sh` for
-production Docker builds. Inside that devcontainer this suite is **not
-runnable** (readonly mount — `_build` can't be written); run it on the host.
+A host wires the framework at runtime through `use ALLM.Pipeline.Registry` —
+the repo, the seam adapters, and the table DDL are the host's to supply. **New
+consumers: start with the [host-wiring guide](guides/host_wiring.md)**, which
+walks through the registry declaration, the optional `llm:` seam, adopting the
+production DDL, provisioning the artifact backends, and the test-suite pattern.
+
+### The path-dep umbrella
+
+The first consumer, an internal umbrella, consumes this repo as
+`{:allm_pipeline, path: ...}` — sibling checkout at `~/Projects/ALLM.Pipeline`
+on the host, readonly bind mount at `/workspaces/ALLM.Pipeline` in its
+devcontainer (the mount appears only after a container rebuild — see the
+umbrella's `CLAUDE.md` on devcontainer declarations), and a vendored copy
+staged by its `scripts/deploy.sh` for production Docker builds. Inside that
+devcontainer this suite is **not runnable** (readonly mount — `_build` can't be
+written); run it on the host.

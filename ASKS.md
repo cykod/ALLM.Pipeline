@@ -19,3 +19,9 @@
 [MILE] mon 8/31 6pm - Renamed the pipeline config namespace :amesbury_scraper to :allm_pipeline (subphase 1) with C2 Dynamo default-table rename and falsified-prose fixes
 
 [IMPL] mon 8/31 6pm - Subphase 3: hexdocs-facing lib/ prose sweep (remove non-atom amesbury mentions, relocate host-twin pointers to CLAUDE.md)
+
+[MILE] mon 8/31 6pm - Swept Amesbury host names from lib/ moduledocs so the public hexdocs are host-neutral (subphase 3), relocating pointer facts to CLAUDE.md
+
+[CDRV] mon 8/31 6pm - Code review on subphase 4 consumer onboarding guide + DDL packaging per steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md
+
+[MILE] mon 8/31 6pm - Added the host-wiring onboarding guide and shipped the canonical test-harness DDL in the Hex tarball (subphase 4)
