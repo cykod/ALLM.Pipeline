@@ -1,3 +1,17 @@
+## [TWK] Polish CLAUDE.md header wording after gate pass
+*Monday, August 31st at 7pm*
+Phase-end polish for the MULTI_CONSUMER_HEX_PREP auto-build run: replaces the 
+opaque coinage 'single-consumer debts' in the CLAUDE.md header with the plainer 
+'the debts that only held while there was one consumer' and reflows the 
+paragraph to wrap width. Governed-doc meaning is preserved exactly (the 
+enumerated debts, the two deferred subphases, the one-consumer fact, and the 
+publishing trigger are unchanged). The only other deferred-Low, mix.exs's 
+docs.extras "CHANGELOG.md": [], was verified to be load-bearing keyword-list 
+syntax rather than redundant and correctly left as-is. Suite green (600 tests, 
+0 failures).
+
+---
+
 ## [DOC] Update agent docs for the multi-consumer, publish-ready reality
 *Monday, August 31st at 7pm*
 Subphase 6 of steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md: refreshes the 

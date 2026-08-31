@@ -27,3 +27,11 @@
 [MILE] mon 8/31 6pm - Added the host-wiring onboarding guide and shipped the canonical test-harness DDL in the Hex tarball (subphase 4)
 
 [CDRV] mon 8/31 7pm - Code review on subphase 6 (governed-doc updates) of MULTI_CONSUMER_HEX_PREP steering
+
+[MILE] mon 8/31 7pm - Updated CLAUDE.md, README, and agent-spec/DESIGN for the multi-consumer publish-ready reality without over-claiming publish (subphase 6)
+
+[RETR] mon 8/31 7pm - Retro on the package-side MULTI_CONSUMER_HEX_PREP run (4 batches)
+
+[GATE] mon 8/31 7pm - Gate-review MULTI_CONSUMER_HEX_PREP package-side subphases 1/3/4/6 — did they succeed and get genuinely exercised
+
+[MILE] mon 8/31 7pm - Polished the CLAUDE.md header wording after the gate passed (phase-end polish for the multi-consumer hex-prep run)

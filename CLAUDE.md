@@ -4,15 +4,16 @@ The extracted pipeline framework: `ALLM.Pipeline.*`, a **standalone repo** since
 Phase 8 of the extraction plan (`steering/2026-08-25_ALLM_PIPELINE_PHASE_8.md`
 in the Amesbury repo). It is hex-**publish-ready** and not yet published — the
 readiness work (`steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md`) landed the
-single-consumer debts: the config namespace is now the package's own OTP app
-name (`:allm_pipeline`, §1), the hexdocs prose is host-neutral, and a host-wiring
-guide (`guides/host_wiring.md`) plus the canonical test-harness DDL ship in the
-tarball as the consumer-onboarding path. What remains is only the publish step
-itself (design subphase 5) and the umbrella-lockstep config move (subphase 2),
-both **deferred to the host** — until they run, its **one** consumer is still the
-Amesbury umbrella (`~/Projects/amesbury`), consuming it as a **path dep**: this
-sibling checkout on the host, a readonly bind mount at `/workspaces/ALLM.Pipeline`
-in the Amesbury devcontainer, and a `vendor/allm_pipeline` copy staged by the
+debts that only held while there was one consumer: the config namespace is now
+the package's own OTP app name (`:allm_pipeline`, §1), the hexdocs prose is
+host-neutral, and a host-wiring guide (`guides/host_wiring.md`) plus the
+canonical test-harness DDL ship in the tarball as the consumer-onboarding path.
+What remains is only the publish step itself (design subphase 5) and the
+umbrella-lockstep config move (subphase 2), both **deferred to the host** —
+until they run, its **one** consumer is still the Amesbury umbrella
+(`~/Projects/amesbury`), consuming it as a **path dep**: this sibling checkout
+on the host, a readonly bind mount at `/workspaces/ALLM.Pipeline` in the
+Amesbury devcontainer, and a `vendor/allm_pipeline` copy staged by the
 umbrella's `scripts/deploy.sh` for production Docker builds. Publishing trigger
 (still standing — it has not been published): a second consumer, or the user
 asks.
