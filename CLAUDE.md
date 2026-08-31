@@ -131,6 +131,14 @@ per-test unique). Toolchain pin: `.tool-versions`
 the Amesbury devcontainer this repo is mounted **readonly**, so `_build`
 cannot be written there.
 
+Running the suite from **inside a devcontainer** instead: reach the host's
+Postgres directly with `DATABASE_HOST=host.docker.internal DATABASE_USER=pascalrettig`
+(no password — that is the host role; the default `postgres` role does **not**
+exist there, and the giveaway is `role "postgres" does not exist`). Do NOT spin
+up a compose Postgres and chase its container IP — the host DB is already
+reachable. Dynamo/MinIO reach their `host.docker.internal:4028`/`:4026` presets
+unchanged.
+
 **Two-gate reality** (the Amesbury repo's root `CLAUDE.md` → "Continuous
 Integration"): the umbrella's `mix precommit` no longer
 compiles-with-warnings-as-errors, formats, or tests this tree — a path dep
