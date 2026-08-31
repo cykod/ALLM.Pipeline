@@ -31,7 +31,7 @@ defmodule ALLM.Pipeline.Artifacts do
   The adapter is chosen by an explicit config key on this module, defaulting to
   `ALLM.Pipeline.Artifacts.Dynamo`:
 
-      config :amesbury_scraper, ALLM.Pipeline.Artifacts,
+      config :allm_pipeline, ALLM.Pipeline.Artifacts,
         impl: ALLM.Pipeline.Artifacts.Filesystem
 
   Resolved at RUNTIME (`impl/0`), like every other config read in this package
@@ -163,7 +163,7 @@ defmodule ALLM.Pipeline.Artifacts do
   """
   @spec impl() :: module()
   def impl do
-    Application.get_env(:amesbury_scraper, __MODULE__, [])
+    Application.get_env(:allm_pipeline, __MODULE__, [])
     |> Keyword.get(:impl, ALLM.Pipeline.Artifacts.Dynamo)
   end
 end

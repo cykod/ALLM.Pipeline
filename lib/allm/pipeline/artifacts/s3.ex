@@ -23,7 +23,7 @@ defmodule ALLM.Pipeline.Artifacts.S3 do
   Resolved at RUNTIME (a `mix release` build never evaluates `config/runtime.exs`,
   so the bucket cannot be baked at compile time):
 
-      config :amesbury_scraper, ALLM.Pipeline.Artifacts.S3,
+      config :allm_pipeline, ALLM.Pipeline.Artifacts.S3,
         bucket: "amesbury-artifacts",
         # optional — a MinIO/localstack endpoint for local dev/test; unset in prod
         endpoint: "http://host.docker.internal:4026",
@@ -57,7 +57,7 @@ defmodule ALLM.Pipeline.Artifacts.S3 do
   """
   @spec bucket() :: String.t() | nil
   def bucket do
-    Application.get_env(:amesbury_scraper, __MODULE__, [])
+    Application.get_env(:allm_pipeline, __MODULE__, [])
     |> Keyword.get(:bucket)
   end
 
@@ -100,7 +100,7 @@ defmodule ALLM.Pipeline.Artifacts.S3 do
       {[], nil}
     else
       endpoint =
-        Application.get_env(:amesbury_scraper, __MODULE__, [])
+        Application.get_env(:allm_pipeline, __MODULE__, [])
         |> Keyword.get(:endpoint, "the default AWS endpoint")
 
       {[:s3, :skip_unless_s3],
@@ -284,7 +284,7 @@ defmodule ALLM.Pipeline.Artifacts.S3 do
   @doc false
   @spec ex_aws_config() :: keyword()
   def ex_aws_config do
-    config = Application.get_env(:amesbury_scraper, __MODULE__, [])
+    config = Application.get_env(:allm_pipeline, __MODULE__, [])
     base = if region = Keyword.get(config, :region), do: [region: region], else: []
 
     case Keyword.get(config, :endpoint) do

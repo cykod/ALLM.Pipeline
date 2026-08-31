@@ -12,7 +12,7 @@ defmodule ALLM.Pipeline.Artifacts.TieredTest do
   so a large-but-compressible payload lands in the SMALL tier. A mutant measuring
   raw bytes sends it to the large tier and fails.
 
-  **Not `async: true`** — rewrites `:amesbury_scraper` application env, global to
+  **Not `async: true`** — rewrites `:allm_pipeline` application env, global to
   the VM, and `Memory`'s Agent is process-global.
   """
 
@@ -28,22 +28,22 @@ defmodule ALLM.Pipeline.Artifacts.TieredTest do
   @threshold 5_000
 
   setup do
-    prev_impl = Application.get_env(:amesbury_scraper, Artifacts)
-    prev_tiered = Application.get_env(:amesbury_scraper, Tiered)
-    prev_fs = Application.get_env(:amesbury_scraper, Filesystem)
+    prev_impl = Application.get_env(:allm_pipeline, Artifacts)
+    prev_tiered = Application.get_env(:allm_pipeline, Tiered)
+    prev_fs = Application.get_env(:allm_pipeline, Filesystem)
 
     root =
       Path.join(System.tmp_dir!(), "allm-tiered-test-#{System.unique_integer([:positive])}")
 
-    Application.put_env(:amesbury_scraper, Artifacts, impl: Tiered)
+    Application.put_env(:allm_pipeline, Artifacts, impl: Tiered)
 
-    Application.put_env(:amesbury_scraper, Tiered,
+    Application.put_env(:allm_pipeline, Tiered,
       small: Memory,
       large: Filesystem,
       threshold: @threshold
     )
 
-    Application.put_env(:amesbury_scraper, Filesystem, root: root)
+    Application.put_env(:allm_pipeline, Filesystem, root: root)
     {:ok, _} = Memory.gc()
 
     on_exit(fn ->
@@ -56,8 +56,8 @@ defmodule ALLM.Pipeline.Artifacts.TieredTest do
     :ok
   end
 
-  defp restore(key, nil), do: Application.delete_env(:amesbury_scraper, key)
-  defp restore(key, value), do: Application.put_env(:amesbury_scraper, key, value)
+  defp restore(key, nil), do: Application.delete_env(:allm_pipeline, key)
+  defp restore(key, value), do: Application.put_env(:allm_pipeline, key, value)
 
   describe "put/4 routes by post-encode size" do
     test "a payload whose stored size is under the threshold goes to the small tier" do

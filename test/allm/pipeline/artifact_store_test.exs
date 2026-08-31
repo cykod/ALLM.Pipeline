@@ -50,13 +50,13 @@ defmodule ALLM.Pipeline.ArtifactStoreTest do
     # DynamoDB specifically, where an oversize payload's honest answer is
     # `{:error, :too_large}` (no large tier). `Tiered`'s size routing has its own
     # test (`artifacts/tiered_test.exs`).
-    previous = Application.get_env(:amesbury_scraper, Artifacts)
-    Application.put_env(:amesbury_scraper, Artifacts, impl: Dynamo)
+    previous = Application.get_env(:allm_pipeline, Artifacts)
+    Application.put_env(:allm_pipeline, Artifacts, impl: Dynamo)
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:amesbury_scraper, Artifacts, previous),
-        else: Application.delete_env(:amesbury_scraper, Artifacts)
+        do: Application.put_env(:allm_pipeline, Artifacts, previous),
+        else: Application.delete_env(:allm_pipeline, Artifacts)
     end)
 
     case Dynamo.create_table() do

@@ -11,7 +11,7 @@ defmodule ALLM.Pipeline.Lock do
   `ALLM.Pipeline.Lock.Advisory` and can be restored by
   configuring:
 
-      config :amesbury_scraper, ALLM.Pipeline.Lock,
+      config :allm_pipeline, ALLM.Pipeline.Lock,
         impl: ALLM.Pipeline.Lock.Advisory
 
   This works on a host that declares an `ALLM.Pipeline.Registry` too — the
@@ -73,7 +73,7 @@ defmodule ALLM.Pipeline.Lock do
   @doc "The currently-configured lock implementation module."
   @spec impl() :: module()
   def impl do
-    Application.get_env(:amesbury_scraper, __MODULE__, [])
+    Application.get_env(:allm_pipeline, __MODULE__, [])
     |> Keyword.get(:impl, ALLM.Pipeline.Lock.Noop)
   end
 end

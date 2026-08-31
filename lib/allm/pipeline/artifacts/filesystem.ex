@@ -6,10 +6,10 @@ defmodule ALLM.Pipeline.Artifacts.Filesystem do
   Configure it and no DynamoDB (nor `docker-compose`) is needed for artifacts
   to store, round-trip and render in the review UI:
 
-      config :amesbury_scraper, ALLM.Pipeline.Artifacts,
+      config :allm_pipeline, ALLM.Pipeline.Artifacts,
         impl: ALLM.Pipeline.Artifacts.Filesystem
 
-      config :amesbury_scraper, ALLM.Pipeline.Artifacts.Filesystem,
+      config :allm_pipeline, ALLM.Pipeline.Artifacts.Filesystem,
         root: "/var/tmp/amesbury-artifacts"
 
   That first key still works on a host that declares an
@@ -183,7 +183,7 @@ defmodule ALLM.Pipeline.Artifacts.Filesystem do
   """
   @spec root() :: Path.t()
   def root do
-    Application.get_env(:amesbury_scraper, __MODULE__, [])
+    Application.get_env(:allm_pipeline, __MODULE__, [])
     |> Keyword.get(:root, Path.join(System.tmp_dir!(), "allm_pipeline_artifacts"))
   end
 

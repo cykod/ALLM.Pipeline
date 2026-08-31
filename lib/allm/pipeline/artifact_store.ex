@@ -156,11 +156,11 @@ defmodule ALLM.Pipeline.ArtifactStore do
   The decompressed-size ceiling `fetch/1` enforces, in bytes (default 64 MB).
 
   A memory-safety budget, overridable per environment via
-  `config :amesbury_scraper, ALLM.Pipeline.ArtifactStore, max_decompressed_bytes: N`.
+  `config :allm_pipeline, ALLM.Pipeline.ArtifactStore, max_decompressed_bytes: N`.
   """
   @spec max_decompressed_bytes() :: pos_integer()
   def max_decompressed_bytes do
-    Application.get_env(:amesbury_scraper, __MODULE__, [])
+    Application.get_env(:allm_pipeline, __MODULE__, [])
     |> Keyword.get(:max_decompressed_bytes, @default_max_decompressed_bytes)
   end
 

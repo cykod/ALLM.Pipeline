@@ -22,13 +22,13 @@ defmodule ALLM.Pipeline.Artifacts.S3Test do
   setup do
     ensure_bucket!()
     # Pin S3 as the wrapper's adapter so `ArtifactStore` round-trips go to it.
-    previous = Application.get_env(:amesbury_scraper, Artifacts)
-    Application.put_env(:amesbury_scraper, Artifacts, impl: S3)
+    previous = Application.get_env(:allm_pipeline, Artifacts)
+    Application.put_env(:allm_pipeline, Artifacts, impl: S3)
 
     on_exit(fn ->
       if previous,
-        do: Application.put_env(:amesbury_scraper, Artifacts, previous),
-        else: Application.delete_env(:amesbury_scraper, Artifacts)
+        do: Application.put_env(:allm_pipeline, Artifacts, previous),
+        else: Application.delete_env(:allm_pipeline, Artifacts)
     end)
 
     :ok
@@ -110,6 +110,6 @@ defmodule ALLM.Pipeline.Artifacts.S3Test do
   end
 
   defp region do
-    Application.get_env(:amesbury_scraper, S3, []) |> Keyword.get(:region, "us-east-1")
+    Application.get_env(:allm_pipeline, S3, []) |> Keyword.get(:region, "us-east-1")
   end
 end

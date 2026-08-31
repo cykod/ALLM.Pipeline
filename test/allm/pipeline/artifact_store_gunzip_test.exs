@@ -10,7 +10,7 @@ defmodule ALLM.Pipeline.ArtifactStoreGunzipTest do
   `:zlib.gzip/1` of a 200 KB buffer (the real wire producer), which inflates well
   past the 1 KB ceiling but is trivial to hold.
 
-  **Not `async: true`** — it rewrites `:amesbury_scraper` application env (the
+  **Not `async: true`** — it rewrites `:allm_pipeline` application env (the
   adapter and the ceiling), which is global to the VM, and `Memory`'s Agent is
   process-global.
   """
@@ -24,11 +24,11 @@ defmodule ALLM.Pipeline.ArtifactStoreGunzipTest do
   @ceiling 1024
 
   setup do
-    prev_impl = Application.get_env(:amesbury_scraper, Artifacts)
-    prev_store = Application.get_env(:amesbury_scraper, ArtifactStore)
+    prev_impl = Application.get_env(:allm_pipeline, Artifacts)
+    prev_store = Application.get_env(:allm_pipeline, ArtifactStore)
 
-    Application.put_env(:amesbury_scraper, Artifacts, impl: Memory)
-    Application.put_env(:amesbury_scraper, ArtifactStore, max_decompressed_bytes: @ceiling)
+    Application.put_env(:allm_pipeline, Artifacts, impl: Memory)
+    Application.put_env(:allm_pipeline, ArtifactStore, max_decompressed_bytes: @ceiling)
     {:ok, _} = Memory.gc()
 
     on_exit(fn ->
@@ -39,8 +39,8 @@ defmodule ALLM.Pipeline.ArtifactStoreGunzipTest do
     :ok
   end
 
-  defp restore(key, nil), do: Application.delete_env(:amesbury_scraper, key)
-  defp restore(key, value), do: Application.put_env(:amesbury_scraper, key, value)
+  defp restore(key, nil), do: Application.delete_env(:allm_pipeline, key)
+  defp restore(key, value), do: Application.put_env(:allm_pipeline, key, value)
 
   # Store an already-gzipped payload with `compressed: true`, bypassing
   # `ArtifactStore.store/4` (which would re-gzip) so the fixture is a real gzip

@@ -7,10 +7,10 @@ defmodule ALLM.Pipeline.Artifacts.Tiered do
 
   The canonical wiring: DynamoDB for what fits an item, S3 for what does not.
 
-      config :amesbury_scraper, ALLM.Pipeline.Artifacts,
+      config :allm_pipeline, ALLM.Pipeline.Artifacts,
         impl: ALLM.Pipeline.Artifacts.Tiered
 
-      config :amesbury_scraper, ALLM.Pipeline.Artifacts.Tiered,
+      config :allm_pipeline, ALLM.Pipeline.Artifacts.Tiered,
         small: ALLM.Pipeline.Artifacts.Dynamo,
         large: ALLM.Pipeline.Artifacts.S3
 
@@ -125,5 +125,5 @@ defmodule ALLM.Pipeline.Artifacts.Tiered do
   end
 
   @spec config() :: keyword()
-  defp config, do: Application.get_env(:amesbury_scraper, __MODULE__, [])
+  defp config, do: Application.get_env(:allm_pipeline, __MODULE__, [])
 end

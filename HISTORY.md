@@ -1,3 +1,22 @@
+## [OTHR] Rename config namespace :amesbury_scraper to :allm_pipeline
+*Monday, August 31st at 6pm*
+Subphase 1 of the multi-consumer/Hex-prep work 
+(steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md): the package now reads and 
+writes all of its application config under its own OTP app :allm_pipeline 
+instead of the host's :amesbury_scraper — 43 atom sites across 12 lib/ files 
+(including Registry's @otp_app) and 137 test sites, plus the Dynamo coded 
+default-table fallback amesbury_artifacts to allm_pipeline_artifacts (contract 
+C2). Aligning the config namespace with mix.exs's app: :allm_pipeline removes 
+the standalone 'configured application not available' boot notice. The prose 
+the rename falsified was rewritten in the same commit (registry/config 
+moduledocs, the deleted README boot-notice paragraph, CLAUDE.md sections 1/5/6, 
+agent-spec/CODE_REVIEW.md). Behavior-preserving: no seam, arity, return-shape, 
+or schema change; full gate green (600 tests, 0 failures in both dynamo 
+directions). Umbrella-side lockstep (subphase 2) and the v0.1.0 release 
+(subphase 5) are deferred to the host.
+
+---
+
 ## [OTHR] Hex release readiness: release script, devcontainer, metadata
 *Monday, August 31st at 11am*
 Ports the two-phase ALLM release script (gates plus regex version bump; never 

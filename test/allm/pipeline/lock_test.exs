@@ -44,10 +44,10 @@ defmodule ALLM.Pipeline.LockTest do
 
   ## Why this file establishes the `:impl` env itself
 
-  `:amesbury_scraper` IS started while this package's suite runs (that is how
+  `:allm_pipeline` IS started while this package's suite runs (that is how
   `ALLM.Pipeline.Config.repo/0` resolves for the sandbox setups next door), and
   `ALLM.Pipeline.Registry.__install__/1` writes `impl: Noop` into
-  `Application.get_env(:amesbury_scraper, ALLM.Pipeline.Lock)` from
+  `Application.get_env(:allm_pipeline, ALLM.Pipeline.Lock)` from
   `Amesbury.Pipelines`' `lock:` declaration at boot. So a bare
   `assert Lock.impl() == Noop` observes **Amesbury's declaration**, not the
   framework's fallback — flipping `impl/0`'s default to `Advisory` would leave it
@@ -65,13 +65,13 @@ defmodule ALLM.Pipeline.LockTest do
   alias ALLM.Pipeline.LockTest.FixtureLock
 
   setup do
-    previous = Application.get_env(:amesbury_scraper, Lock)
+    previous = Application.get_env(:allm_pipeline, Lock)
 
     on_exit(fn ->
       if previous do
-        Application.put_env(:amesbury_scraper, Lock, previous)
+        Application.put_env(:allm_pipeline, Lock, previous)
       else
-        Application.delete_env(:amesbury_scraper, Lock)
+        Application.delete_env(:allm_pipeline, Lock)
       end
     end)
 
@@ -83,7 +83,7 @@ defmodule ALLM.Pipeline.LockTest do
       # The fallback is only observable with the host's declaration removed. The
       # dropped-lock default must be Noop so runs don't pin a connection via
       # Repo.checkout for the whole run.
-      Application.delete_env(:amesbury_scraper, Lock)
+      Application.delete_env(:allm_pipeline, Lock)
 
       assert Lock.impl() == Noop
     end
@@ -92,13 +92,13 @@ defmodule ALLM.Pipeline.LockTest do
       # A fixture adapter, not a real one: neither the fallback nor any host
       # declaration can produce this value, so the assertion cannot be satisfied
       # by the default the previous test pins.
-      Application.put_env(:amesbury_scraper, Lock, impl: FixtureLock)
+      Application.put_env(:allm_pipeline, Lock, impl: FixtureLock)
 
       assert Lock.impl() == FixtureLock
     end
 
     test "falls back to Noop when the key exists but carries no :impl" do
-      Application.put_env(:amesbury_scraper, Lock, some_other_key: :ignored)
+      Application.put_env(:allm_pipeline, Lock, some_other_key: :ignored)
 
       assert Lock.impl() == Noop
     end
@@ -108,7 +108,7 @@ defmodule ALLM.Pipeline.LockTest do
     setup do
       # Establish the premise locally instead of inheriting it from
       # `Amesbury.Pipelines`' declaration — see the moduledoc.
-      Application.put_env(:amesbury_scraper, Lock, impl: Noop)
+      Application.put_env(:allm_pipeline, Lock, impl: Noop)
       :ok
     end
 
@@ -132,7 +132,7 @@ defmodule ALLM.Pipeline.LockTest do
       # the function itself — would keep them green. `FixtureLock` returns
       # something only a live dispatch can produce, and does NOT call the
       # function, so the discriminating observable is the value's PROVENANCE.
-      Application.put_env(:amesbury_scraper, Lock, impl: FixtureLock)
+      Application.put_env(:allm_pipeline, Lock, impl: FixtureLock)
 
       assert Lock.with_lock(:rich_summary, fn -> {:ok, :ran} end) ==
                {:dispatched_to_fixture, :rich_summary}

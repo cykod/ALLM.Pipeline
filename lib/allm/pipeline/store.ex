@@ -55,7 +55,7 @@ defmodule ALLM.Pipeline.Store do
 
   ## Configuration
 
-      config :amesbury_scraper, ALLM.Pipeline.Store,
+      config :allm_pipeline, ALLM.Pipeline.Store,
         impl: ALLM.Pipeline.Store.Ecto
 
   `impl/0` resolves at RUNTIME and defaults to `ALLM.Pipeline.Store.Ecto`, so
@@ -194,7 +194,7 @@ defmodule ALLM.Pipeline.Store do
   """
   @spec impl() :: module()
   def impl do
-    Application.get_env(:amesbury_scraper, __MODULE__, [])
+    Application.get_env(:allm_pipeline, __MODULE__, [])
     |> Keyword.get(:impl, ALLM.Pipeline.Store.Ecto)
   end
 end

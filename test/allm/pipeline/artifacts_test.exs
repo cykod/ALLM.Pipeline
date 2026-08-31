@@ -18,7 +18,7 @@ defmodule ALLM.Pipeline.ArtifactsTest do
        differ from the caller's and gunzip back to them. That difference is the
        observable a broken boundary would destroy.
 
-  **Not `async: true`** — every test here rewrites `:amesbury_scraper`
+  **Not `async: true`** — every test here rewrites `:allm_pipeline`
   application env (the configured adapter, the filesystem root), which is
   global to the VM, and `Memory`'s Agent is process-global too.
   """
@@ -32,8 +32,8 @@ defmodule ALLM.Pipeline.ArtifactsTest do
   @adapters [Dynamo, Filesystem, Memory]
 
   setup do
-    original = Application.get_env(:amesbury_scraper, Artifacts)
-    original_fs = Application.get_env(:amesbury_scraper, Filesystem)
+    original = Application.get_env(:allm_pipeline, Artifacts)
+    original_fs = Application.get_env(:allm_pipeline, Filesystem)
 
     on_exit(fn ->
       restore(Artifacts, original)
@@ -43,11 +43,11 @@ defmodule ALLM.Pipeline.ArtifactsTest do
     :ok
   end
 
-  defp restore(key, nil), do: Application.delete_env(:amesbury_scraper, key)
-  defp restore(key, value), do: Application.put_env(:amesbury_scraper, key, value)
+  defp restore(key, nil), do: Application.delete_env(:allm_pipeline, key)
+  defp restore(key, value), do: Application.put_env(:allm_pipeline, key, value)
 
   defp use_adapter(module) do
-    Application.put_env(:amesbury_scraper, Artifacts, impl: module)
+    Application.put_env(:allm_pipeline, Artifacts, impl: module)
   end
 
   defp use_memory do
@@ -61,7 +61,7 @@ defmodule ALLM.Pipeline.ArtifactsTest do
       Path.join(System.tmp_dir!(), "allm-artifacts-test-#{System.unique_integer([:positive])}")
 
     use_adapter(Filesystem)
-    Application.put_env(:amesbury_scraper, Filesystem, root: root)
+    Application.put_env(:allm_pipeline, Filesystem, root: root)
     on_exit(fn -> File.rm_rf(root) end)
     root
   end

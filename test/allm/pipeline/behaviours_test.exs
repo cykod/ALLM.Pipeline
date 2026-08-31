@@ -39,7 +39,7 @@ defmodule ALLM.Pipeline.BehavioursTest do
   ETS equivalent (extraction plan §3.2).
 
   **Not `async: true`** — the runtime-resolution test rewrites
-  `:amesbury_scraper` application env, which is global to the VM.
+  `:allm_pipeline` application env, which is global to the VM.
   """
 
   use ExUnit.Case, async: false
@@ -112,10 +112,10 @@ defmodule ALLM.Pipeline.BehavioursTest do
 
     test "resolves its implementation at runtime, defaulting to a shipped adapter" do
       for {behaviour, adapters, default} <- @seams do
-        original = Application.get_env(:amesbury_scraper, behaviour)
+        original = Application.get_env(:allm_pipeline, behaviour)
 
         try do
-          Application.delete_env(:amesbury_scraper, behaviour)
+          Application.delete_env(:allm_pipeline, behaviour)
 
           assert behaviour.impl() == default,
                  "#{inspect(behaviour)}.impl/0 does not default to #{inspect(default)}"
@@ -125,13 +125,13 @@ defmodule ALLM.Pipeline.BehavioursTest do
           # Runtime, not compile time: two successive reads must both take
           # effect. A module attribute would return the first value twice.
           for adapter <- adapters do
-            Application.put_env(:amesbury_scraper, behaviour, impl: adapter)
+            Application.put_env(:allm_pipeline, behaviour, impl: adapter)
             assert behaviour.impl() == adapter
           end
         after
           case original do
-            nil -> Application.delete_env(:amesbury_scraper, behaviour)
-            value -> Application.put_env(:amesbury_scraper, behaviour, value)
+            nil -> Application.delete_env(:allm_pipeline, behaviour)
+            value -> Application.put_env(:allm_pipeline, behaviour, value)
           end
         end
       end
@@ -226,10 +226,10 @@ defmodule ALLM.Pipeline.BehavioursTest do
     # it — this repo's `CLAUDE.md` §5.
     test "impl/0 raises when the host declared none, and resolves one when it did" do
       for behaviour <- @host_seams do
-        original = Application.get_env(:amesbury_scraper, behaviour)
+        original = Application.get_env(:allm_pipeline, behaviour)
 
         try do
-          Application.delete_env(:amesbury_scraper, behaviour)
+          Application.delete_env(:allm_pipeline, behaviour)
 
           message = assert_raise(RuntimeError, fn -> behaviour.impl() end).message
 
@@ -238,13 +238,13 @@ defmodule ALLM.Pipeline.BehavioursTest do
                    "fixes it — the message IS the remedy"
 
           for adapter <- [HostSeam.First, HostSeam.Second] do
-            Application.put_env(:amesbury_scraper, behaviour, impl: adapter)
+            Application.put_env(:allm_pipeline, behaviour, impl: adapter)
             assert behaviour.impl() == adapter
           end
         after
           case original do
-            nil -> Application.delete_env(:amesbury_scraper, behaviour)
-            value -> Application.put_env(:amesbury_scraper, behaviour, value)
+            nil -> Application.delete_env(:allm_pipeline, behaviour)
+            value -> Application.put_env(:allm_pipeline, behaviour, value)
           end
         end
       end
@@ -252,17 +252,17 @@ defmodule ALLM.Pipeline.BehavioursTest do
 
     test "a non-module impl raises rather than reaching a call site" do
       for behaviour <- @host_seams do
-        original = Application.get_env(:amesbury_scraper, behaviour)
+        original = Application.get_env(:allm_pipeline, behaviour)
 
         try do
-          Application.put_env(:amesbury_scraper, behaviour, impl: "MyApp.Pipelines.LLM")
+          Application.put_env(:allm_pipeline, behaviour, impl: "MyApp.Pipelines.LLM")
 
           assert assert_raise(RuntimeError, fn -> behaviour.impl() end).message =~
                    "must be a module"
         after
           case original do
-            nil -> Application.delete_env(:amesbury_scraper, behaviour)
-            value -> Application.put_env(:amesbury_scraper, behaviour, value)
+            nil -> Application.delete_env(:allm_pipeline, behaviour)
+            value -> Application.put_env(:allm_pipeline, behaviour, value)
           end
         end
       end

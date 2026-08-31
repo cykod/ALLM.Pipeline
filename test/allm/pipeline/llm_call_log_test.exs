@@ -57,9 +57,9 @@ defmodule ALLM.Pipeline.LLMCallLogTest do
 
   describe "logging disabled" do
     setup do
-      original = Application.get_env(:amesbury_scraper, LLMCallLog, [])
-      Application.put_env(:amesbury_scraper, LLMCallLog, Keyword.put(original, :enabled, false))
-      on_exit(fn -> Application.put_env(:amesbury_scraper, LLMCallLog, original) end)
+      original = Application.get_env(:allm_pipeline, LLMCallLog, [])
+      Application.put_env(:allm_pipeline, LLMCallLog, Keyword.put(original, :enabled, false))
+      on_exit(fn -> Application.put_env(:allm_pipeline, LLMCallLog, original) end)
       :ok
     end
 

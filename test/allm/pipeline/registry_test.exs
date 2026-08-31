@@ -14,7 +14,7 @@ defmodule ALLM.Pipeline.RegistryTest do
        every validation here is proven by compiling a bad declaration, not by
        calling a validator directly.
 
-  **Not `async: true`** — `install/0` writes `:amesbury_scraper` application
+  **Not `async: true`** — `install/0` writes `:allm_pipeline` application
   env, which is global to the VM.
   """
 
@@ -31,13 +31,13 @@ defmodule ALLM.Pipeline.RegistryTest do
   @env_keys [:repo, :alert_on_empty, :lock_keys] ++ @seam_behaviours
 
   setup do
-    originals = Enum.map(@env_keys, &{&1, Application.fetch_env(:amesbury_scraper, &1)})
+    originals = Enum.map(@env_keys, &{&1, Application.fetch_env(:allm_pipeline, &1)})
 
     on_exit(fn ->
       for {key, original} <- originals do
         case original do
-          {:ok, value} -> Application.put_env(:amesbury_scraper, key, value)
-          :error -> Application.delete_env(:amesbury_scraper, key)
+          {:ok, value} -> Application.put_env(:allm_pipeline, key, value)
+          :error -> Application.delete_env(:allm_pipeline, key)
         end
       end
     end)
@@ -81,7 +81,7 @@ defmodule ALLM.Pipeline.RegistryTest do
 
   describe "install/0 feeds the keys the framework already reads" do
     test "the repo lands where ALLM.Pipeline.Config.repo/0 looks for it" do
-      Application.delete_env(:amesbury_scraper, :repo)
+      Application.delete_env(:allm_pipeline, :repo)
 
       assert :ok = Fixture.install()
 
@@ -91,7 +91,7 @@ defmodule ALLM.Pipeline.RegistryTest do
 
     test "each seam's impl lands where that seam's impl/0 looks for it" do
       for behaviour <- @seam_behaviours,
-          do: Application.delete_env(:amesbury_scraper, behaviour)
+          do: Application.delete_env(:allm_pipeline, behaviour)
 
       assert :ok = Fixture.install()
 
@@ -111,12 +111,12 @@ defmodule ALLM.Pipeline.RegistryTest do
       # compile-time assertion over the key list itself; this is the behavioural
       # half, over the values.
       for behaviour <- @seam_behaviours,
-          do: Application.delete_env(:amesbury_scraper, behaviour)
+          do: Application.delete_env(:allm_pipeline, behaviour)
 
       assert :ok = Fixture.install()
 
       for {key, behaviour} <- @seam_keys do
-        assert Application.get_env(:amesbury_scraper, behaviour)[:impl] ==
+        assert Application.get_env(:allm_pipeline, behaviour)[:impl] ==
                  Fixture.__registry__(key),
                "`#{key}:` was declared but no `impl:` reached #{inspect(behaviour)}"
       end
@@ -128,18 +128,18 @@ defmodule ALLM.Pipeline.RegistryTest do
       # crash but a `nil` written into the seam's `impl:`, which then reaches a
       # step's `call_llm/1` as a `BadFunctionError` naming neither the key nor
       # the package.
-      Application.delete_env(:amesbury_scraper, LLM)
+      Application.delete_env(:allm_pipeline, LLM)
 
       assert :ok = MinimalFixture.install()
 
       assert MinimalFixture.__registry__(:llm) == nil
-      assert Application.get_env(:amesbury_scraper, LLM) == nil
+      assert Application.get_env(:allm_pipeline, LLM) == nil
       assert_raise RuntimeError, ~r/llm:/, fn -> LLM.impl() end
     end
 
     test "the two domain collections land where Config looks for them" do
-      Application.delete_env(:amesbury_scraper, :alert_on_empty)
-      Application.delete_env(:amesbury_scraper, :lock_keys)
+      Application.delete_env(:allm_pipeline, :alert_on_empty)
+      Application.delete_env(:allm_pipeline, :lock_keys)
 
       assert :ok = Fixture.install()
 
@@ -158,21 +158,21 @@ defmodule ALLM.Pipeline.RegistryTest do
       # A seam's key can legitimately carry adapter options beside `:impl`
       # (`Artifacts.Filesystem`'s `:root` is the live example). Replacing the
       # whole keyword would silently drop them at boot.
-      Application.put_env(:amesbury_scraper, Artifacts, root: "/tmp/artifacts")
+      Application.put_env(:allm_pipeline, Artifacts, root: "/tmp/artifacts")
 
       assert :ok = Fixture.install()
 
-      config = Application.get_env(:amesbury_scraper, Artifacts)
+      config = Application.get_env(:allm_pipeline, Artifacts)
       assert Keyword.get(config, :impl) == RegistryTest.Artifacts
       assert Keyword.get(config, :root) == "/tmp/artifacts"
     end
 
     test "it is idempotent" do
       assert :ok = Fixture.install()
-      first = Enum.map(@env_keys, &Application.get_env(:amesbury_scraper, &1))
+      first = Enum.map(@env_keys, &Application.get_env(:allm_pipeline, &1))
 
       assert :ok = Fixture.install()
-      assert Enum.map(@env_keys, &Application.get_env(:amesbury_scraper, &1)) == first
+      assert Enum.map(@env_keys, &Application.get_env(:allm_pipeline, &1)) == first
     end
   end
 
@@ -180,16 +180,16 @@ defmodule ALLM.Pipeline.RegistryTest do
     setup do
       # These tests write adapter-own config keys the module setup does not track.
       on_exit(fn ->
-        Application.delete_env(:amesbury_scraper, RegistryTest.Tiered)
-        Application.delete_env(:amesbury_scraper, Minimal.Artifacts)
+        Application.delete_env(:allm_pipeline, RegistryTest.Tiered)
+        Application.delete_env(:allm_pipeline, Minimal.Artifacts)
       end)
 
       :ok
     end
 
     test "the module lands under the seam :impl, exactly as the bare-module form does" do
-      Application.delete_env(:amesbury_scraper, Artifacts)
-      Application.delete_env(:amesbury_scraper, RegistryTest.Tiered)
+      Application.delete_env(:allm_pipeline, Artifacts)
+      Application.delete_env(:allm_pipeline, RegistryTest.Tiered)
 
       assert :ok = TieredFixture.install()
 
@@ -197,17 +197,17 @@ defmodule ALLM.Pipeline.RegistryTest do
     end
 
     test "the adapter opts install under the ADAPTER's own config key, not beside :impl" do
-      Application.delete_env(:amesbury_scraper, Artifacts)
-      Application.delete_env(:amesbury_scraper, RegistryTest.Tiered)
+      Application.delete_env(:allm_pipeline, Artifacts)
+      Application.delete_env(:allm_pipeline, RegistryTest.Tiered)
 
       assert :ok = TieredFixture.install()
 
       # The opts land where the adapter reads them — its own module key —
       # keeping the seam key `:impl`-only.
-      assert Application.get_env(:amesbury_scraper, RegistryTest.Tiered) ==
+      assert Application.get_env(:allm_pipeline, RegistryTest.Tiered) ==
                [small: RegistryTest.Small, large: RegistryTest.Large, threshold: 10]
 
-      refute Keyword.has_key?(Application.get_env(:amesbury_scraper, Artifacts), :small)
+      refute Keyword.has_key?(Application.get_env(:allm_pipeline, Artifacts), :small)
 
       # And the declaration carries them for tooling.
       assert TieredFixture.__registry__(:artifacts) == RegistryTest.Tiered
@@ -217,24 +217,24 @@ defmodule ALLM.Pipeline.RegistryTest do
     end
 
     test "a config-file value for the adapter key outranks the installed opts (put_new)" do
-      Application.delete_env(:amesbury_scraper, Artifacts)
+      Application.delete_env(:allm_pipeline, Artifacts)
       # Models a config file setting the adapter's own key before install/0.
-      Application.put_env(:amesbury_scraper, RegistryTest.Tiered, small: ConfigFile.Small)
+      Application.put_env(:allm_pipeline, RegistryTest.Tiered, small: ConfigFile.Small)
 
       assert :ok = TieredFixture.install()
 
-      assert Application.get_env(:amesbury_scraper, RegistryTest.Tiered) == [
+      assert Application.get_env(:allm_pipeline, RegistryTest.Tiered) == [
                small: ConfigFile.Small
              ],
              "install/0 clobbered a config-file adapter override"
     end
 
     test "the bare-module artifacts: form installs no adapter opts" do
-      Application.delete_env(:amesbury_scraper, Minimal.Artifacts)
+      Application.delete_env(:allm_pipeline, Minimal.Artifacts)
 
       assert MinimalFixture.__registry__(:artifacts_opts) == []
       assert :ok = MinimalFixture.install()
-      assert Application.get_env(:amesbury_scraper, Minimal.Artifacts) == nil
+      assert Application.get_env(:allm_pipeline, Minimal.Artifacts) == nil
     end
   end
 
@@ -250,11 +250,11 @@ defmodule ALLM.Pipeline.RegistryTest do
     test "an explicitly-configured seam impl survives install/0" do
       # `Store` is the control: left unconfigured, so it must take the
       # declaration while the other two keep their override.
-      Application.delete_env(:amesbury_scraper, Store)
+      Application.delete_env(:allm_pipeline, Store)
 
       # Models a config file: set before `install/0`, as boot ordering does.
-      Application.put_env(:amesbury_scraper, Artifacts, impl: ConfigFile.Artifacts)
-      Application.put_env(:amesbury_scraper, Lock, impl: ConfigFile.Lock)
+      Application.put_env(:allm_pipeline, Artifacts, impl: ConfigFile.Artifacts)
+      Application.put_env(:allm_pipeline, Lock, impl: ConfigFile.Lock)
 
       assert :ok = Fixture.install()
 
@@ -269,9 +269,9 @@ defmodule ALLM.Pipeline.RegistryTest do
     end
 
     test "the non-seam keys are written unconditionally — the registry owns them" do
-      Application.put_env(:amesbury_scraper, :repo, ConfigFile.Repo)
-      Application.put_env(:amesbury_scraper, :alert_on_empty, ~w(stale_scrape))
-      Application.put_env(:amesbury_scraper, :lock_keys, %{stale: :stale})
+      Application.put_env(:allm_pipeline, :repo, ConfigFile.Repo)
+      Application.put_env(:allm_pipeline, :alert_on_empty, ~w(stale_scrape))
+      Application.put_env(:allm_pipeline, :lock_keys, %{stale: :stale})
 
       assert :ok = Fixture.install()
 
@@ -455,7 +455,7 @@ defmodule ALLM.Pipeline.RegistryTest do
             store: A.S,
             artifacts: A.A,
             lock: A.L,
-            dynamo_table: "amesbury_artifacts"
+            dynamo_table: "allm_pipeline_artifacts"
           )
         end).message
 

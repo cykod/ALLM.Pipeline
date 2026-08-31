@@ -62,8 +62,8 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   """
   @spec table_name() :: String.t()
   def table_name do
-    Application.get_env(:amesbury_scraper, :dynamo, [])
-    |> Keyword.get(:table_name, "amesbury_artifacts")
+    Application.get_env(:allm_pipeline, :dynamo, [])
+    |> Keyword.get(:table_name, "allm_pipeline_artifacts")
   end
 
   @doc """
@@ -417,7 +417,7 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
       {[], nil}
     else
       endpoint =
-        Application.get_env(:amesbury_scraper, :dynamo, [])
+        Application.get_env(:allm_pipeline, :dynamo, [])
         |> Keyword.get(:endpoint, "the default AWS endpoint")
 
       {[:dynamo, :skip_unless_dynamo],
@@ -510,7 +510,7 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   end
 
   defp dynamo_config do
-    config = Application.get_env(:amesbury_scraper, :dynamo, [])
+    config = Application.get_env(:allm_pipeline, :dynamo, [])
 
     base_config = [
       region: Keyword.get(config, :region, "us-east-1")

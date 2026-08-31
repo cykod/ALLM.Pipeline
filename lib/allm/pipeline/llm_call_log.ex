@@ -27,7 +27,7 @@ defmodule ALLM.Pipeline.LLMCallLog do
 
   Logging is on by default, governed by an explicit config key on this module:
 
-      config :amesbury_scraper, ALLM.Pipeline.LLMCallLog, enabled: true
+      config :allm_pipeline, ALLM.Pipeline.LLMCallLog, enabled: true
 
   Set `enabled: false` to make `activate/0` and `record/1` zero-cost no-ops.
   """
@@ -48,11 +48,11 @@ defmodule ALLM.Pipeline.LLMCallLog do
   @doc """
   Whether LLM-call logging is enabled (default `true`).
 
-  Reads `:enabled` from `config :amesbury_scraper, #{inspect(__MODULE__)}`.
+  Reads `:enabled` from `config :allm_pipeline, #{inspect(__MODULE__)}`.
   """
   @spec enabled?() :: boolean()
   def enabled? do
-    Application.get_env(:amesbury_scraper, __MODULE__, [])
+    Application.get_env(:allm_pipeline, __MODULE__, [])
     |> Keyword.get(:enabled, true)
   end
 

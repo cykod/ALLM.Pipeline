@@ -7,3 +7,11 @@
 [MILE] mon 8/31 10am - Bootstrapped agent-spec/ lane specs (IMPLEMENTATION, REVIEW, DESIGN, CODE_REVIEW) mined from ALLM, amesbury, and unllmtd donors
 
 [DSGN] mon 8/31 11am - Design the multi-consumer + Hex-release prep: namespace rename, hexdocs sweep, consumer onboarding, and v0.1.0 release (steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md)
+
+[MILE] mon 8/31 11am - Committed hex release readiness: ported release script, devcontainer + service stack, publish metadata, and hexdocs-clean moduledoc references
+
+[ABLD] mon 8/31 6pm - Auto-build MULTI_CONSUMER_HEX_PREP: rename config namespace to :allm_pipeline, host-neutral hexdocs, onboarding guide, and v0.1.0 Hex release prep
+
+[IMPL] mon 8/31 6pm - Implement subphase 1 of MULTI_CONSUMER_HEX_PREP: package-side config namespace rename :amesbury_scraper -> :allm_pipeline plus Dynamo default table rename
+
+[CDRV] mon 8/31 6pm - Code review on subphase 1 config-namespace rename (:amesbury_scraper to :allm_pipeline)

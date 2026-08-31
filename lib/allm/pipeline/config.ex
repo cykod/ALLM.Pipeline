@@ -44,9 +44,9 @@ defmodule ALLM.Pipeline.Config do
   `repo/0` stays the package's only accessor (`ALLM.Pipeline.Registry`
   generates no `repo/0`; `behaviours_test.exs` pins that exactly one module in
   the package exposes one). Adapters keep resolving *their own values* (table
-  names, endpoints, roots) at runtime via `Application.get_env`, and
-  `:amesbury_scraper` stays the config namespace — renaming the namespace is a
-  separate change with its own deployment sequencing (§5.3).
+  names, endpoints, roots) at runtime via `Application.get_env`, under
+  `:allm_pipeline` — the package's own OTP app name and the config namespace
+  for everything the framework reads.
 
   ## The two domain collections
 
@@ -93,7 +93,7 @@ defmodule ALLM.Pipeline.Config do
       # MyApp.Application.start/2
       :ok = MyApp.Pipelines.install()
 
-  A host with no registry may still set `config :amesbury_scraper, repo:
+  A host with no registry may still set `config :allm_pipeline, repo:
   MyApp.Repo` directly; this reads the key either way. Amesbury declares it on
   `Amesbury.Pipelines` — batch 1.C retired the `config/config.exs` line so the
   key has one writer.
@@ -107,7 +107,7 @@ defmodule ALLM.Pipeline.Config do
   """
   @spec repo() :: module()
   def repo do
-    case Application.get_env(:amesbury_scraper, :repo) do
+    case Application.get_env(:allm_pipeline, :repo) do
       nil ->
         raise """
         ALLM.Pipeline has no repo configured.
@@ -116,7 +116,7 @@ defmodule ALLM.Pipeline.Config do
         install/0 (see ALLM.Pipeline.Registry). Failing that, set it directly
         in config/config.exs:
 
-            config :amesbury_scraper, repo: MyApp.Repo
+            config :allm_pipeline, repo: MyApp.Repo
         """
 
       # `not is_boolean/1`: `is_atom(true)` is `true`, so `repo: true` would
@@ -135,7 +135,7 @@ defmodule ALLM.Pipeline.Config do
         Fix on the host's ALLM.Pipeline.Registry declaration, or in
         config/config.exs:
 
-            config :amesbury_scraper, repo: MyApp.Repo
+            config :allm_pipeline, repo: MyApp.Repo
         """
     end
   end
@@ -151,13 +151,13 @@ defmodule ALLM.Pipeline.Config do
 
   A wrongly-shaped value raises here, naming the key and the package, for the
   same reason `repo/0` does: the registry validates its own `alert_on_empty:`
-  option, but `config :amesbury_scraper, alert_on_empty: …` written straight
+  option, but `config :allm_pipeline, alert_on_empty: …` written straight
   into a config file bypasses that path, and the failure downstream is a silent
   `false` from `Metrics.expects_data?/1` — never an alert, never an error.
   """
   @spec alert_on_empty() :: [String.t()]
   def alert_on_empty do
-    names = Application.get_env(:amesbury_scraper, :alert_on_empty, [])
+    names = Application.get_env(:allm_pipeline, :alert_on_empty, [])
 
     if is_list(names) and Enum.all?(names, &is_binary/1) do
       names
@@ -170,7 +170,7 @@ defmodule ALLM.Pipeline.Config do
       Fix on the host's ALLM.Pipeline.Registry declaration, or in
       config/config.exs:
 
-          config :amesbury_scraper, alert_on_empty: ["some_scrape"]
+          config :allm_pipeline, alert_on_empty: ["some_scrape"]
       """
     end
   end
@@ -195,7 +195,7 @@ defmodule ALLM.Pipeline.Config do
   """
   @spec lock_keys() :: %{atom() => atom()}
   def lock_keys do
-    case Application.get_env(:amesbury_scraper, :lock_keys, %{}) do
+    case Application.get_env(:allm_pipeline, :lock_keys, %{}) do
       map when is_map(map) ->
         map
 
@@ -221,7 +221,7 @@ defmodule ALLM.Pipeline.Config do
     Fix on the host's ALLM.Pipeline.Registry declaration, or in
     config/config.exs:
 
-        config :amesbury_scraper, lock_keys: [some_refresh: :some]
+        config :allm_pipeline, lock_keys: [some_refresh: :some]
     """
   end
 end

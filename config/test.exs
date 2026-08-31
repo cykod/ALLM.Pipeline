@@ -13,16 +13,13 @@ config :allm_pipeline, ALLM.Pipeline.TestRepo,
   pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: System.schedulers_online() * 2
 
-# ── Framework config, all under :amesbury_scraper ────────────────────────────
-# The config namespace is a deliberate non-goal of the extraction: the package
-# reads/writes `:amesbury_scraper` (hardcoded in `Registry.@otp_app` and the
-# seam modules). Renaming it is deferred until a second consumer makes the name
-# a real API. Values below mirror the umbrella's `config/test.exs`.
+# ── Framework config, all under :allm_pipeline ───────────────────────────────
+# Values below mirror the umbrella's `config/test.exs`.
 
 # DynamoDB (local). NOTE: the table name deliberately differs from the
 # umbrella's (`amesbury_artifacts_test`) so the two suites never share Dynamo
 # state.
-config :amesbury_scraper, :dynamo,
+config :allm_pipeline, :dynamo,
   table_name: "allm_pipeline_artifacts_test",
   endpoint: System.get_env("DYNAMODB_ENDPOINT") || "http://localhost:4028",
   region: "us-east-1"
@@ -30,7 +27,7 @@ config :amesbury_scraper, :dynamo,
 # Large-tier artifact storage — local MinIO. The bucket is shared with the
 # umbrella suite (acceptable: S3 keys are content-addressed per artifact and
 # the live round-trip test writes unique keys).
-config :amesbury_scraper, ALLM.Pipeline.Artifacts.S3,
+config :allm_pipeline, ALLM.Pipeline.Artifacts.S3,
   bucket: "amesbury-artifacts-test",
   endpoint: System.get_env("MEDIA_ENDPOINT") || "http://localhost:4026",
   region: "us-east-1"
@@ -43,7 +40,7 @@ config :ex_aws,
   region: "us-east-1"
 
 # Full LLM-call input/output capture on, mirroring the umbrella's config.exs.
-config :amesbury_scraper, ALLM.Pipeline.LLMCallLog, enabled: true
+config :allm_pipeline, ALLM.Pipeline.LLMCallLog, enabled: true
 
 # Print only warnings and errors during test
 config :logger, level: :warning

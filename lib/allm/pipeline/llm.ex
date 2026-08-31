@@ -52,7 +52,7 @@ defmodule ALLM.Pipeline.LLM do
 
   `llm:` is **optional** on the registry: a host that runs no LLM steps should
   not have to name an engine. Declaring it writes
-  `config :amesbury_scraper, ALLM.Pipeline.LLM, impl: MyApp.Pipelines.LLM`, with
+  `config :allm_pipeline, ALLM.Pipeline.LLM, impl: MyApp.Pipelines.LLM`, with
   `put_new` semantics, so an env-specific config-file override still wins (see
   `ALLM.Pipeline.Registry`, "Precedence").
   """
@@ -111,7 +111,7 @@ defmodule ALLM.Pipeline.LLM do
   """
   @spec impl() :: module()
   def impl do
-    :amesbury_scraper
+    :allm_pipeline
     |> Application.get_env(__MODULE__, [])
     |> Keyword.get(:impl)
     |> case do
@@ -139,7 +139,7 @@ defmodule ALLM.Pipeline.LLM do
 
         Failing that, set it directly in config/config.exs:
 
-            config :amesbury_scraper, ALLM.Pipeline.LLM, impl: MyApp.Pipelines.LLM
+            config :allm_pipeline, ALLM.Pipeline.LLM, impl: MyApp.Pipelines.LLM
 
         The adapter must implement the ALLM.Pipeline.LLM behaviour.
         """
@@ -151,7 +151,7 @@ defmodule ALLM.Pipeline.LLM do
         Fix on the host's ALLM.Pipeline.Registry declaration, or in
         config/config.exs:
 
-            config :amesbury_scraper, ALLM.Pipeline.LLM, impl: MyApp.Pipelines.LLM
+            config :allm_pipeline, ALLM.Pipeline.LLM, impl: MyApp.Pipelines.LLM
         """
     end
   end

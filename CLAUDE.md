@@ -43,11 +43,13 @@ Host collaborators resolve at **runtime** instead, through the host's
 `use ALLM.Pipeline.Registry` declaration (Amesbury's is `Amesbury.Pipelines`,
 installed from `AmesburyScraper.Application.start/2`; this repo's own suite
 installs `ALLM.Pipeline.TestSupport.Registry` from `test/test_helper.exs`).
-The config namespace is `:amesbury_scraper`, hardcoded in `Config`, `Store`,
-`Artifacts`, `Lock`, `LLM`, `LLMCallLog` and `Artifacts.Dynamo` — a host app's
-name on a standalone package's config keys is ugly but legal (an atom is an
-atom), and keeping it was a recorded Phase 8 non-goal; the rename trigger is a
-second consumer.
+The config namespace is `:allm_pipeline` — the package's own OTP app name,
+hardcoded in `Config`, `Store`, `Artifacts`, `Lock`, `LLM`, `LLMCallLog` and
+`Artifacts.Dynamo`. That per-module literal is deliberately not centralized
+into one `otp_app/0` accessor (it would churn 40+ sites for no behavioral gain,
+and the house style distrusts singleton accessors); to move the namespace again
+you substitute the value at each site, but there is no trigger left to — it is
+already the package's own name.
 
 **`ALLM.Pipeline.Config.repo/0` is the single, permanent host-repo handle** —
 settled as option (b) in batch 1.B, not a Phase-1 shim. Do not add a second
@@ -195,7 +197,7 @@ installer is now `ALLM.Pipeline.TestSupport.Registry` from `test_helper.exs`,
 and a test that observes what IT installs is observing the harness, not the
 framework.
 
-So: a package test that reads or writes `Application.get_env(:amesbury_scraper,
+So: a package test that reads or writes `Application.get_env(:allm_pipeline,
 …)` **establishes the value it depends on and restores it**, and is `async: false`
 (the application env is global to the VM). The shape, in `setup`:
 
@@ -203,11 +205,11 @@ So: a package test that reads or writes `Application.get_env(:amesbury_scraper,
 use ExUnit.Case, async: false
 
 setup do
-  previous = Application.get_env(:amesbury_scraper, Lock)
+  previous = Application.get_env(:allm_pipeline, Lock)
   on_exit(fn ->
     if previous,
-      do: Application.put_env(:amesbury_scraper, Lock, previous),
-      else: Application.delete_env(:amesbury_scraper, Lock)
+      do: Application.put_env(:allm_pipeline, Lock, previous),
+      else: Application.delete_env(:allm_pipeline, Lock)
   end)
   :ok
 end
@@ -233,7 +235,7 @@ seam with no package adapter to default to (there is no provider integration
 the package could ship), so "unwired" must be loud rather than neutral.
 
 Config files are applied before `Application.start/2`, so `install/0` is the last
-writer. `put_new` on the seams keeps an env-specific `config :amesbury_scraper,
+writer. `put_new` on the seams keeps an env-specific `config :allm_pipeline,
 ALLM.Pipeline.Artifacts, impl: …Filesystem` winning — which two moduledocs
 document as the supported route — because a registry is one compile-time
 declaration and cannot be env-specific, while adapter selection legitimately is.

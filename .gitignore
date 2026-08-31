@@ -4,6 +4,9 @@
 /doc/
 /cover/
 
+# Pipeline build-loop review/retro artifacts (never committed)
+/.work/
+
 # Generated on crash by the VM
 erl_crash.dump
 

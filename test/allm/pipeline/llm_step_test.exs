@@ -4,7 +4,7 @@ defmodule ALLM.Pipeline.LLMStepTest do
   the parse path.
 
   **Not `async: true`.** Every test here routes the engine call through
-  `ALLM.Pipeline.LLM.impl/0`, which reads `:amesbury_scraper` application env —
+  `ALLM.Pipeline.LLM.impl/0`, which reads `:allm_pipeline` application env —
   global to the VM, and carrying the test registry's declaration at boot
   (a host registry's, when run inside a host VM).
   Per this repo's `CLAUDE.md` §5 the value this tree depends on is
@@ -57,13 +57,13 @@ defmodule ALLM.Pipeline.LLMStepTest do
   defp calls, do: Process.get(:stub_calls, [])
 
   setup do
-    previous = Application.get_env(:amesbury_scraper, LLM)
-    Application.put_env(:amesbury_scraper, LLM, impl: StubLLM)
+    previous = Application.get_env(:allm_pipeline, LLM)
+    Application.put_env(:allm_pipeline, LLM, impl: StubLLM)
 
     on_exit(fn ->
       case previous do
-        nil -> Application.delete_env(:amesbury_scraper, LLM)
-        value -> Application.put_env(:amesbury_scraper, LLM, value)
+        nil -> Application.delete_env(:allm_pipeline, LLM)
+        value -> Application.put_env(:allm_pipeline, LLM, value)
       end
     end)
 
@@ -304,7 +304,7 @@ defmodule ALLM.Pipeline.LLMStepTest do
     end
 
     test "an unwired host raises, naming the registry key that fixes it" do
-      Application.delete_env(:amesbury_scraper, LLM)
+      Application.delete_env(:allm_pipeline, LLM)
 
       message =
         assert_raise(RuntimeError, fn ->

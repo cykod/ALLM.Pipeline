@@ -126,7 +126,7 @@ defmodule ALLM.Pipeline.Registry do
   advisory lock"). So the seam keys are written with **`put_new`**
   semantics — the declaration supplies the DEFAULT and an explicit
 
-      config :amesbury_scraper, ALLM.Pipeline.Artifacts,
+      config :allm_pipeline, ALLM.Pipeline.Artifacts,
         impl: ALLM.Pipeline.Artifacts.Filesystem
 
   wins, per environment, exactly as it did before a registry existed. That
@@ -140,18 +140,19 @@ defmodule ALLM.Pipeline.Registry do
   not a feature. `registry_test.exs`'s "a config-file `impl:` outranks the
   declaration" describe pins both halves.
 
-  ## `:amesbury_scraper` is the config namespace in Phase 1
+  ## `:allm_pipeline` is the config namespace
 
-  Hardcoded here exactly as it is in `ALLM.Pipeline.Config`,
-  `Store`, `Artifacts`, `Lock`, `LLM`, `LLMCallLog` and `Artifacts.Dynamo`. Renaming
-  the namespace is a separate change with its own deployment sequencing
-  (extraction plan §5.3); doing it here alone would fork the very keys this
-  module exists to feed.
+  The package reads and writes all of its configuration under its own OTP app
+  name — the conventional Elixir shape. It is hardcoded here exactly as it is
+  in `ALLM.Pipeline.Config`, `Store`, `Artifacts`, `Lock`, `LLM`, `LLMCallLog`
+  and `Artifacts.Dynamo`; those literals share this one value so the keys this
+  module feeds and the keys the accessors read never fork.
   """
 
-  # The application under which the framework reads all of its configuration.
-  # See "`:amesbury_scraper` is the config namespace in Phase 1" above.
-  @otp_app :amesbury_scraper
+  # The application under which the framework reads all of its configuration:
+  # the package's own OTP app name. See "`:allm_pipeline` is the config
+  # namespace" above.
+  @otp_app :allm_pipeline
 
   @module_keys [:repo, :store, :artifacts, :lock]
 
@@ -383,7 +384,7 @@ defmodule ALLM.Pipeline.Registry do
   # `:bucket`, `Artifacts.Dynamo`'s `:dynamo`) — NOT beside `:impl` on the
   # `ALLM.Pipeline.Artifacts` seam key, which selects the adapter and carries
   # nothing else. `put_new` at the whole-key level, matching the seam asymmetry
-  # above: a config-file `config :amesbury_scraper, <Adapter>, …` override wins,
+  # above: a config-file `config :allm_pipeline, <Adapter>, …` override wins,
   # per environment. The bare-module form carries `[]` and installs nothing.
   #
   # FOOT-GUN (intentional, tested by `registry_test.exs` "a config-file value for

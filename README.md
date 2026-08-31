@@ -125,11 +125,3 @@ a container rebuild — see the umbrella's `CLAUDE.md` on devcontainer
 declarations), and a vendored copy staged by its `scripts/deploy.sh` for
 production Docker builds. Inside that devcontainer this suite is **not
 runnable** (readonly mount — `_build` can't be written); run it on the host.
-
-The config namespace is `:amesbury_scraper` — the original host
-application's name, kept as a deliberate non-goal of the extraction (renaming
-it is deferred until a second consumer makes the name a real API; see
-`config/test.exs`). It is also why every standalone test run
-opens with Mix's multi-line "You have configured application
-`:amesbury_scraper` … but the application is not available" notice: the config
-names an app this repo does not compile. Expected and harmless here.

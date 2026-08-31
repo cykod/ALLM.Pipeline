@@ -27,14 +27,14 @@ defmodule ALLM.Pipeline.TestHarnessTest do
     # Pin the raw env first (AGENT_IMPLEMENTATION_SPEC, in the Amesbury
     # umbrella repo: "pin the raw application env, never only the resolved
     # value").
-    raw = Application.get_env(:amesbury_scraper, ALLM.Pipeline.Artifacts, [])
+    raw = Application.get_env(:allm_pipeline, ALLM.Pipeline.Artifacts, [])
     assert raw[:impl] == ALLM.Pipeline.Artifacts.Tiered
 
     assert ALLM.Pipeline.Artifacts.impl() == ALLM.Pipeline.Artifacts.Tiered
   end
 
   test "the Tiered adapter's small/large opts were installed" do
-    opts = Application.get_env(:amesbury_scraper, ALLM.Pipeline.Artifacts.Tiered, [])
+    opts = Application.get_env(:allm_pipeline, ALLM.Pipeline.Artifacts.Tiered, [])
     assert opts[:small] == ALLM.Pipeline.Artifacts.Dynamo
     assert opts[:large] == ALLM.Pipeline.Artifacts.S3
   end

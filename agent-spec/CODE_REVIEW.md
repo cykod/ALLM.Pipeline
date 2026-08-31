@@ -38,8 +38,9 @@ teaches the next agent to undo a decision:
   (§7 — different callers; a THIRD copy is a Blocker).
 - Teardown-error metadata written by two different channels (§7 — Ecto drops
   unchanged maps).
-- The `:amesbury_scraper` config namespace on a standalone package (§1 — rename
-  trigger is a second consumer).
+- The `:allm_pipeline` config namespace hardcoded per seam module rather than
+  centralized into one `otp_app/0` accessor (§1 — churns 40+ sites for no
+  behavioral gain, and the house style distrusts singleton accessors).
 
 ## Heuristics
 

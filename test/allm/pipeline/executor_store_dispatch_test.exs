@@ -75,7 +75,7 @@ defmodule ALLM.Pipeline.ExecutorStoreDispatchTest do
   adapter is how a third token mint point gets created (`ALLM.Pipeline.Store`,
   "Not callbacks").
 
-  **Not `async: true`** — it rewrites `:amesbury_scraper` application env,
+  **Not `async: true`** — it rewrites `:allm_pipeline` application env,
   which is global to the VM. No database: the stub answers, so nothing reaches
   a repo.
   """
@@ -85,13 +85,13 @@ defmodule ALLM.Pipeline.ExecutorStoreDispatchTest do
   alias ALLM.Pipeline.{Executor, SentinelStore, Store}
 
   setup do
-    original = Application.fetch_env(:amesbury_scraper, Store)
-    Application.put_env(:amesbury_scraper, Store, impl: SentinelStore)
+    original = Application.fetch_env(:allm_pipeline, Store)
+    Application.put_env(:allm_pipeline, Store, impl: SentinelStore)
 
     on_exit(fn ->
       case original do
-        {:ok, value} -> Application.put_env(:amesbury_scraper, Store, value)
-        :error -> Application.delete_env(:amesbury_scraper, Store)
+        {:ok, value} -> Application.put_env(:allm_pipeline, Store, value)
+        :error -> Application.delete_env(:allm_pipeline, Store)
       end
     end)
 
@@ -117,7 +117,7 @@ defmodule ALLM.Pipeline.ExecutorStoreDispatchTest do
   end
 
   test "deleting the config restores the shipped default — Store.Ecto is not hardcoded" do
-    Application.delete_env(:amesbury_scraper, Store)
+    Application.delete_env(:allm_pipeline, Store)
     assert Store.impl() == Store.Ecto
   end
 end
