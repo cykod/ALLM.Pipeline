@@ -315,3 +315,128 @@ subphases 1/3). The `.tar` is gitignored; removed after inspection. The
 `[error]`/`[warning]` lines in the `mix precommit` output are deliberate
 test-fixture log output (borrowed-run refusals, deliberate `:boom` failures),
 not compile warnings — the run is 0 failures with `--warnings-as-errors`.
+
+---
+
+## Subphase 6 — Multi-consumer agent-doc updates
+
+**Status: Completed** (this repo's `mix precommit` exit 0, 3 doctests 600 tests
+0 failures — doc-only diff; review gates run and clean — functional-review
+APPROVED (all 4 observables pass; reframing verified truthful — no "published"
+or plural-consumer claim, all named artifacts exist on disk), code-review
+ship-as-is (0 High/Med, 1 cosmetic Low left for polish; the false-governed-doc
+hazard verified clean), security-review no-issues (prose-only, no secrets;
+steering docs not in the tarball), design-review N/A (doc-only diff)). Artifacts
+under `.work/{reviews,code-reviews,security-reviews,design-reviews}/2026-08-31-subphase6-agent-docs*`.
+Files touched: `CLAUDE.md`, `README.md`, `agent-spec/DESIGN.md`.
+`agent-spec/CODE_REVIEW.md` was NOT touched — see "Deviations" (its §1 namespace
+bullet was already brought to current truth in subphase 1, so no subphase-6 edit
+was needed there despite the Module-tree listing it).
+
+### ⚠️ KEY RECONCILIATION — the design's subphase-6 wording assumed a publish that has NOT happened
+
+The design's subphase-6 checklist (lines 503–519) was written assuming subphases
+2 and 5 had landed: it says to rewrite the `CLAUDE.md` header to "the consumer
+**list**" and "that the package is now **published**", and to **retire** the
+"Publishing trigger" sentence. **In THIS run none of that is true:**
+
+- **Subphase 5 (v0.1.0 Hex publish) is DEFERRED to the host.** The package is
+  publish-*ready* (host-neutral hexdocs, onboarding guide + canonical DDL in the
+  tarball, `@version "0.1.0"`) but is **NOT on Hex**.
+- **No second consumer exists.** Consumers 2/3 are explicitly out of scope
+  (design Overview "Out of scope"); the Amesbury umbrella is still the sole
+  consumer.
+- **Subphase 2 (umbrella lockstep) is also deferred to the host** — the umbrella
+  still reads `:amesbury_scraper` until the user lands it there.
+
+Writing "now published" or a plural "its consumers" into a governed doc would be
+a **false statement in a governed document** — the worst error available here. So
+every subphase-6 edit was phrased for the **true current state**, not the
+publish-assumed one:
+
+- **`CLAUDE.md` header** — did NOT claim published and did NOT pluralize
+  consumers. Kept the accurate facts (still **one** consumer, the umbrella, path
+  dep) and REFRAMED the "hex-ready but not published" line to state that the
+  readiness work (this design) landed — namespace is now the package's own OTP
+  app name, hexdocs are host-neutral, the guide + canonical DDL ship in the
+  tarball — and that only the publish step (subphase 5) and umbrella lockstep
+  (subphase 2) remain, **deferred to the host**. **REFINED** the "Publishing
+  trigger" sentence rather than retiring it (it still hasn't published, so the
+  trigger still stands); annotated it "(still standing — it has not been
+  published)".
+- **`README.md` intro** — the design offered "→ consumers-plural once a second
+  consumer actually lands (leave a TODO only if this subphase closes before then
+  — otherwise phrase it now)". Since NO second consumer landed, did the
+  current-reality phrasing: "currently its sole consumer", plus a sentence that
+  the framework is host-neutral and onboarding-ready via the host-wiring guide
+  (making new consumers possible without asserting they exist), and "not yet
+  published". Did NOT pluralize as if consumers 2/3 exist. (No literal `TODO`
+  marker left — the current-reality phrasing is self-consistent and needs no
+  future-edit flag; the standing publish/second-consumer triggers already live in
+  the `CLAUDE.md` header and §8.)
+
+These two are the deviation from the design's literal checklist wording, made
+because the design's wording is counterfactual for this run's scope. A
+`> CORRECTED:` note was added to the design's subphase-6 section pointing here.
+
+### The publish-independent edits (done normally, matching the design)
+
+- **`CLAUDE.md` §7 corollary** (was "run the census from the Amesbury umbrella
+  root") → now "run the census from EVERY consumer repo … each consumer port's
+  own obligation, named in that port's design", with the Amesbury `grep` kept as
+  the concrete example and "a second consumer runs the equivalent from its own
+  tree". Not deferred to any subphase (consumers 2/3 out of scope).
+- **`agent-spec/DESIGN.md` "DDL in two places"** (was "the host-side production
+  migration (which lives in the Amesbury repo)") → per-consumer phrasing that
+  names the canonical DDL file
+  `priv/test_repo/migrations/00000000000001_create_pipeline_tables.exs` (shipped
+  in the tarball per subphase 4) as the source of truth each consumer copies into
+  its own repo and freezes.
+
+### Deviations
+
+- **`agent-spec/CODE_REVIEW.md` not edited** — the Module tree lists it under
+  "MODIFY — subphase 6", but its only namespace-sensitive line (§1 bullet, line
+  41) was already retargeted to current truth in **subphase 1** (see subphase-1
+  RECORDS: "`agent-spec/CODE_REVIEW.md:41` … retargeted … to the
+  not-centralized-into-an-accessor decision"). It reads `:allm_pipeline` today
+  and states no one-consumer/published claim, so there was nothing left for
+  subphase 6 to fix. No edit rather than a no-op edit.
+
+### Grep survivor list — `amesbury_scraper` in the governed docs
+
+The verification grep
+`grep -n 'amesbury_scraper' CLAUDE.md README.md agent-spec/*.md | grep -v 'was\|history\|formerly'`
+returns **3** survivors, all in `CLAUDE.md`, all **deliberate concrete
+host-file-path pointers** — NOT false config-namespace claims. `CLAUDE.md` is not
+hexdocs; it legitimately names the concrete host (build prompt: "those are NOT
+the target"). They stay:
+
+| Line | Text | Why it stays |
+|---|---|---|
+| 32 | `apps/amesbury_scraper/CLAUDE.md` §1 (where the framework's behaviour is documented consumer-side) | concrete host doc path, a correct pointer |
+| 59 | `apps/amesbury_scraper/test/amesbury_scraper/pipeline/step_schema_census_test.exs` | concrete host-twin test path (the §1 "Host-twin guards" note) |
+| 249 | `apps/amesbury_scraper/test/amesbury/pipelines_declared_values_test.exs` | concrete host-owned-values test path (§5) |
+
+None asserts the `:amesbury_scraper` *config namespace* (that assertion was the
+target, and subphase 1 removed it from `lib/`/`config/`). No survivors in
+`README.md` or `agent-spec/*.md`.
+
+### Verification transcript (all run this env, all green)
+
+```
+grep -n 'amesbury_scraper' CLAUDE.md README.md agent-spec/*.md | grep -v 'was\|history\|formerly' | wc -l
+    →  3   (all deliberate host-file-path pointers — table above)
+
+DATABASE_HOST=<compose-pg-ip> DATABASE_USER=postgres DATABASE_PASSWORD=postgres mix precommit
+    →  EXIT 0   (compile 0 warnings, format clean, 3 doctests 600 tests 0 failures)
+```
+
+Run in the devcontainer with the compose Postgres container IP for `DATABASE_HOST`
+(same environment note as subphases 1/3/4 — `host.docker.internal:5432` lacks the
+`postgres` role; the compose Postgres is reached by its network IP). Docs-only
+diff, so no two-direction dynamo pair re-run was needed (§4 is not touched by this
+subphase). Review gates (code/security/design) not yet run — status is "Built,
+gates pending" accordingly; security/design are N/A per the design's Overview
+(no runtime/frontend change), code-review applies only weakly (docs-only, no
+`lib/` diff).

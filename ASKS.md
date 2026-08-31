@@ -25,3 +25,5 @@
 [CDRV] mon 8/31 6pm - Code review on subphase 4 consumer onboarding guide + DDL packaging per steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md
 
 [MILE] mon 8/31 6pm - Added the host-wiring onboarding guide and shipped the canonical test-harness DDL in the Hex tarball (subphase 4)
+
+[CDRV] mon 8/31 7pm - Code review on subphase 6 (governed-doc updates) of MULTI_CONSUMER_HEX_PREP steering

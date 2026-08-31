@@ -5,9 +5,11 @@ step logs, artifact lineage (DynamoDB/S3-tiered), run lifecycle ownership, and
 a declarative pipeline DSL (`use ALLM.Pipeline`).
 
 Extracted from a production Elixir umbrella (Phases 1–8 of the ALLM pipeline
-extraction plan), which remains the production consumer — it consumes this
-repo as a path dependency. Publishable to Hex as `allm_pipeline` via
-`scripts/release.exs` (see "Releasing to Hex").
+extraction plan), which is currently its sole consumer — it consumes this repo
+as a path dependency. The framework is host-neutral and onboarding-ready: a new
+host wires in through `use ALLM.Pipeline.Registry` following the
+[host-wiring guide](guides/host_wiring.md). Publishable to Hex as `allm_pipeline`
+via `scripts/release.exs` (see "Releasing to Hex"); not yet published.
 
 ## What's here
 

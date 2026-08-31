@@ -500,6 +500,15 @@ https://hexdocs.pm/allm_pipeline renders the guide.
 One concern: the agent docs stop describing a one-consumer world. Doc-only;
 may land any time after subphase 2.
 
+> CORRECTED 2026-08-31: this checklist's "the package is now published", the
+> plural "consumer list", and "the 'Publishing trigger' sentence retires" (below)
+> assumed subphases 2 and 5 had landed. In the as-built run they had NOT — publish
+> (subphase 5) and umbrella lockstep (subphase 2) are DEFERRED to the host, and no
+> second consumer exists. Writing "published"/plural-consumers into the governed
+> docs would be a false claim, so the edits were phrased for the true current
+> state (publish-ready, still one consumer, trigger REFINED not retired). Full
+> reconciliation in `..._RECORDS.md` → "Subphase 6" → "KEY RECONCILIATION".
+
 **Checklist.**
 
 - [ ] `CLAUDE.md` header: "its one consumer" → the consumer list (and that the

@@ -37,8 +37,12 @@ section numbers, never restate prose (restating creates two sources of truth).
   `@callback` lists EVERY in-tree implementer to stub, test doubles included
   (`CLAUDE.md` §1).
 - **DDL in two places.** Schema changes name both the `priv/test_repo/migrations/`
-  harness DDL and the host-side production migration (which lives in the Amesbury
-  repo), plus the schema-parity re-run. Table names are contract.
+  harness DDL and the host-side production migration, plus the schema-parity
+  re-run. The canonical DDL source of truth is
+  `priv/test_repo/migrations/00000000000001_create_pipeline_tables.exs` (shipped
+  in the tarball) — each consumer copies it into its own repo's production
+  migrations and owns/freezes the table names thereafter. Table names are
+  contract.
 - **Error contract table** (function × reason atom × recovery) for validator-shaped
   modules — exhaustive, so the implementer never invents an atom.
 - **Consumer census.** Production declarations live in the CONSUMER's repo; a new

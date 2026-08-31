@@ -1,3 +1,22 @@
+## [DOC] Update agent docs for the multi-consumer, publish-ready reality
+*Monday, August 31st at 7pm*
+Subphase 6 of steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md: refreshes the 
+governed agent docs so they stop describing a stale single-namespace world, 
+while carefully NOT asserting anything not yet true (the Hex publish and 
+umbrella lockstep are deferred to the host, and no second consumer exists yet). 
+CLAUDE.md's header is reframed to publish-ready-not-published with the standing 
+publish trigger refined rather than retired, and its section 7 census corollary 
+now runs from every consumer repo as each port's own obligation; README's intro 
+states sole-consumer-but-onboarding-ready; agent-spec/DESIGN.md's DDL note 
+becomes per-consumer and names the now-shipped canonical migration as the 
+source of truth. A dated CORRECTED note on the design's subphase-6 section 
+flags that its checklist assumed a publish that has not happened. Doc-only; 
+gate green (600 tests). Three items remain deferred to the host: the v0.1.0 
+publish (subphase 5), the umbrella seam-key lockstep (subphase 2), and the 
+umbrella schema-parity re-run.
+
+---
+
 ## [DOC] Add host-wiring guide and ship canonical DDL in tarball
 *Monday, August 31st at 6pm*
 Subphase 4 of steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md: adds the consumer 
