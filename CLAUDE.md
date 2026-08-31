@@ -105,8 +105,26 @@ missing `SentinelStore` stub for exactly this reason.)
 
 ```bash
 mix test        # from ~/Projects/ALLM.Pipeline — creates + migrates allm_pipeline_test itself
-mix precommit   # compile --warnings-as-errors + format + test --warnings-as-errors
+mix precommit   # compile --warnings-as-errors + format + test --warnings-as-errors + dialyzer
 ```
+
+`precommit` runs in `:test` env (`cli/0`'s `preferred_envs`), so its `dialyzer`
+step analyzes `lib/` **and** `test/support/` — which is why `dialyzer:
+[plt_add_apps: [:mix, :ex_unit]]` in `mix.exs` is needed (the `Mix.*` refs in
+`lib/mix/tasks/` and the `ExUnit.Assertions.*` refs in `test/support/` are
+otherwise unknown functions). The standalone release gate's `mix dialyzer` runs
+in `:dev` (lib-only, a narrower scope) — do not be surprised the two see
+different file sets. First run builds the PLT (slow, ~1 min); it caches after.
+
+**PLT is host-path-poisoned across the devcontainer boundary.** The PLT bakes
+in absolute paths to the toolchain's OTP beams, so a PLT built on the host
+(`/Users/…/.asdf/…/erl_bif_types.beam`) halts dialyzer inside the container with
+a `File not found`, and vice-versa — even though the beams themselves are
+portable at matching toolchain pins. It is NOT a code problem and no env
+override fixes it: purge and rebuild in-place —
+`rm -f _build/*/dialyxir_*.plt*` (or `rm -rf _build/<env>` for a fully
+container-native rebuild), then re-run. The `PLT is up to date!` line is no
+guarantee; it only checks the app list, not the baked paths.
 
 The harness is self-contained (Phase 8.1). The `test` alias runs
 `ecto.create` / `ecto.migrate -r ALLM.Pipeline.TestRepo` against
@@ -492,8 +510,12 @@ Do not "fix" that with `--yes` — the prompts are the safety story.
 
 Things specific to this package, not inherited from ALLM:
 
-* The gates are exactly `mix precommit`'s three plus `dialyzer` and
-  `hex.build`; there is no credo dep. `mix test` with the stack down exits 0
+* The gates are exactly `mix precommit`'s **four** (compile, format, test, and
+  `dialyzer` — the last added to the alias 2026-08-31) plus `hex.build`; there
+  is no credo dep. The release script (`scripts/release.exs`) still runs its own
+  explicit gate list rather than calling `mix precommit`, so it inserts
+  `mix dialyzer` itself (skippable via `--skip-dialyzer`) — the two paths are
+  maintained separately on purpose. `mix test` with the stack down exits 0
   with the `:dynamo` set **excluded** (§4), so the script greps the test
   output for `Excluding tags` and WARNS — a green gate with that warning is a
   weaker gate, not a pass.

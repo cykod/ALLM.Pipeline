@@ -71,9 +71,11 @@
 # Package-specific gates
 # ----------------------
 #
-# - The quality gates ARE `mix precommit`'s three steps (compile
-#   `--warnings-as-errors`, format, test `--warnings-as-errors`) plus
-#   `mix dialyzer` (skippable) and `mix hex.build`. Credo is not a dep here.
+# - The quality gates mirror `mix precommit`'s four steps (compile
+#   `--warnings-as-errors`, format, test `--warnings-as-errors`, `dialyzer`)
+#   plus `mix hex.build`. This script runs its own explicit gate list rather
+#   than shelling out to `mix precommit`, and inserts `mix dialyzer` (skippable)
+#   itself — keep the two lists in sync by hand. Credo is not a dep here.
 # - `mix test` needs Postgres (and, for the full set, DynamoDB Local + MinIO —
 #   see README "Test setup"). With the stack down the `:dynamo` tests are
 #   EXCLUDED, not failed, so a green gate with the stack down is a weaker

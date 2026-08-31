@@ -308,7 +308,11 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
       ExAws.Dynamo.create_table(
         table_name(),
         [pk: :hash, sk: :range],
-        %{pk: :string, sk: :string},
+        # Keyword list, not a map: ExAws types `key_definitions` as
+        # `[{atom | binary, type}, ...]`. `encode_key_definitions/1` iterates it
+        # with `Enum.map(fn {name, type} -> … end)`, identical for either shape,
+        # but the map form breaks the `@spec` and dialyzes as `no_return`.
+        [pk: :string, sk: :string],
         1,
         1
       )

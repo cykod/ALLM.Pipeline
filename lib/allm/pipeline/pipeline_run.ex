@@ -73,7 +73,12 @@ defmodule ALLM.Pipeline.PipelineRun do
   @type t :: %__MODULE__{
           id: Ecto.UUID.t() | nil,
           name: String.t() | nil,
-          status: status(),
+          # `| nil`: `create/3` builds a fresh `%__MODULE__{}` (schema field has
+          # no default → `status: nil`) and pipes it through `changeset/2`
+          # before `repo().insert()`. Without the `nil`, that struct is not a
+          # subtype of `t()` and dialyzer infers `create/3` (and its
+          # `Store.Ecto.create_run/3` delegate) as `no_return`.
+          status: status() | nil,
           trigger: String.t() | nil,
           parent_run_id: Ecto.UUID.t() | nil,
           started_at: DateTime.t() | nil,

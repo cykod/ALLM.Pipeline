@@ -39,3 +39,5 @@
 [MILE] mon 8/31 7pm - Named the v0.1.0 public-API changes (namespace, Dynamo default, shipped DDL/guide) in CHANGELOG per the release DoD
 
 [MILE] mon 8/31 8pm - Designed the second-consumer gap closure (steering/2026-08-31_SECOND_CONSUMER_GAPS.md) and wrote the item-by-item reply doc for the consuming project
+
+[MILE] mon 8/31 8pm - Recorded subphase 2 landing host-side and moved MULTI_CONSUMER_HEX_PREP to 5/6 (only the v0.1.0 publish remains, user-gated)

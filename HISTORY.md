@@ -1,3 +1,30 @@
+## [OTHR] Gate dialyzer in precommit and fix its 13 warnings
+*Monday, August 31st at 9pm*
+Dialyzer had never actually run to completion in this repo: a host-built PLT
+baked absolute `/Users/…/.asdf` OTP paths that halt dialyzer inside the
+devcontainer, so the release gate's dialyzer step was silently a no-op. A clean
+container-native run surfaced 13 genuine, pre-existing warnings — all fixed 
+—
+and `dialyzer` is now the fourth step of the `precommit` alias so the gate
+runs on every change.
+
+- PipelineRun/StepLog `@type t`: made `status` nilable (`status() | nil`). A
+  freshly built `%__MODULE__{}` (every insert/create path) has `status: nil`
+  because the schema field carries no default, so it was not a subtype of
+  `t()`, and dialyzer inferred every `changeset(%__MODULE__{}, …) |>
+  repo().insert()` path — and their `Store.Ecto` delegates — as `no_return`.
+- mix.exs: added `dialyzer: [plt_add_apps: [:mix, :ex_unit]]`. `precommit` runs
+  in `:test` env, so dialyzer analyzes both `lib/mix/tasks/*` (`Mix.*`) and
+  `test/support/*` (`ExUnit.Assertions.*`), whose refs are otherwise unknown.
+- Artifacts.Dynamo.create_table/0: pass `key_definitions` as a keyword list,
+  not a map, matching ExAws's `[{atom, type}, …]` spec — runtime-identical
+  under the dep's `Enum.map` encoder, but the map form dialyzed as `no_return`.
+- Docs: recorded dialyzer's move into `precommit` (CLAUDE.md §2/§8 and the
+  release script's gate-count comment) and documented the PLT host-path
+  contamination gotcha and its in-place rebuild fix.
+
+---
+
 ## [DOC] Record subphase 2 landed host-side; MULTI_CONSUMER_HEX_PREP now 5/6
 *Monday, August 31st at 8pm*
 Captures the host-side landing of subphase 2 (umbrella lockstep seam-key move) 

@@ -102,7 +102,12 @@ defmodule ALLM.Pipeline.StepLog do
   @type t :: %__MODULE__{
           id: Ecto.UUID.t() | nil,
           step_type: String.t() | nil,
-          status: status(),
+          # `| nil`: the schema field carries no default, so a freshly built
+          # `%__MODULE__{}` (the create/insert paths) has `status: nil` until
+          # `changeset/2` casts it. Without this, `%__MODULE__{}` is not a
+          # subtype of `t()` and dialyzer infers every `changeset(%__MODULE__{},
+          # …) |> repo().insert()` path as `no_return`.
+          status: status() | nil,
           started_at: DateTime.t() | nil,
           completed_at: DateTime.t() | nil,
           duration_ms: non_neg_integer() | nil,

@@ -18,7 +18,13 @@ defmodule ALLMPipeline.MixProject do
       description: description(),
       package: package(),
       source_url: @source_url,
-      docs: docs()
+      docs: docs(),
+      # `:mix` and `:ex_unit` are build/test-time apps, absent from the runtime
+      # PLT by default. `:mix` — the `lib/mix/tasks/*` modules' `Mix.shell/0` /
+      # `Mix.raise/1` / `Mix.Task` references. `:ex_unit` — `precommit` runs in
+      # `:test` env (see `cli/0`), so dialyzer also analyzes `test/support/*`,
+      # whose `ExUnit.Assertions.*` references would otherwise be unknown.
+      dialyzer: [plt_add_apps: [:mix, :ex_unit]]
     ]
   end
 
@@ -156,7 +162,12 @@ defmodule ALLMPipeline.MixProject do
         "ecto.migrate --quiet -r ALLM.Pipeline.TestRepo --migrations-path priv/test_repo/migrations",
         "test"
       ],
-      precommit: ["compile --warnings-as-errors", "format", "test --warnings-as-errors"]
+      precommit: [
+        "compile --warnings-as-errors",
+        "format",
+        "test --warnings-as-errors",
+        "dialyzer"
+      ]
     ]
   end
 end
