@@ -27,14 +27,14 @@ agent docs. No schema change, no new behaviour, no new seam.
 
 | Subphase | Concern | Status |
 |---|---|---|
-| 1 | Package-side namespace rename + Dynamo default table | Not Started |
-| 2 | Umbrella lockstep seam-key move | Not Started |
-| 3 | Hexdocs-facing `lib/` prose sweep | Not Started |
-| 4 | Consumer onboarding guide + DDL shipping | Not Started |
-| 5 | v0.1.0 release | Not Started |
-| 6 | Multi-consumer agent-doc updates | Not Started |
+| 1 | Package-side namespace rename + Dynamo default table | Complete |
+| 2 | Umbrella lockstep seam-key move | Complete (2026-08-31, landed host-side from the umbrella checkout) |
+| 3 | Hexdocs-facing `lib/` prose sweep | Complete |
+| 4 | Consumer onboarding guide + DDL shipping | Complete |
+| 5 | v0.1.0 release | Deferred — user-gated (public remote + Hex auth preconditions) |
+| 6 | Multi-consumer agent-doc updates | Complete |
 
-Overall Progress: 0/6
+Overall Progress: 5/6 (subphase 5 deferred to the user)
 
 Per-subphase records (deviations, verification transcripts) go to
 `steering/2026-08-31_MULTI_CONSUMER_HEX_PREP_RECORDS.md`, created on first

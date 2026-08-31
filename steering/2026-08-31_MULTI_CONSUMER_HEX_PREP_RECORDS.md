@@ -103,6 +103,107 @@ only when down).
 
 ---
 
+## Subphase 2 — Umbrella lockstep seam-key move
+
+**Status: Completed 2026-08-31** — landed host-side from the umbrella checkout
+(`~/Projects/amesbury`, working tree at `995b4e3`), the environment the earlier
+subphases did not have. Umbrella `mix precommit` exit 0; the fail-closed
+dep-compile check green; the deferred subphase-4 schema-parity re-run
+discharged in the same sitting (see below).
+
+### Baseline (pre-edit working tree, per the umbrella's baseline rule)
+
+`mix precommit` at `995b4e3` before any edit: **exit 2** — `amesbury` 1075/0,
+`amesbury_scraper` 2200 tests / **51 failures** / 31 excluded (with the
+`:dynamo` exclusion firing), `amesbury_web` 274 tests / 1 failure. Failure
+census: the two `Amesbury.PipelinesTest` namespace assertions, plus 50
+artifact-store casualties — with the umbrella's `:dynamo` config unread under
+the old namespace, the adapter fell back to **real AWS DynamoDB** with the
+test env's dummy credentials (`UnrecognizedClientException` throughout the
+log). That is the live blast radius the design predicted; it also means a prod
+deploy in the interim state would have silently repointed the artifact table
+to C2's new default. Captured: `precommit-baseline.log` (session scratchpad;
+figures restated here because the scratchpad dies with the session).
+
+### What changed (16 sites)
+
+- **Config, 12 lines** `config :amesbury_scraper, …` → `config :allm_pipeline, …`:
+  `config/config.exs:62` (`:dynamo`), `:116` (`LLMCallLog`);
+  `config/dev.exs:80,89`; `config/test.exs:43,51`; `config/eval.exs:27`;
+  `config/runtime.exs:51,81` (endpoint overrides), `:449` (prod
+  `DYNAMODB_TABLE`), `:461` (prod S3 bucket). Line numbers pre-edit.
+- **Code, 3 sites**: `pipelines_test.exs:90` (`:repo` assertion) **and :60 —
+  a variable-key read (`get_env(:amesbury_scraper, behaviour, [])`) the
+  design's literal-pattern grep structurally could not find** (the
+  "zero grep hits prove nothing for non-literal calls" rule; found by
+  eyeballing the failing test's describe block); `eval/eval_helper.exs:186`.
+- **Prose, 3 sites**: `config/config.exs:52–59` (the "`:amesbury_scraper`
+  stays the framework's config namespace through Phase 1" paragraph —
+  falsified, rewritten); `lib/amesbury/pipelines.ex:66` comment;
+  `apps/amesbury_scraper/CLAUDE.md:275` example config line.
+- **What stayed**: every `:amesbury_scraper` line carrying the umbrella's own
+  keys (`ecto_repos`, `HttpScraper`, `LLMEngine`, `DocumentExtractionClient`,
+  `MapboxGeocoder`, `:opengov`) — 12 `config :amesbury_scraper` lines remain
+  in `config/`, and all remaining `get_env(:amesbury_scraper, __MODULE__)`
+  reads are own-app modules (verified by eyeball of the filtered grep).
+  Deliberate doc survivors: historical steering/`.work` records, and
+  `steering/SST_DEPLOYMENT_PLAN.md:875` — a frozen `runtime.exs` sketch that
+  already names the retired `LLMClient` module, i.e. historical in character.
+
+### C2 guard (checklist item: every env sets `table_name` explicitly)
+
+Enumerated from the post-edit tree: `config.exs` `"amesbury_artifacts"`,
+`dev.exs` `"amesbury_artifacts_dev"`, `test.exs` `"amesbury_artifacts_test"`,
+`eval.exs` `"eval_artifacts"`, prod `runtime.exs:449`
+`env!("DYNAMODB_TABLE", :string!)`. The package's new default
+`"allm_pipeline_artifacts"` never fires in any umbrella environment.
+
+### Environment repair (shared local DynamoDB)
+
+The shared DynamoDB Local on :4028 held only `allm_pipeline_artifacts_test`
+(the package-side run's compose restart lost the umbrella's tables — DynamoDB
+Local here is ephemeral). Recreated `amesbury_artifacts_test` and
+`amesbury_artifacts_dev` via `ALLM.Pipeline.Artifacts.Dynamo.create_table/0`
+(`MIX_ENV=test mix run -e …` / dev with `DYNAMODB_ENDPOINT=http://localhost:4028`
+— the host shell's `.env` value was a stale OrbStack `*.orb.local` name,
+`:nxdomain`, the documented drift; probed before overriding).
+
+### Verification transcript (all run host-side, umbrella root)
+
+```
+# Baseline (pre-edit):            mix precommit → exit 2 (52 failures, census above)
+# After (post-edit, stack UP):    mix precommit → exit 0
+#   amesbury 1075/0 · amesbury_scraper 13 doctests, 2200 tests, 0 failures, 31 excluded
+#   (Excluding tags: [:playwright, :live] — the :dynamo exclusion NO LONGER fires,
+#    proving the :dynamo config is read through :allm_pipeline) · amesbury_web 274/0
+
+mix deps.compile allm_pipeline --force → exit: 0
+grep -c 'Compiling' allm-compile.log   → 1   (positive control, non-zero)
+grep -c 'warning:'  allm-compile.log   → 0
+
+grep -rn -E "amesbury_scraper, (ALLM\.Pipeline|:dynamo|:repo|:alert_on_empty|:lock_keys)" \
+  config/ apps --include='*.ex' --include='*.exs' | wc -l   → 0
+grep -rn 'config :amesbury_scraper' config/ | wc -l          → 12  (positive control — own keys remain)
+grep -rc 'config :allm_pipeline' config/*.exs                → config.exs 3, dev 2, test 2, eval 1, runtime 4
+
+grep -c 'but the application is not available' <both logs>   → 0 both directions
+# (No positive control exists umbrella-side: the notice was a package-repo
+#  phenomenon — :amesbury_scraper is a real app here and :allm_pipeline a
+#  loaded dep, so the notice never fired in the umbrella baseline either.)
+```
+
+`pipelines_test.exs` + `pipelines_declared_values_test.exs` green (in the
+targeted pre-gate run and again inside the full gate).
+
+### Deferred subphase-4 parity re-run — DISCHARGED
+
+`mix test apps/amesbury_scraper/test/amesbury_scraper/pipeline/framework_boundary_guards_test.exs`
+→ 0 failures (targeted run, and again inside the full `mix precommit`),
+confirming the moduledoc-only migration edit preserved schema parity, as
+predicted by construction. The `.work/HANDOFF.md` row is ticked.
+
+---
+
 ## Subphase 3 — Hexdocs-facing `lib/` prose sweep
 
 **Status: Completed** (this repo's `mix precommit` green, `mix docs` clean with

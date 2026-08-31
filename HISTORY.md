@@ -1,3 +1,19 @@
+## [DOC] Record subphase 2 landed host-side; MULTI_CONSUMER_HEX_PREP now 5/6
+*Monday, August 31st at 8pm*
+Captures the host-side landing of subphase 2 (umbrella lockstep seam-key move) 
+on 2026-08-31: the design's Status table moves to 5/6 with subphases 1-4 and 6 
+Complete, subphase 2 Complete host-side, and subphase 5 (v0.1.0 release) 
+Deferred as user-gated on the public-remote and Hex-auth preconditions. The 
+RECORDS companion gains a full subphase-2 section — the 16 umbrella config 
+sites moved, the C2 table_name guard, the shared-DynamoDB environment repair, 
+and the umbrella verification transcript (mix precommit exit 0, 2200 tests 0 
+failures, with the :dynamo exclusion no longer firing, proving :dynamo config 
+now reads through :allm_pipeline) — and discharges the previously-deferred 
+subphase-4 schema-parity re-run. CLAUDE.md's header is updated to reflect that 
+only the publish step remains. Doc-only.
+
+---
+
 ## [DOC] Design second-consumer gap closure and consumer reply
 *Monday, August 31st at 8pm*
 Receive the second consumer's nine-item upstream prerequisite table and design

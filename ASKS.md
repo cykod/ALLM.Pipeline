@@ -35,3 +35,7 @@
 [GATE] mon 8/31 7pm - Gate-review MULTI_CONSUMER_HEX_PREP package-side subphases 1/3/4/6 — did they succeed and get genuinely exercised
 
 [MILE] mon 8/31 7pm - Polished the CLAUDE.md header wording after the gate passed (phase-end polish for the multi-consumer hex-prep run)
+
+[MILE] mon 8/31 7pm - Named the v0.1.0 public-API changes (namespace, Dynamo default, shipped DDL/guide) in CHANGELOG per the release DoD
+
+[MILE] mon 8/31 8pm - Designed the second-consumer gap closure (steering/2026-08-31_SECOND_CONSUMER_GAPS.md) and wrote the item-by-item reply doc for the consuming project
