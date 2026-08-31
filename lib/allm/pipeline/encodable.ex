@@ -28,7 +28,7 @@ defmodule ALLM.Pipeline.Encodable do
   implementation is applied **twice** to the same term there. Every rule above
   is therefore a fixed point after one pass: a rendered changeset is a plain
   map, a flattened tuple is a list, a float stays a float, an ISO-8601 string
-  stays a string, and `String.to_string/1`-ed keys re-stringify to themselves.
+  stays a string, and `to_string/1`-ed keys re-stringify to themselves.
   `encode(encode(term)) == encode(term)` is pinned by test.
 
   ## Two deliberate divergences from what either function did alone

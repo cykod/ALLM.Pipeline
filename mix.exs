@@ -1,17 +1,24 @@
 defmodule ALLMPipeline.MixProject do
   use Mix.Project
 
+  # Bumped by `scripts/release.exs` (Phase A). Keep the literal on this line —
+  # the script rewrites `@version "..."` by regex.
+  @version "0.1.0"
+  @source_url "https://github.com/cykod/ALLM.Pipeline"
+
   def project do
     [
       app: :allm_pipeline,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.15",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
       description: description(),
-      package: package()
+      package: package(),
+      source_url: @source_url,
+      docs: docs()
     ]
   end
 
@@ -39,10 +46,35 @@ defmodule ALLMPipeline.MixProject do
   defp package do
     [
       licenses: ["MIT"],
-      files: ~w(lib .formatter.exs mix.exs README.md LICENSE CLAUDE.md)
-      # No `links:` until a public remote exists (extraction plan Phase 8,
-      # assumption 2). Publishing itself is a non-goal; this block is
-      # publish-READINESS only.
+      links: %{"GitHub" => @source_url},
+      # `HISTORY.md` / `ASKS.md` / `steering` are dev-only and stay out of the
+      # tarball; `mix hex.build` strips test-only deps from the metadata itself.
+      files: ~w(lib .formatter.exs mix.exs README.md CHANGELOG.md LICENSE CLAUDE.md)
+    ]
+  end
+
+  defp docs do
+    [
+      main: "readme",
+      source_ref: "v#{@version}",
+      extras: ["README.md", "CHANGELOG.md"],
+      # Prose references to private or `@doc false` targets. ExDoc autolinks
+      # any `Mod.fun/arity` in backticks and warns when the target is private
+      # or hidden; every entry below is a DELIBERATE reference (the moduledocs
+      # explain internals by naming them). If a name here stops existing,
+      # delete the entry rather than letting it mask a real broken reference.
+      skip_code_autolink_to: [
+        "ALLM.Pipeline.__before_compile__/1",
+        "ALLM.Pipeline.Schema.__before_compile__/1",
+        "ALLM.Pipeline.Dsl.__validate__!/2",
+        "ALLM.Pipeline.Dsl.Runtime.execute/4",
+        "ALLM.Pipeline.Dsl.Runtime.run_concurrent/7",
+        "ALLM.Pipeline.Executor.build_envelope/3",
+        "ALLM.Pipeline.Executor.run_with_step_log/5",
+        "ALLM.Pipeline.Executor.validate_input/2",
+        "ALLM.Pipeline.Schema.JsonSchema.strip_nil/1",
+        "ALLM.Pipeline.StepLog.serialize_struct/2"
+      ]
     ]
   end
 
@@ -99,8 +131,12 @@ defmodule ALLMPipeline.MixProject do
       {:ex_aws_s3, "~> 2.5", optional: true},
 
       # Dialyzer stays a separate manual step, matching the host convention
-      # (`mix precommit` does not run it).
-      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false}
+      # (`mix precommit` does not run it); `scripts/release.exs` runs it unless
+      # `--skip-dialyzer`.
+      {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+
+      # Hexdocs build (`mix docs`), published by `mix hex.publish`.
+      {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
 

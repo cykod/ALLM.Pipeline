@@ -121,6 +121,16 @@ non-zero exit — the exit-code-by-pipe trap):
     grep -c 'Compiling' /tmp/allm-compile.log   # positive control — expect non-zero
     grep -c 'warning:' /tmp/allm-compile.log    # expect 0
 
+**Devcontainer + service stack.** `.devcontainer/` is the ALLM/Amesbury
+pattern (asdf erlang/elixir features at the `.tool-versions` pins,
+`docker-outside-of-docker`); `docker-compose.yml` is the DynamoDB Local +
+MinIO (+ optional `--profile postgres`) stack on the **same ports as the
+umbrella's** — deliberately, because `config/test.exs` defaults to them and
+the MinIO bucket is shared. So the two stacks are mutually exclusive, and
+that is fine: either one serves this suite. In the container the stack is on
+the host daemon, reached via `host.docker.internal` (preset in
+`containerEnv`).
+
 (The umbrella-era failure this section used to document — `cd
 apps/allm_pipeline && mix test` dying in the umbrella's `runtime.exs` on a
 missing `Dotenvy` — died with the extraction: the standalone `mix.exs` carries
@@ -428,3 +438,33 @@ so run the census from the Amesbury umbrella root:
 `grep -rn '<option>:' apps --include '*.ex' | grep -v /test/` there returning
 `0` is a finding to state, not a pass — four constructs shipped green here
 because nothing consumed them.
+
+## 8. Releasing (`scripts/release.exs`)
+
+The script is the ALLM one (`~/Projects/ALLM/scripts/release.exs`) ported:
+two-phase, **never publishes and never pushes**. Phase A (`<bump>`) runs the
+gates and rewrites `@version "…"` in `mix.exs` by regex — keep that literal on
+its own line; Phase B (`--finalize`) commits + tags after the manual
+`mix hex.publish`. Why it cannot publish itself: Mix archives (Hex) are not
+loaded into `mix run`'s runtime, and Hex's device-flow auth crashes headless.
+Do not "fix" that with `--yes` — the prompts are the safety story.
+
+Things specific to this package, not inherited from ALLM:
+
+* The gates are exactly `mix precommit`'s three plus `dialyzer` and
+  `hex.build`; there is no credo dep. `mix test` with the stack down exits 0
+  with the `:dynamo` set **excluded** (§4), so the script greps the test
+  output for `Excluding tags` and WARNS — a green gate with that warning is a
+  weaker gate, not a pass.
+* The image-touch warning became a **migration-touch** warning:
+  `priv/test_repo/migrations/` is parity-checked against the host, so a change
+  there since the last tag means re-running that check before publishing.
+* `--dry-run` performs **no** rollback `git checkout -- mix.exs` (ALLM's does).
+  Dry-run never writes, and under `--allow-dirty` that checkout discarded
+  uncommitted `mix.exs` edits (caught by reading the code while porting).
+* A release changes nothing for the umbrella, which is a **path** dep
+  consumer; `mix.exs` there switches to a Hex requirement only when the user
+  decides to (the "second consumer, or the user asks" trigger at the top).
+* `CHANGELOG.md` is required (`## [REL] vX.Y.Z — …` heading, the
+  `/changelog` skill's format) and ships in the tarball; `HISTORY.md`/`ASKS.md`
+  do not.

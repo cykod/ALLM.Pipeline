@@ -38,7 +38,7 @@ defmodule ALLM.Pipeline.LLM do
   success having called no model.
 
   So `impl/0` raises, naming the `llm:` registry key. That is the same shape
-  `Config.repo/0` uses, and for the same reason: the alternative fails far from
+  `ALLM.Pipeline.Config.repo/0` uses, and for the same reason: the alternative fails far from
   the cause.
 
   ## Configuration

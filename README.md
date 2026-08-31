@@ -4,11 +4,10 @@ A step-based LLM pipeline framework for Elixir: typed steps with persistent
 step logs, artifact lineage (DynamoDB/S3-tiered), run lifecycle ownership, and
 a declarative pipeline DSL (`use ALLM.Pipeline`).
 
-Extracted from the [Amesbury City project](https://www.amesbury.city)'s
-umbrella (Phases 1–8 of the ALLM pipeline extraction plan), which remains the
-production consumer — it consumes this repo as a path dependency. Not yet
-published to hex; the `package()` metadata in `mix.exs` is publish-readiness
-only.
+Extracted from a production Elixir umbrella (Phases 1–8 of the ALLM pipeline
+extraction plan), which remains the production consumer — it consumes this
+repo as a path dependency. Publishable to Hex as `allm_pipeline` via
+`scripts/release.exs` (see "Releasing to Hex").
 
 ## What's here
 
@@ -53,14 +52,71 @@ DYNAMODB_ENDPOINT=http://127.0.0.1:9 mix test     # stack down: exclusions fire,
 Toolchain is pinned by `.tool-versions` (`erlang 27.1.2` /
 `elixir 1.17.3-otp-27`, via asdf).
 
+### Service stack (`docker-compose.yml`)
+
+```bash
+docker compose up -d                       # DynamoDB Local :4028 + MinIO :4026 (+ bucket)
+docker compose --profile postgres up -d    # …plus Postgres :5432 if the host has none
+```
+
+Same images and ports as the host umbrella's stack — run one or the other;
+if the umbrella's is already up, this suite just uses it.
+
+### Devcontainer
+
+`.devcontainer/` gives the same toolchain in a container (erlang/elixir via
+asdf at the `.tool-versions` pins, Claude Code, `docker-outside-of-docker`).
+The service stack runs on the **host** daemon (`docker compose up -d` from
+inside the container publishes on the host) and is reached back through
+`host.docker.internal` — `containerEnv` presets `DATABASE_HOST`,
+`DYNAMODB_ENDPOINT` and `MEDIA_ENDPOINT` accordingly, with
+`DATABASE_USER=postgres` matching the compose `postgres` profile. Unlike the
+umbrella's devcontainer, this repo is the workspace (read-write), so
+`mix test` and `mix precommit` run inside it.
+
 ## Gates
 
 ```bash
 mix precommit   # compile --warnings-as-errors, format, test --warnings-as-errors
 mix dialyzer    # separate manual step, matching the host convention
+mix docs        # hexdocs preview in doc/
 ```
 
-## Host consumption (the Amesbury umbrella)
+## Releasing to Hex
+
+Same two-phase pattern as [`allm`](https://github.com/cykod/ALLM)'s
+`scripts/release.exs`. The script never publishes or pushes itself.
+
+```bash
+# 0. Write the release notes first — the script requires a `## … vX.Y.Z` heading.
+/changelog                                   # (Claude Code skill) or edit CHANGELOG.md by hand
+
+# Phase A — every gate, then bump mix.exs:@version (no commit)
+mix run scripts/release.exs patch            # or minor | major | 0.2.0-rc.1
+mix run scripts/release.exs patch --dry-run  # gates only, no mutations
+
+# Publish by hand so Hex's prompts / OAuth device flow get a real terminal
+mix hex.publish
+
+# Phase B — commit mix.exs + CHANGELOG.md, annotated tag vX.Y.Z (no push)
+mix run scripts/release.exs --finalize
+git push origin main vX.Y.Z
+```
+
+Gates run by Phase A: `deps.get`, `compile --warnings-as-errors`,
+`format --check-formatted`, `test --warnings-as-errors`, `dialyzer`
+(`--skip-dialyzer` to skip), `hex.build`. It warns — does not fail — when the
+test run excluded the `:dynamo` tags (stack down) or when
+`priv/test_repo/migrations/` changed since the last tag (re-run the host
+schema-parity check first). Hex auth is `~/.hex/hex.config` per maintainer
+(`mix hex.user auth` on a browser-capable machine; in the devcontainer copy
+the file in or set `HEX_API_KEY`). Hotfix runbook and co-maintainer
+onboarding are in the script's header.
+
+Publishing does not change the host umbrella, which consumes this repo as a
+path dep until it opts into `{:allm_pipeline, "~> X.Y"}`.
+
+## Host consumption (the path-dep umbrella)
 
 The umbrella consumes this repo as `{:allm_pipeline, path: ...}` — sibling
 checkout at `~/Projects/ALLM.Pipeline` on the host, readonly bind mount at
@@ -70,9 +126,10 @@ declarations), and a vendored copy staged by its `scripts/deploy.sh` for
 production Docker builds. Inside that devcontainer this suite is **not
 runnable** (readonly mount — `_build` can't be written); run it on the host.
 
-The config namespace is `:amesbury_scraper` — a deliberate non-goal of the
-extraction (renaming it is deferred until a second consumer makes the name a
-real API; see `config/test.exs`). It is also why every standalone test run
+The config namespace is `:amesbury_scraper` — the original host
+application's name, kept as a deliberate non-goal of the extraction (renaming
+it is deferred until a second consumer makes the name a real API; see
+`config/test.exs`). It is also why every standalone test run
 opens with Mix's multi-line "You have configured application
 `:amesbury_scraper` … but the application is not available" notice: the config
 names an app this repo does not compile. Expected and harmless here.

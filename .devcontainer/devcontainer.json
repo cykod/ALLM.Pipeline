@@ -1,0 +1,57 @@
+{
+  "name": "ALLM.Pipeline Dev",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "features": {
+    "ghcr.io/rabdulwahhab/devcontainer-features/erlang-asdf:1": {
+      "version": "27.1.2"
+    },
+    "ghcr.io/rabdulwahhab/devcontainer-features/elixir-asdf:1": {
+      "version": "1.17.3-otp-27"
+    },
+    "ghcr.io/anthropics/devcontainer-features/claude-code:1.0": {},
+    // The test stack (Postgres / DynamoDB Local / MinIO) runs on the HOST's
+    // Docker daemon via `docker compose up -d` from inside the container —
+    // ports publish on the host and are reached back through
+    // host.docker.internal (same arrangement as the Amesbury umbrella).
+    "ghcr.io/devcontainers/features/docker-outside-of-docker:1": {}
+  },
+  "mounts": [
+    "source=${localEnv:HOME}/.claude/skills,target=/root/.claude/skills,type=bind,readonly"
+  ],
+  // `.tool-versions` at the repo root already pins the toolchain; the global
+  // pin covers shells opened outside the workspace. `mix local.hex` is what
+  // `mix hex.build` / `mix hex.publish` (scripts/release.exs) need.
+  "postCreateCommand": "export PATH=\"/root/.asdf/shims:/root/.asdf/bin:$PATH\" && printf 'erlang 27.1.2\\nelixir 1.17.3-otp-27\\n' > /root/.tool-versions && mix local.hex --force && mix local.rebar --force && mix deps.get",
+  "remoteUser": "root",
+  "containerEnv": {
+    "IS_SANDBOX": "1",
+    "DEVCONTAINER": "1",
+    "FORCE_COLOR": "1",
+    // config/test.exs reads these; they point at the compose stack published
+    // on the host (docker-compose.yml) — or at a host-native Postgres, which
+    // is what `DATABASE_HOST=host.docker.internal` also reaches.
+    "DATABASE_HOST": "host.docker.internal",
+    "DATABASE_USER": "postgres",
+    "DATABASE_PASSWORD": "postgres",
+    "DYNAMODB_ENDPOINT": "http://host.docker.internal:4028",
+    "MEDIA_ENDPOINT": "http://host.docker.internal:4026",
+    // Stops `git status` from opportunistically rewriting `.git/index` on the
+    // virtiofs bind mount (see the Amesbury devcontainer.json for the full
+    // account of the 1276-deletion commit this prevents). Only optional locks
+    // are suppressed; `add`/`commit` still take mandatory locks.
+    "GIT_OPTIONAL_LOCKS": "0"
+  },
+  "remoteEnv": {
+    "PATH": "/root/.asdf/shims:/root/.asdf/bin:${containerEnv:PATH}"
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "jakebecker.elixir-ls",
+        "phoenixframework.phoenix"
+      ]
+    }
+  }
+}

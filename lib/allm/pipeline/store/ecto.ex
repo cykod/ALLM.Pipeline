@@ -24,7 +24,7 @@ defmodule ALLM.Pipeline.Store.Ecto do
 
   Comes from `ALLM.Pipeline.Config.repo/0`, reached through each schema
   module's own private `repo/0` — this module needs none of its own. `Store`
-  does not subsume `Config.repo/0`: `Metrics` and `Lock.Advisory` read the same
+  does not subsume `ALLM.Pipeline.Config.repo/0`: `Metrics` and `Lock.Advisory` read the same
   handle and sit outside this behaviour entirely.
 
   ## Tables are contract, not configuration

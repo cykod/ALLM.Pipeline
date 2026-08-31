@@ -23,7 +23,7 @@ defmodule ALLM.Pipeline.Lock.Advisory do
     - We use `pg_try_advisory_lock(key)` (NOT the `_xact_` variant) so the lock
       survives across the many transactions inside a long pipeline.
     - The lock is held by a single dedicated connection, checked out via
-      `Ecto.Repo.checkout/2`. `pg_try_advisory_lock` is bound to the connection that
+      `c:Ecto.Repo.checkout/2`. `pg_try_advisory_lock` is bound to the connection that
       ran it; releasing on a different connection is silently a no-op, so we
       MUST run lock + work + unlock on the same checked-out connection. **This
       pinned connection is exactly the fragility that motivated the switch to

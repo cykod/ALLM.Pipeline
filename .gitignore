@@ -17,3 +17,10 @@ erl_crash.dump
 # Local environment files (secrets never belong in the repo)
 .env
 .env.*
+
+# `mix hex.build` output
+*.tar
+
+# Devcontainer service data lives in named volumes; nothing local to ignore,
+# but keep the Hex auth file out if someone copies it in for a release
+/.hex/

@@ -1,0 +1,87 @@
+# Service stack for this repo's test suite (README "Test setup").
+#
+# Same images and PORTS as the Amesbury umbrella's stack — DynamoDB Local on
+# :4028, MinIO on :4026/:4027 — because config/test.exs defaults to those and
+# the MinIO bucket `amesbury-artifacts-test` is shared with the umbrella suite
+# on purpose (keys are per-test unique). Consequence: run ONE of the two stacks
+# at a time; if the umbrella's is already up, this suite just uses it.
+#
+# Postgres is behind the `postgres` profile: on a host that already runs
+# Postgres on :5432 (the usual laptop setup) leave it off and point
+# DATABASE_HOST/DATABASE_USER at the host instance. On a bare machine or in
+# the devcontainer without host Postgres:
+#
+#     docker compose --profile postgres up -d
+#     DATABASE_USER=postgres DATABASE_PASSWORD=postgres mix test
+#
+# Default stack (artifact tier only):
+#
+#     docker compose up -d
+#     mix test                                        # no "Excluding tags" line
+#     DYNAMODB_ENDPOINT=http://127.0.0.1:9 mix test   # exclusion direction
+services:
+  postgres:
+    image: postgres:16
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  dynamodb-local:
+    image: amazon/dynamodb-local:latest
+    command: "-jar DynamoDBLocal.jar -sharedDb -port 4028"
+    ports:
+      - "4028:4028"
+    volumes:
+      - dynamodb_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s http://localhost:4028 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --address ":4026" --console-address ":4027"
+    ports:
+      - "4026:4026"
+      - "4027:4027"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4026/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Creates the test bucket config/test.exs points at — nothing in this suite
+  # creates it, so a fresh clone's live-S3 round-trip test would otherwise
+  # fail on a missing bucket.
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:4026 minioadmin minioadmin;
+      mc mb --ignore-existing local/amesbury-artifacts-test;
+      exit 0;
+      "
+
+volumes:
+  pg_data:
+  dynamodb_data:
+  minio_data:

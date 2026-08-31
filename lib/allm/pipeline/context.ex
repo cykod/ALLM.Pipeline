@@ -11,7 +11,7 @@ defmodule ALLM.Pipeline.Context do
   An escape-hatch body is **not** a step: it has no step log, and its lineage
   parent is the last successfully executed step's log id rather than its own
   row. Rather than introduce a second context type — two names for one idea,
-  and a forced widening of `ALLM.Pipeline.Step.context/0` anyway — this struct
+  and a forced widening of `t:ALLM.Pipeline.Step.context/0` anyway — this struct
   gained three fields and `step_log` became nilable:
 
   | Field | Accessor | Who writes it |
@@ -114,7 +114,7 @@ defmodule ALLM.Pipeline.Context do
 
   Carries no run and no step log, only `opts`. This is the named replacement for
   the `SomeStep.execute(%{}, input)` idiom, which stopped being in contract when
-  Phase 4 widened `ALLM.Pipeline.Step.context/0` from a bare map to this struct
+  Phase 4 widened `t:ALLM.Pipeline.Step.context/0` from a bare map to this struct
   (D5). The bare map still WORKS — a struct is a map and every such caller
   ignores the context — so migrating the remaining sites is bookkeeping, tracked
   in `.work/HANDOFF.md`, not a correctness fix.
