@@ -1,3 +1,42 @@
+## [DOC] Design second-consumer gap closure and consumer reply
+*Monday, August 31st at 8pm*
+Receive the second consumer's nine-item upstream prerequisite table and design
+the six items MULTI_CONSUMER_HEX_PREP did not: its subphases 1/3/4 already 
+closed
+P1-P3 (re-measured at a10d672, not recalled). Six subphases, contracts C1-C4, 
+each
+with executed verification commands and positive controls.
+
+- P9 goes further than asked: drop {:allm, "~> 0.4.2"} rather than widen it, on
+  the measurement that lib/ and test/ hold three ALLM.* references and all three
+  are comments about a struct arriving from the host. There is no call site, so 
+a
+  hard requirement was dictating a provider-library version for nothing.
+- P6 widens LLM.result/0 with an optional usage: key. llm_step.ex:327 is a map
+  pattern, so extra keys already pass; the subphase's value is converting that
+  accidental tolerance into a pinned contract before someone tightens it.
+- P5 corrects executor.ex's claim that Dsl.Runtime writes is_retry from a retry:
+  declaration removed in Phase 5.10. The option is caller-supplied and live via
+  run_step/5, and grep shows zero tests, so it gains its first pair.
+- A gap the consumer's host-name-keyed sweep structurally could not see: paths 
+in
+  shipped files absent from the shipped tree - 9 steering/ refs, 6 .work/ refs, 
+4
+  citations of a scripts/nilability_predict.py that is not in this repo at all, 
+and
+  4 amesbury mentions in the migration moduledoc a new consumer is told to copy.
+  The criterion returns 15 today with its positive controls at 5, so it is
+  discriminating rather than vacuously empty.
+- P4, P7 and P8 are declined with named triggers rather than absorbed silently,
+  per the CLAUDE.md 7 lesson about constructs shipping green with zero 
+consumers.
+- The reply doc is written and sendable now: nine dispositions, measurement 
+output
+  pasted verbatim, and an explicit note that the package is 5/6 with only the
+  user-gated Hex publish left.
+
+---
+
 ## [DOC] Name the v0.1.0 public-API changes in CHANGELOG
 *Monday, August 31st at 7pm*
 Enriches the still-unreleased v0.1.0 CHANGELOG entry so it names this run's 
