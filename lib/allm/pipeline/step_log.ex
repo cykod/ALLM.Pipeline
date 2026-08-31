@@ -25,7 +25,7 @@ defmodule ALLM.Pipeline.StepLog do
   The two are **additive**: the drop set is
   `:dropped ∪ (@fallback_drop − :kept)`. Flags do not replace the fallback — an
   unflagged `field :content, …` on a DSL struct is still dropped, which is the
-  point (`AmesburyScraper.Digest.DigestRenderStep.Output` relies on it). The one
+  point (a host's render-step Output relies on it). The one
   escape in the other direction is an explicit `log: true`.
 
   ⚠️ The predicate is `__allm_schema__/1`, **never** `__schema__/1`: every
@@ -753,7 +753,7 @@ defmodule ALLM.Pipeline.StepLog do
 
   # The host's Ecto repo, resolved at RUNTIME. `allm_pipeline` deliberately
   # depends on no host app (see this repo's `mix.exs`), so this tree
-  # cannot `alias Amesbury.Repo` — that is a compile error here, by design.
+  # cannot `alias` a host repo module — that is a compile error here, by design.
   @spec repo() :: module()
   defp repo, do: ALLM.Pipeline.Config.repo()
 end

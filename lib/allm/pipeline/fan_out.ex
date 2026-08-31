@@ -26,7 +26,7 @@ defmodule ALLM.Pipeline.FanOut do
      `Task` deaths surface as exits.
 
   Measured 2026-08-13 (n = 8 probes, Elixir 1.17.3/OTP 27) and independently by
-  Phase RS for `AmesburyScraper.Services.ProjectScaleRescale.rescore/3`. Scope
+  a consumer's rescale service. Scope
   is the mechanism, not any particular call site. It does **not** license
   removing an existing `catch` — that is what keeps the child alive.
 
@@ -39,15 +39,14 @@ defmodule ALLM.Pipeline.FanOut do
   |---|---|
   | `ALLM.Pipeline.Dsl.Runtime.run_concurrent/7` | always-on `catch` via `guarded_item/6` — the concurrent path is unconditionally wrapped, which is link safety (the sequential path calls `run_item/6` directly and is NOT wrapped) |
 
-  The rule spans repos, and each repo's table covers its own tree. The
-  **host's** sites — four `apps/amesbury_scraper/lib` fan-outs as of Phase 8,
-  plus a sequential `catch` sibling — are tabled and machine-guarded in the
-  Amesbury umbrella repo by `AmesburyScraper.Pipeline.FrameworkBoundaryGuardsTest`
-  ("fan-out site census"), the host twin of this repo's guard. A new consumer
+  The rule spans repos, and each repo's table covers its own tree. A
+  **consumer's** own fan-out sites are tabled and machine-guarded in that
+  consumer's repo by its host twin of this repo's guard — a
+  `FrameworkBoundaryGuardsTest`-shaped "fan-out site census". A new consumer
   repo that fans out owes itself the same pair: a Sites table beside its code
   and a census test pinning it.
 
-  (`Pipelines.CommitteePipeline`, in the host, carried three rows here until
+  (One ported committee pipeline carried three rows here until
   Phase 4.4 ported it onto `use ALLM.Pipeline` — its detail, transform and load
   fan-outs are now the framework's single site above, a declared behaviour
   change recorded in that pipeline's own moduledoc.)

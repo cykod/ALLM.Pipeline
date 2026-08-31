@@ -1,3 +1,20 @@
+## [DOC] Sweep Amesbury host names from lib/ moduledocs for hexdocs
+*Monday, August 31st at 6pm*
+Subphase 3 of steering/2026-08-31_MULTI_CONSUMER_HEX_PREP.md: removed every 
+non-atom Amesbury-derived name from lib/ moduledocs and comments (24 files) so 
+nothing host-specific reaches the public hexdocs. Host module examples became 
+MyApp.* placeholders; host-as-evidence census sites became generic 'a consumer 
+repo's census/twin test' phrasing with the concrete host-twin pointers 
+relocated to CLAUDE.md section 1; operator-facing stack strings now point at 
+this repo's own docker-compose.yml; two moduledoc bucket/root examples were 
+genericized to my-artifacts. The live shared -test MinIO bucket in 
+config/test.exs was deliberately left untouched (out of lib/, guards the shared 
+round-trip). Prose-only, no code/spec/schema change; grep -rni amesbury lib/ is 
+now 0, mix docs builds clean with no dangling autolinks, and the full gate is 
+green (600 tests, 0 failures both dynamo directions).
+
+---
+
 ## [OTHR] Rename config namespace :amesbury_scraper to :allm_pipeline
 *Monday, August 31st at 6pm*
 Subphase 1 of the multi-consumer/Hex-prep work 

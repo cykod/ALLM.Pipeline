@@ -33,9 +33,8 @@ defmodule ALLM.Pipeline.LLMStep do
   | `execute/2` | a thin composition of the three above, **overridable** |
 
   It also injects `@behaviour ALLM.Pipeline.Step`. That is not decoration:
-  the host-side census (in the Amesbury umbrella repo,
-  `apps/amesbury_scraper/test/amesbury_scraper/pipeline/step_schema_census_test.exs`)
-  derives the Step population two independent ways — by the attribute and by the
+  a consumer repo's Step-schema census test derives the Step population two
+  independent ways — by the attribute and by the
   exported callbacks — and asserts the sets are equal, so generating the
   callbacks without the attribute fails that test by name.
 
@@ -59,8 +58,8 @@ defmodule ALLM.Pipeline.LLMStep do
   ## Why the parse path is separate PUBLIC functions
 
   `execute/2` is overridable because real steps need control flow — the
-  canonical case is `AmesburyScraper.Transformers.OrdinanceTransformer`, which
-  makes a conditional *second* call when the model claims an appointment but
+  canonical case is a transformer step that makes a conditional *second* call
+  when the model claims an appointment but
   omits its details. A wholesale override **replaces** the generated body, so if
   the coercion lived inside `execute/2` an overriding step would have to
   hand-write it again and the macro would buy that step nothing.

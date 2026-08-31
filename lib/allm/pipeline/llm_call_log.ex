@@ -3,11 +3,10 @@ defmodule ALLM.Pipeline.LLMCallLog do
   Per-step collector for full LLM-call inputs/outputs.
 
   The `Executor` calls `activate/0` in the step process before `execute/2` and
-  `drain/0` after; `AmesburyScraper.Transformers.LLMEngine.generate_structured/4`
+  `drain/0` after; a host's LLM engine's `generate_structured/4`
   calls `record/1` for each call. The active collector pid lives in the step
   process's dictionary and is resolved from child tasks via the same
-  `:"$callers"` walk `LLMEngine` uses for engine injection
-  (`llm_engine.ex` `fetch_override/0` / `engine_in_dict/1`), so a future
+  `:"$callers"` walk the host engine uses for engine injection, so a future
   `Task.async`/`Task.async_stream` fan-out still records into the right step.
 
   ## Lifecycle

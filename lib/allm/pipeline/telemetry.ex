@@ -60,8 +60,8 @@ defmodule ALLM.Pipeline.Telemetry do
   ## `[:allm_pipeline, :llm, :call]` is DROPPED from this phase
 
   LLM telemetry already flows one layer down, at the ALLM-hex layer:
-  `[:allm, :generate, :stop]` / `[:allm, :chat, :stop]`, to which
-  `AmesburyScraper.Transformers.LLMTelemetry` is already attached (per-call
+  `[:allm, :generate, :stop]` / `[:allm, :chat, :stop]`, to which a host's own
+  LLM telemetry handler is already attached (per-call
   model / tokens / duration). The per-*step* token aggregate is already
   persisted on `step_logs.llm_total_tokens` / `llm_call_count` and surfaced in
   the review UI. No consumer needs a per-step LLM telemetry event distinct from

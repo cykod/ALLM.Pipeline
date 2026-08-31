@@ -387,25 +387,25 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   @doc """
   The ExUnit tags to exclude when DynamoDB is unreachable, plus an operator hint.
 
-  **Single source of truth for the tag list.** Two `test_helper.exs` files —
-  this repo's and the Amesbury umbrella's (`apps/amesbury_scraper/test/` there)
-  — need the same answer, because each suite starts ExUnit with its own option
-  set, and since Phase 8 the two live in DIFFERENT repos. Hand-copying the
+  **Single source of truth for the tag list.** Each consuming repo's own
+  `test_helper.exs` and this repo's own need the same answer, because each
+  suite starts ExUnit with its own option
+  set, and since Phase 8 they live in DIFFERENT repos. Hand-copying the
   probe was survivable; hand-copying the TAG LIST is the "a rule enforced in
   more than one shape needs a membership guard" defect in its data-map form
-  (the Amesbury repo's root `CLAUDE.md`) — add a third tag on one side and the
+  — add a third tag on one side and the
   other tree silently stops honouring it. This module is package `lib/` code,
-  so both suites call the SAME implementation — that shared function is the
+  so every suite calls the SAME implementation — that shared function is the
   cross-repo drift guard.
 
   **Why test-harness support sits in `lib/` rather than `test/support/`:** a
   `test/support/` module is visible to exactly one repo's test tree, and this
-  answer is needed by two — trees that, by design, cannot see each other's
-  support code (the package declares no host dependency, and since Phase 8 the
-  host is a different repo entirely). `lib/` is the only place both can reach.
-  Same reasoning, and the same precedent, as `ALLM.Pipeline.Test` shipping in
-  `lib/` (PHASE_1 §5.5). It does no I/O beyond the probe and is not referenced
-  by any production path.
+  answer is needed by two or more — trees that, by design, cannot see each
+  other's support code (the package declares no host dependency, and since
+  Phase 8 each host is a different repo entirely). `lib/` is the only place all
+  can reach. Same reasoning, and the same precedent, as `ALLM.Pipeline.Test`
+  shipping in `lib/` (PHASE_1 §5.5). It does no I/O beyond the probe and is not
+  referenced by any production path.
 
   Returns `{[], nil}` when the stack is up (nothing excluded, nothing to print)
   and `{tags, message}` when it is down. The message is the caller's to print;
@@ -423,9 +423,8 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
       {[:dynamo, :skip_unless_dynamo],
        "\n[test_helper] Local DynamoDB is unreachable at #{endpoint} " <>
          "(table #{inspect(table_name())}) — excluding :dynamo / " <>
-         ":skip_unless_dynamo tests. Start the local stack — in the Amesbury " <>
-         "umbrella repo that is `docker-compose -f docker-compose.dev.yml up -d " <>
-         "dynamodb-local`.\n"}
+         ":skip_unless_dynamo tests. Start the local stack — this repo's " <>
+         "`docker-compose.yml` serves it: `docker compose up -d`.\n"}
     end
   end
 

@@ -43,6 +43,25 @@ Host collaborators resolve at **runtime** instead, through the host's
 `use ALLM.Pipeline.Registry` declaration (Amesbury's is `Amesbury.Pipelines`,
 installed from `AmesburyScraper.Application.start/2`; this repo's own suite
 installs `ALLM.Pipeline.TestSupport.Registry` from `test/test_helper.exs`).
+
+**Host-twin guards (moved here from `lib/` prose in the subphase-3 sweep, since
+hexdocs must stay host-neutral).** Several `lib/` moduledocs used to name the
+Amesbury umbrella's twin tests as evidence; those now read "a consumer repo's
+census/twin test", and the concrete pointers live only here:
+- **Step-schema census** — `AmesburyScraper.Pipeline.StepSchemaCensusTest`
+  (`apps/amesbury_scraper/test/amesbury_scraper/pipeline/step_schema_census_test.exs`)
+  enumerates every Step's `input_schema/0` / `output_schema/0` two independent
+  ways and pins the non-DSL set; the twin of `llm_step.ex` / `executor.ex`
+  guards.
+- **Fan-out site census** — `AmesburyScraper.Pipeline.FrameworkBoundaryGuardsTest`
+  is the host twin of `fan_out.ex`'s `fan_out_test.exs` guard (its moduledoc
+  still names `FrameworkBoundaryGuardsTest` generically — pinned by
+  `fan_out_test.exs`).
+- **Lock-keys / declared values** — the umbrella's registry-declared-values and
+  `pipelines_test.exs` runner tests pin the `lock_keys:` derivation genericized
+  out of `lock/advisory.ex` (the declared-values twin is already named in §5).
+- The `:dynamo` tag-list drift guard is in §4; the DSL production-declaration
+  census is in §7.
 The config namespace is `:allm_pipeline` — the package's own OTP app name,
 hardcoded in `Config`, `Store`, `Artifacts`, `Lock`, `LLM`, `LLMCallLog` and
 `Artifacts.Dynamo`. That per-module literal is deliberately not centralized

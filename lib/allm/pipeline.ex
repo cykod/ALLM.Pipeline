@@ -270,8 +270,8 @@ defmodule ALLM.Pipeline do
   teardown after the write could not record a failure anywhere, because the row
   is already terminal. Full contract: `ALLM.Pipeline.Dsl.Resource`.
 
-  > **Kept with its one consumer.** `resource` is wired into
-  > `AmesburyScraper.Pipelines.ProjectEnrichmentPipeline` (Phase 5.2). It is the
+  > **Kept with its one consumer.** `resource` is wired into a consumer's
+  > enrichment pipeline (Phase 5.2). It is the
   > sanctioned exception to the "earn its keep across more than one pipeline" bar
   > (`steering/ALLM_PIPELINE_DSL.md` §6.2) **because it closes a named §1 defect
   > class by construction** — a leaked handle on a raise, which a bare `after`

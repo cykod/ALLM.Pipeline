@@ -31,7 +31,7 @@ defmodule ALLM.Pipeline.Registry do
 
   The `pipelines:` declaration is the one collection this table does NOT cover:
   it is **not** installed into the application environment — it is read directly
-  through `__registry__(:pipelines)` by host code (`AmesburyScraper.Runner`) and
+  through `__registry__(:pipelines)` by host code (a host's pipeline runner) and
   by the `mix allm_pipeline.names` codegen task. See "The `pipelines:`
   declaration" below.
 
@@ -55,7 +55,7 @@ defmodule ALLM.Pipeline.Registry do
   `pipelines:` is the host's per-pipeline metadata table — one entry per
   cron-dispatchable pipeline, each a map of `name` / `entry` / `browser` /
   `run_names` / `schedules`. It is the single source of truth the extraction
-  plan's §3.8a/§3.8b codegen is built on: `AmesburyScraper.Runner` derives its
+  plan's §3.8a/§3.8b codegen is built on: a host's pipeline runner derives its
   dispatch table and name lists from it, and `mix allm_pipeline.names` emits it
   as JSON for the shell/SST/stage-scraper consumers.
 
@@ -109,10 +109,9 @@ defmodule ALLM.Pipeline.Registry do
   `Application.put_env` mutates only the compiling VM and is not carried into a
   release's `sys.config`, so a registry that wrote at compile time would leave
   the repo unset in production. The host calls `install/0` from its
-  `Application.start/2` — `AmesburyScraper.Application` does — and
-  `AmesburyScraper.Runner.run_pipeline/2` additionally calls
+  `Application.start/2`, and a host's runner typically also calls
   `Application.ensure_all_started/1` before dispatching, which covers the
-  release `bin/amesbury_web eval` cron path.
+  release `bin/<release> eval` cron path.
 
   `install/0` is idempotent and safe to call more than once.
 
@@ -282,7 +281,7 @@ defmodule ALLM.Pipeline.Registry do
 
       A precisely-typed accessor — unlike `__registry__(:pipelines)`, whose
       generic `:: term()` spec would widen every caller's inferred return and
-      trip `invalid_contract` on `AmesburyScraper.Runner`'s registry-derived
+      trip `invalid_contract` on a host runner's registry-derived
       `pipeline_names/0` / `browser_pipelines/0`. Host code that reads the
       metadata for its type (`Runner`) calls this; a test that only needs the
       value can still read `__registry__(:pipelines)`.

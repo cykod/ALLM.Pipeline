@@ -10,7 +10,7 @@ defmodule ALLM.Pipeline.Artifacts.Filesystem do
         impl: ALLM.Pipeline.Artifacts.Filesystem
 
       config :allm_pipeline, ALLM.Pipeline.Artifacts.Filesystem,
-        root: "/var/tmp/amesbury-artifacts"
+        root: "/var/tmp/my-artifacts"
 
   That first key still works on a host that declares an
   `ALLM.Pipeline.Registry`: the registry's `artifacts:` supplies the DEFAULT and

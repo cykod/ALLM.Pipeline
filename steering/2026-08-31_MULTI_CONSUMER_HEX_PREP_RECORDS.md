@@ -100,3 +100,103 @@ DYNAMODB_ENDPOINT=http://127.0.0.1:9 mix test   →  3 doctests, 600 tests, 0 fa
 
 Matches CLAUDE.md §4's table exactly (0 failures both directions, 20 excluded
 only when down).
+
+---
+
+## Subphase 3 — Hexdocs-facing `lib/` prose sweep
+
+**Status: Completed** (this repo's `mix precommit` green, `mix docs` clean with
+no autolink warnings, two-direction dynamo pair matches CLAUDE.md §4; review
+gates run and clean — functional-review APPROVED (verified 0 `amesbury` in the
+generated `doc/` tree, not just source), code-review ship-as-is 0 findings,
+security-review no-issues (public-exposure check passed — sweep is a net
+reduction in exposure), design-review N/A (docs-only diff)). Artifacts under
+`.work/{reviews,code-reviews,security-reviews,design-reviews}/2026-08-31-subphase3-prose-sweep*`.
+
+### What changed
+
+Swept every non-atom `amesbury` mention from `lib/` per the design's Sweep
+policy. Starting count `grep -rni 'amesbury' lib/ | wc -l` = **56** (subphase 1
+had already removed the 43 atom sites); final count = **0** (literal zero — see
+the bucket/root note below, both were resolvable). 23 `lib/` files touched.
+
+Policy application:
+
+- **Host module as example → neutral `MyApp.*`:** `llm.ex:7,18`,
+  `llm_call_log.ex:6`, `llm_step.ex:62`, `telemetry.ex:64`, `metrics.ex:47`,
+  `executor.ex:117`, `registry.ex:34,58,112-113,115,285`, `step_log.ex:28`,
+  `pipeline.ex:274`, `text.ex:9-17`, `query.ex:8`, `store/ecto.ex:33`,
+  `lock.ex:47`, `config.ex:6-7,75,97-98,129,150`.
+- **Host module as evidence → "a consumer repo's census/twin test":**
+  `llm_step.ex:36-40` and `executor.ex:704-706` (Step-schema census),
+  `fan_out.ex:29,43-48` (fan-out site census), `dynamo.ex:391-396` (tag-list
+  drift guard). Concrete host-twin pointers relocated to CLAUDE.md §1 (new
+  "Host-twin guards" note); the dynamo drift-guard fact was already in §4 and
+  was NOT restated.
+- **Operator strings → THIS repo's `docker-compose.yml`:** `s3.ex:109`,
+  `dynamo.ex:426`. Both now read "this repo's `docker-compose.yml` serves it:
+  `docker compose up -d`" (§4 pair re-run to confirm — see transcript).
+- **Host-named doc examples → neutral values:** `s3.ex:27`
+  `bucket: "amesbury-artifacts"` → `"my-artifacts"`; `filesystem.ex:13`
+  `root: "/var/tmp/amesbury-artifacts"` → `"/var/tmp/my-artifacts"`.
+- **Comment-only `alias Amesbury.Repo` → "a host repo module":**
+  `metrics.ex:219`, `step_log.ex:756`, `pipeline_run.ex:471`,
+  `lock/advisory.ex:131`. House-shape cites `schema.ex:585`,
+  `json_schema.ex:166` → generic "cross-boundary mirror" phrasing.
+- **Other host-path/attribution mentions genericized:** `metrics.ex:173`
+  (non-Amesbury boards → out-of-scope items), `lock/advisory.ex:11-12`
+  (host membership guard), `s3.ex:33,278` (`Amesbury.Media.S3`),
+  `nilability.ex:52` (Amesbury repo's CLAUDE.md → "the house rule").
+
+### Relocated to CLAUDE.md
+
+Added a **"Host-twin guards"** note to §1 (right after the runtime-resolution
+paragraph) naming the three concrete host-twin tests the `lib/` prose used to
+carry — `StepSchemaCensusTest`, `FrameworkBoundaryGuardsTest`, and the
+umbrella's registry-declared-values / `pipelines_test.exs` lock-keys guards —
+with a cross-reference that the `:dynamo` tag-list guard is already in §4 and the
+DSL production-declaration census in §7 (not restated in both).
+
+### Deviations / non-obvious resolutions
+
+- **Bucket/root doc examples were changed (contra the HANDOFF's literal
+  "do NOT touch").** The HANDOFF Open item and the design's Sweep-policy line
+  conflict on `s3.ex:27` / `filesystem.ex:13`. Resolved per the build prompt's
+  written rule: these two are **pure `@moduledoc` example config blocks with no
+  runtime effect** — the real coded defaults are `Keyword.get(:bucket)` → `nil`
+  (`s3.ex:61`) and `Path.join(System.tmp_dir!(), "allm_pipeline_artifacts")`
+  (`filesystem.ex`, design Out-of-scope §65). Verified `grep -rn
+  '"amesbury-artifacts"'` finds NO test round-tripping the plain (non-`-test`)
+  value. So they were neutralized. The **live** shared resource — the `-test`
+  bucket at `config/test.exs:31` (`"amesbury-artifacts-test"`) — was LEFT
+  untouched (out of `lib/`, out of scope, guards the shared-MinIO round-trip).
+- **`fan_out.ex` keeps `FrameworkBoundaryGuardsTest` and "in this repo" in its
+  moduledoc** — `test/allm/pipeline/fan_out_test.exs:131-133` asserts both
+  substrings present and `refute`s a specific stale phrasing. Genericized the
+  surrounding "Amesbury umbrella repo" / "apps/amesbury_scraper/lib" wording but
+  kept the two test-pinned tokens; the concrete host-repo file path moved to
+  CLAUDE.md §1.
+- **`mix.exs` autolink list unchanged.** `docs.skip_code_autolink_to` holds only
+  `ALLM.Pipeline.*` function entries — none reference an amesbury name, and the
+  sweep deleted no reference an entry masked. Checklist item 2 satisfied with no
+  edit. (The 5 `amesbury` mentions in `mix.exs` are in comments outside `lib/`,
+  out of subphase-3 scope.)
+
+### Verification transcript (all run, all green)
+
+```
+grep -rni 'amesbury' lib/ | wc -l          →  0        (literal zero)
+grep -rci 'pipeline' lib/allm/pipeline.ex  →  109      (positive control, non-zero)
+mix precommit                              →  EXIT 0   (compile 0 warnings, format clean, 3 doctests 600 tests 0 failures)
+mix docs                                   →  EXIT 0, no 'warning:'/'could not be found'/broken-ref lines
+mix test test/allm/pipeline/fan_out_test.exs → 4 tests, 0 failures
+
+# Two-direction dynamo pair (CLAUDE.md §4):
+mix test                                        →  3 doctests, 600 tests, 0 failures   (NO "Excluding tags")
+DYNAMODB_ENDPOINT=http://127.0.0.1:9 mix test   →  3 doctests, 600 tests, 0 failures, 20 excluded
+                                                   + operator message now naming THIS repo's docker-compose.yml
+```
+
+Run in the devcontainer with `DATABASE_HOST=<compose-pg-ip>
+DATABASE_USER=postgres DATABASE_PASSWORD=postgres` (same environment note as
+subphase 1). Real services, nothing skipped.

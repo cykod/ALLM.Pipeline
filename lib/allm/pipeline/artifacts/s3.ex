@@ -24,13 +24,13 @@ defmodule ALLM.Pipeline.Artifacts.S3 do
   so the bucket cannot be baked at compile time):
 
       config :allm_pipeline, ALLM.Pipeline.Artifacts.S3,
-        bucket: "amesbury-artifacts",
+        bucket: "my-artifacts",
         # optional — a MinIO/localstack endpoint for local dev/test; unset in prod
         endpoint: "http://host.docker.internal:4026",
         region: "us-east-1"
 
   When `:endpoint` is set the adapter threads a per-request host/port/scheme
-  override into `ExAws.request/2` (the same pattern as `Amesbury.Media.S3`), so
+  override into `ExAws.request/2`, so
   no global `config :ex_aws, :s3` is needed and MinIO and real S3 can coexist.
   Credentials come from the standard `config :ex_aws` keys the rest of the app
   already uses.
@@ -106,8 +106,8 @@ defmodule ALLM.Pipeline.Artifacts.S3 do
       {[:s3, :skip_unless_s3],
        "\n[test_helper] S3/MinIO is unreachable at #{endpoint} " <>
          "(bucket #{inspect(bucket())}) — excluding :s3 / :skip_unless_s3 tests. " <>
-         "Start the local stack — in the Amesbury umbrella repo that is " <>
-         "`docker-compose -f docker-compose.dev.yml up -d minio`.\n"}
+         "Start the local stack — this repo's `docker-compose.yml` serves it: " <>
+         "`docker compose up -d`.\n"}
     end
   end
 
@@ -274,8 +274,9 @@ defmodule ALLM.Pipeline.Artifacts.S3 do
 
   # Per-request ExAws config. Credentials resolve from `config :ex_aws`; when a
   # `:endpoint` is configured (local MinIO/localstack) its host/port/scheme are
-  # threaded through so S3 requests hit it instead of real AWS — mirroring
-  # `Amesbury.Media.S3.aws_config/0`. Region falls back to the ExAws default.
+  # threaded through so S3 requests hit it instead of real AWS — the same
+  # pattern a host's own S3 media config uses. Region falls back to the ExAws
+  # default.
   #
   # Exposed `@doc false` (not `defp`) so `s3_test.exs` exercises the real config
   # threading instead of hand-copying it — the sanctioned escape hatch for a

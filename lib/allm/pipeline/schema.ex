@@ -582,8 +582,8 @@ defmodule ALLM.Pipeline.Schema do
   # below. **Do not extract a shared helper.** The
   # task exists to falsify this implementation: if it called into here, its
   # `0 pending` result would be the macro agreeing with itself and would verify
-  # nothing. Same house shape as `Amesbury.Media.UrlBuilder.@param_order` ⇔
-  # `frontend/src/lib/media_url.ts`.
+  # nothing. Same house shape as any deliberate cross-boundary mirror kept
+  # honest by an independent drift guard rather than a shared helper.
   #
   # The drift guard that keeps the copies honest WITHOUT collapsing that
   # independence is `test/mix/tasks/allm_pipeline_nilability_test.exs`'s

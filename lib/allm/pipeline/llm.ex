@@ -3,8 +3,8 @@ defmodule ALLM.Pipeline.LLM do
   The seam through which the package calls a host's LLM engine.
 
   The package declares no host dependency (see this repo's `CLAUDE.md` §1),
-  so `ALLM.Pipeline.LLMStep` **cannot name**
-  `AmesburyScraper.Transformers.LLMEngine`. The engine is reached at RUNTIME
+  so `ALLM.Pipeline.LLMStep` **cannot name** a host's engine module (e.g.
+  `MyApp.LLMEngine`). The engine is reached at RUNTIME
   through `impl/0` instead, exactly as the repo is reached through
   `ALLM.Pipeline.Config.repo/0` and the persistence adapter through
   `ALLM.Pipeline.Store.impl/0`.
@@ -14,8 +14,8 @@ defmodule ALLM.Pipeline.LLM do
   `generate_structured/4` returns the `{:ok, %{parsed: _, tokens: _}}` envelope
   the host's engine already returns, and the error term stays opaque to the
   package. This seam **relocates** the call; it does not redefine it. A host
-  adapter is therefore a delegation, not a translation — see
-  `AmesburyScraper.Pipelines.LLM`.
+  adapter is therefore a delegation, not a translation — e.g. a host's
+  `MyApp.Pipelines.LLM`.
 
   ## Engine names are the host's vocabulary
 

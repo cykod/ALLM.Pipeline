@@ -5,7 +5,7 @@ defmodule ALLM.Pipeline.Query do
   Every function here delegates to an existing implementation on `PipelineRun`,
   `StepLog` or `ArtifactStore`. The value is a single, `@spec`'d, host-facing
   module instead of hosts reaching into three schemas directly — the host cutover
-  (Phase 7.2) routes `Amesbury.Government`'s provenance/lineage reads through this
+  (Phase 7.2) routes a host app's provenance/lineage reads through this
   module rather than hand-writing raw `"step_logs"` / `"pipeline_runs"` queries to
   avoid inverting the host->package dependency (a dependency that, since
   Phase 7.1, the host's core app may legitimately declare — an in-umbrella dep

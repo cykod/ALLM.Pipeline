@@ -3,8 +3,8 @@ defmodule ALLM.Pipeline.Config do
   Resolves the host-supplied collaborators the package cannot name directly.
 
   `allm_pipeline` deliberately depends on no host app (see this repo's
-  `mix.exs`), so a host repo like `Amesbury.Repo` is not on this tree's
-  compile path — a literal `alias Amesbury.Repo` here is a compile error at
+  `mix.exs`), so a host repo like `MyApp.Repo` is not on this tree's
+  compile path — a literal `alias MyApp.Repo` here is a compile error at
   `--warnings-as-errors`, which is the enforcement the omission exists to buy.
   The repo is therefore looked up at RUNTIME instead.
 
@@ -71,8 +71,8 @@ defmodule ALLM.Pipeline.Config do
 
   ## Why `Application.get_env` and not a compile-time module attribute
 
-  A `mix release` build never evaluates `config/runtime.exs`, and
-  `bin/amesbury_web eval` re-evaluates the whole file under a minimal env to run
+  A `mix release` build never evaluates `config/runtime.exs`, and a host's
+  `bin/<release> eval` re-evaluates the whole file under a minimal env to run
   migrations. Anything resolved at compile time would bake in the build
   machine's view. This particular value is written by the host's registry at
   application boot and is stable thereafter, but the runtime read costs an ETS
@@ -94,9 +94,8 @@ defmodule ALLM.Pipeline.Config do
       :ok = MyApp.Pipelines.install()
 
   A host with no registry may still set `config :allm_pipeline, repo:
-  MyApp.Repo` directly; this reads the key either way. Amesbury declares it on
-  `Amesbury.Pipelines` — batch 1.C retired the `config/config.exs` line so the
-  key has one writer.
+  MyApp.Repo` directly; this reads the key either way. A host that declares it
+  on its `ALLM.Pipeline.Registry` gives the key one writer — see that module.
 
   Raises when unconfigured — or configured with something that is not a module —
   rather than returning `nil` and failing later inside Ecto with a message that
@@ -126,7 +125,7 @@ defmodule ALLM.Pipeline.Config do
         repo
 
       other ->
-        # A quoted module name (`repo: "Amesbury.Repo"`) is the likely typo here.
+        # A quoted module name (`repo: "MyApp.Repo"`) is the likely typo here.
         # Without this clause it raised a bare `CaseClauseError`, which names
         # neither the key nor the package — the exact outcome the @doc rejects.
         raise """
@@ -147,7 +146,7 @@ defmodule ALLM.Pipeline.Config do
   Declared by the host as `alert_on_empty:` on its `ALLM.Pipeline.Registry`.
   Defaults to `[]`: a host that declares nothing alerts on nothing, which is
   the safe direction (a false alarm is worse than a missed empty scrape, which
-  is also the reason the one Amesbury exclusion exists — see the registry).
+  is also the reason a host's own exclusions exist — see the registry).
 
   A wrongly-shaped value raises here, naming the key and the package, for the
   same reason `repo/0` does: the registry validates its own `alert_on_empty:`

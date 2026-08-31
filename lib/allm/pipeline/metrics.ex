@@ -44,7 +44,7 @@ defmodule ALLM.Pipeline.Metrics do
 
   The one named consumer of `[:allm_pipeline, :step, :stop]` (see
   `ALLM.Pipeline.Telemetry`). Idempotent across hot reload — the caller
-  (`AmesburyScraper.Application.start/2`) detaches first, since
+  (a host's `Application.start/2`) detaches first, since
   `:telemetry.attach/4` answers `{:error, :already_exists}` on a duplicate
   handler id.
   """
@@ -170,8 +170,8 @@ defmodule ALLM.Pipeline.Metrics do
 
   This is the helper the per-pipeline Subphase-2 tests use (they hold a metric but no run).
   Note `unmapped` (`found - mapped`) is deliberately NOT an alert condition — a nonzero
-  unmapped baseline is normal (e.g. `meeting_agenda` intentionally leaves non-Amesbury
-  boards unmapped); it is tracked/displayed for a human to watch, never auto-alerted.
+  unmapped baseline is normal (e.g. a pipeline that intentionally leaves out-of-scope
+  items unmapped); it is tracked/displayed for a human to watch, never auto-alerted.
   """
   @spec status(PipelineMetric.t()) :: :ok | :alert
   def status(metric) do
@@ -216,7 +216,7 @@ defmodule ALLM.Pipeline.Metrics do
 
   # The host's Ecto repo, resolved at RUNTIME. `allm_pipeline` deliberately
   # depends on no host app (see this repo's `mix.exs`), so this tree
-  # cannot `alias Amesbury.Repo` — that is a compile error here, by design.
+  # cannot `alias` a host repo module — that is a compile error here, by design.
   @spec repo() :: module()
   defp repo, do: Config.repo()
 end

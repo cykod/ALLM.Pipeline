@@ -43,8 +43,8 @@ defmodule ALLM.Pipeline.Lock do
   knowledge, and this package no longer carries it**: batch 1.C moved it off
   `Advisory`'s two hardcoded clauses onto the host's `ALLM.Pipeline.Registry`
   (`lock_keys:`), where `ALLM.Pipeline.Config.lock_keys/0` reads it and
-  `Advisory.canonical_lock_name/1` applies it. For this repo the declaration is
-  `Amesbury.Pipelines`.
+  `Advisory.canonical_lock_name/1` applies it. A host declares it on its own
+  `ALLM.Pipeline.Registry`.
   """
 
   @typedoc "A pipeline name, e.g. `:rich_summary`."

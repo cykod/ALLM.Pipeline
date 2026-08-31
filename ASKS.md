@@ -15,3 +15,7 @@
 [IMPL] mon 8/31 6pm - Implement subphase 1 of MULTI_CONSUMER_HEX_PREP: package-side config namespace rename :amesbury_scraper -> :allm_pipeline plus Dynamo default table rename
 
 [CDRV] mon 8/31 6pm - Code review on subphase 1 config-namespace rename (:amesbury_scraper to :allm_pipeline)
+
+[MILE] mon 8/31 6pm - Renamed the pipeline config namespace :amesbury_scraper to :allm_pipeline (subphase 1) with C2 Dynamo default-table rename and falsified-prose fixes
+
+[IMPL] mon 8/31 6pm - Subphase 3: hexdocs-facing lib/ prose sweep (remove non-atom amesbury mentions, relocate host-twin pointers to CLAUDE.md)

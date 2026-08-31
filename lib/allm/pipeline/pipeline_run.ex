@@ -468,7 +468,7 @@ defmodule ALLM.Pipeline.PipelineRun do
 
   # The host's Ecto repo, resolved at RUNTIME. `allm_pipeline` deliberately
   # depends on no host app (see this repo's `mix.exs`), so this tree
-  # cannot `alias Amesbury.Repo` — that is a compile error here, by design.
+  # cannot `alias` a host repo module — that is a compile error here, by design.
   @spec repo() :: module()
   defp repo, do: ALLM.Pipeline.Config.repo()
 end

@@ -162,8 +162,8 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   # the raw string is passed through into a field whose generated type says
   # otherwise — silent, and invisible to dialyzer. Guarded by "every known
   # scalar module … has a coercion clause" in `llm_step_test.exs`, which reads
-  # this list through `__known_scalar_modules__/0`. Same shape as
-  # `Amesbury.Media.UrlBuilder.@param_order` ⇔ `frontend/src/lib/media_url.ts`.
+  # this list through `__known_scalar_modules__/0`. Same shape as any deliberate
+  # cross-boundary mirror kept honest by an independent drift guard.
   @known_scalar_modules [String, Date]
 
   @doc false
