@@ -1,3 +1,17 @@
+## [DOC] Name the v0.1.0 public-API changes in CHANGELOG
+*Monday, August 31st at 7pm*
+Enriches the still-unreleased v0.1.0 CHANGELOG entry so it names this run's 
+consumer-facing changes, per the MULTI_CONSUMER_HEX_PREP design's Definition of 
+Done (subphase-5 precondition #1). Adds a 'Consumer-facing configuration' 
+section for the config-namespace move to the package's own :allm_pipeline and 
+the allm_pipeline_artifacts default Dynamo table, and 'Other changes' lines for 
+the host-wiring onboarding guide, the canonical DDL shipped in the tarball, and 
+the host-neutral hexdocs. No version bump: nothing has been released (no tags), 
+so the changes fold into the existing unreleased v0.1.0 rather than inventing a 
+v0.2.0. Subtitle broadened to 'Standalone, consumer-ready'.
+
+---
+
 ## [TWK] Polish CLAUDE.md header wording after gate pass
 *Monday, August 31st at 7pm*
 Phase-end polish for the MULTI_CONSUMER_HEX_PREP auto-build run: replaces the 
