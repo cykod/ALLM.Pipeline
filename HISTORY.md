@@ -1,3 +1,16 @@
+## [DOC] Broaden the docs-review lane's grep-blind-spot charge
+*Tuesday, September 1st at 9am*
+Applied the DOC_UPDATES phase retro's one rule-worthy finding: the code-review 
+docs-history lane said to watch 'the two things the release-time grep can't', 
+but the run proved there are more blind spots (D6: host references the token 
+set doesn't name; D7: a doc claim that is simply false). Refined that clause in 
+agent-spec/CODE_REVIEW.md in place to name all four checks — over-strip, host 
+paraphrase, whole-surface scan for non-token module names, and a factual 
+spot-check against runtime code. Merge-in-place, not an append, per the 
+consolidation rule.
+
+---
+
 ## [BUG] Fix false metrics from: text in the dsl.ex raise message
 *Tuesday, September 1st at 1am*
 Phase-retro follow-up to the hexdocs overhaul: the compile-time ArgumentError 

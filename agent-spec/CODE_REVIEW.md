@@ -71,9 +71,13 @@ teaches the next agent to undo a decision:
   narrative, `batch N` / `extraction plan` / `steering/20…` references, or
   consumer-specific proper nouns (`meeting_agenda`, `committee`, `Amesbury`, …).
   The hexdocs are present-tense and host-neutral; rationale is preserved, only
-  narrative deleted. Watch the two things the release-time grep can't: an
-  over-stripped rewrite that lost the "why", and host framing paraphrased
-  generically. Cite `agent-spec/DOCS.md` (C1 table + "What the grep can't see").
+  narrative deleted. Watch what the release-time grep can't: an over-stripped
+  rewrite that lost the "why"; host framing paraphrased generically; a host
+  reference the token set doesn't name (scan the whole regenerated `doc/*.md`
+  for backticked `Mod.fun/arity` and module-looking names that are neither
+  `ALLM.Pipeline.*` nor `MyApp.*`); and a doc claim that is simply false
+  (spot-check against runtime code). Cite `agent-spec/DOCS.md` (C1 table +
+  "What the grep can't see").
 - **Test smells**: a conjunctive test whose later conjuncts a first-assertion
   failure masks; an assertion on a raw config literal a normalizer rewrites; a
   new callback obligation with no test exercising the real consumer.
