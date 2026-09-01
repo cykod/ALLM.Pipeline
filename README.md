@@ -123,6 +123,8 @@ the repo, the seam adapters, and the table DDL are the host's to supply. **New
 consumers: start with the [host-wiring guide](guides/host_wiring.md)**, which
 walks through the registry declaration, the optional `llm:` seam, adopting the
 production DDL, provisioning the artifact backends, and the test-suite pattern.
+Then see the [building-a-pipeline guide](guides/building_a_pipeline.md) for
+authoring steps and composing them into a pipeline on top of a wired host.
 
 A host may consume the framework as a path dependency
 (`{:allm_pipeline, path: ...}`) or, once published, as a Hex requirement

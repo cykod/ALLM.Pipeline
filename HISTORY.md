@@ -1,3 +1,22 @@
+## [DOC] Add building-a-pipeline guide; fix false metrics from: doc
+*Tuesday, September 1st at 1am*
+Final subphase of the hexdocs overhaul. Adds guides/building_a_pipeline.md, an 
+end-to-end application tutorial (authoring a Step with Schema Input/Output, an 
+LLMStep, composing with use ALLM.Pipeline via stage/fan_out/metrics/summarize, 
+invoking run/1, and reading a run back through ALLM.Pipeline.Query), registered 
+in mix.exs docs/0 :extras with reciprocal cross-links from README and 
+host_wiring.md. The guide is born present-tense and host-neutral (MyApp.* 
+throughout), points at each normative moduledoc rather than duplicating it, and 
+all ten real ALLM.Pipeline.* autolinks resolve so mix docs stays warning-free. 
+Also corrects a pre-existing falsehood the guide surfaced: ALLM.Pipeline.Dsl's 
+docs claimed metrics from: receives what summarize produced, but the runtime 
+applies the hook to the accumulator (from.(acc)) — the two rendered doc 
+statements (the hook table and the metrics @doc) are fixed to say accumulator. 
+mix precommit green; the whole-surface banned-pattern grep over doc/*.md is 
+zero, completing the overhaul (4/4).
+
+---
+
 ## [DOC] Purge history from batch-B moduledocs, README, CHANGELOG
 *Tuesday, September 1st at 1am*
 Subphase 3 (final sweep) of the hexdocs overhaul: apply the C1 rule to the 

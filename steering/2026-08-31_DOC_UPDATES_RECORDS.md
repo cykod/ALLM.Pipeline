@@ -550,3 +550,138 @@ The `[error] Refusing to … pipeline run …` log lines during `store_test` are
 designed ownership-refusal log noise from a function body (`refuse/2`'s `Logger`
 call — not a doc, never reaches `doc/*.md`), not failures (0 failures). No
 `@spec` was touched — doc-string edits only.
+
+---
+
+## Subphase 4 — New guide `guides/building_a_pipeline.md`
+
+**Status: Completed.** (Guide written, registered in `mix.exs` `docs/0` `:extras`,
+reciprocal cross-links added. Code review: ship as-is; its one Low finding was
+verified against runtime code as a real false published sentence and the two
+rendered occurrences were fixed — see D7. Security/functional/design N/A. Gates
+green: guide renders, zero ExDoc warnings, born-clean, whole-surface HARD grep
+zero, `mix precommit` exit 0, dialyzer 0 errors.)
+
+### D7 — a pre-existing false `metrics from:` doc, found in code review, fixed (rendered occurrences only)
+
+The guide correctly documents that `metrics from:` receives the **accumulator**
+(matching the flagship `pipeline.ex` example). The code-review lane noticed
+`ALLM.Pipeline.Dsl`'s own docs contradicted this — `dsl.ex:217` `@doc` said
+`from:` "receives the value `summarize` produced", and the hook-signature table
+at `dsl.ex:41` listed its argument as `(summary)`. Verified against runtime code:
+`runtime.ex:264` calls `record_metrics(metrics_module, run, state.acc)` and
+`runtime.ex:326` applies `from.(acc)` — the hook receives the accumulator, and
+the adjacent comment (`runtime.ex:260`) states "`from:` reads the ACCUMULATOR …
+NOT `summary`". So the guide/flagship were right and `dsl.ex`'s two **rendered**
+(`doc/ALLM.Pipeline.Dsl.md`) statements were false. Both fixed (doc-string only,
+no behavioral change): table row → `(acc)`; `@doc` → "receives the accumulator —
+the value the stages folded, the same input `summarize` sees". Post-fix:
+`doc/ALLM.Pipeline.Dsl.md` consistent with the guide, zero ExDoc warnings,
+whole-surface HARD grep still zero.
+
+**Deferred to the user (out of this docs run's scope):** the identical factual
+error survives in a compile-time **raise message** at `dsl.ex:228` ("an arity-1
+hook taking what `summarize` produced"). That is behavioral surface (a raised
+string, not rendered to hexdocs); correcting it would break this run's "no
+behavioral code changes" invariant, so it is surfaced for a follow-up rather than
+changed here. No test pins the wording.
+
+### What the guide covers (C4)
+
+An end-to-end application tutorial, the companion to `host_wiring.md`'s wiring
+focus. Section outline:
+
+1. **A typed step** — `@behaviour ALLM.Pipeline.Step` with `use
+   ALLM.Pipeline.Schema` Input/Output; names `ALLM.Pipeline.Step`,
+   `ALLM.Pipeline.Schema`, `ALLM.Pipeline.StepLog` (artifact/log flags),
+   `ALLM.Pipeline.Executor.run_step/5`, `ALLM.Pipeline.Context` as normative.
+2. **An LLM step** — `use ALLM.Pipeline.LLMStep` with `json_schema: true`
+   Output; names `ALLM.Pipeline.LLMStep`; links to `host_wiring.md` §2 for the
+   `llm:` seam.
+3. **Composing a pipeline** — `use ALLM.Pipeline` with a `stage` over a Step, a
+   declarative `fan_out` over a Step, `metrics`, `summarize`; names
+   `ALLM.Pipeline`, and the accumulator / `FanOut.reduce/5` / `Context` /
+   `PipelineRun.complete/2` contracts by pointing at the moduledoc.
+4. **Running it** — the generated `run/1`, its return contract, the guard.
+5. **Reading a run back** — `ALLM.Pipeline.Query` facade (`get_run`,
+   `run_stats`, `lineage_tree`, `resolve_step_log`, `fetch_artifact`), the flat
+   two-level lineage tree, `StepLog.build_lineage_tree/1`, artifacts via
+   `ArtifactStore.fetch/1` / `Artifacts`.
+6. **Where to go next** — reciprocal link back to `host_wiring.md` + module
+   pointers.
+
+Born present-tense, host-neutral, `MyApp.*` throughout (`MyApp.ListStep`,
+`MyApp.SummarizeStep`, `MyApp.ReportPipeline`). No phase numbering, no dates, no
+consumer names. Snippets are illustrative-but-compilable in shape (Q2 default),
+pointing at `test/support/` as the working reference — not a runnable app
+skeleton.
+
+### Real `Mod.fun/arity` autolinks — every one resolves (C3)
+
+The 10 backticked real `ALLM.Pipeline.*.fun/arity` references in the guide,
+each confirmed public at the stated arity (grep of the module for `def <name>(`
++ default-arg expansion):
+
+| Autolink | Confirmed |
+|---|---|
+| `ALLM.Pipeline.Executor.run_step/5` | `def run_step(pipeline_run, step_module, input_struct, input_step_id \\ nil, opts \\ [])` |
+| `ALLM.Pipeline.FanOut.reduce/5` | `def reduce(ctx, items, acc, fun, opts \\ [])` |
+| `ALLM.Pipeline.PipelineRun.complete/2` | `def complete(pipeline_run, result_metadata \\ %{})` |
+| `ALLM.Pipeline.Context.input_step_id/1` | `def input_step_id(%__MODULE__{...})` |
+| `ALLM.Pipeline.Context.accumulator/1` | `def accumulator(%__MODULE__{...})` |
+| `ALLM.Pipeline.Context.resource/2` | `def resource(%__MODULE__{...}, name)` |
+| `ALLM.Pipeline.Query.lineage_tree/1` | `def lineage_tree(step_log_id)` |
+| `ALLM.Pipeline.Query.fetch_artifact/1` | `def fetch_artifact(url)` |
+| `ALLM.Pipeline.StepLog.build_lineage_tree/1` | `def build_lineage_tree(step_id)` |
+| `ALLM.Pipeline.ArtifactStore.fetch/1` | `def fetch(url)` |
+
+Plus bare-module autolinks (always resolve): `ALLM.Pipeline`,
+`ALLM.Pipeline.Step`, `ALLM.Pipeline.Schema`, `ALLM.Pipeline.LLMStep`,
+`ALLM.Pipeline.Context`, `ALLM.Pipeline.StepLog`, `ALLM.Pipeline.Query`,
+`ALLM.Pipeline.ArtifactStore`, `ALLM.Pipeline.Artifacts`,
+`ALLM.Pipeline.PipelineRun`.
+
+**Deliberately NOT backticked as `Mod.fun/arity`** (they are generated onto the
+*consumer's* module, not the macro module — a `Module.fun/arity` link would
+warn): `run/1`, `coerce/2`, `call_llm/1`, `json_schema/0`, `execute/2`,
+`prompt/1`, `step_type/0`, `input_schema/0`, `output_schema/0`, `new/1`,
+`cast/1`. Written in prose as bare `` `fun/arity` `` (no module) or as function
+calls inside ``` fences ```, neither of which ExDoc autolinks from an extra.
+
+### Registration + cross-links
+
+- `mix.exs` `docs/0` `:extras`: added
+  `"guides/building_a_pipeline.md": [title: "Building a pipeline"]` (keyword
+  form, matching `guides/host_wiring.md`'s entry; no `groups_for_extras` exists).
+- `README.md` "Host consumption" section: one-line pointer to the new guide
+  after the host-wiring pointer.
+- `guides/host_wiring.md` intro: reciprocal one-line pointer to the new guide
+  (wiring ↔ application).
+- `mix.exs` hex `package` `files:` already ships `guides/` wholesale
+  (`~w(lib guides priv/test_repo/migrations …)`) — verified, no edit needed.
+
+### Verification transcript
+
+```
+mix docs 2>&1 | grep -iE 'warning|error'              # NO OUTPUT (grep exit 1) — every real autolink resolves
+test -f doc/building_a_pipeline.md                     # rendered: doc/building_a_pipeline.md
+
+HARD (from C2) over the guide page:
+grep -InE "$HARD" doc/building_a_pipeline.md           # NO OUTPUT (exit 1) — born clean
+
+HARD over whole surface, CHANGELOG carved out:
+grep -rInE "$HARD" --exclude=changelog.md doc/*.md     # NO OUTPUT (exit 1)
+
+positive control:
+grep -rIl 'Pipeline' doc/*.md | head -1                # doc/ALLM.Pipeline.Artifacts.Filesystem.md (non-empty)
+
+mix precommit (DATABASE_HOST=host.docker.internal DATABASE_USER=pascalrettig):
+  3 doctests, 600 tests, 0 failures
+  PLT is up to date! ... Total errors: 0        # dialyzer clean
+  precommit exit: 0
+```
+
+### Deviations
+
+None. No `@spec` touched (doc + `mix.exs` extras edits only), so `mix dialyzer`
+was unaffected — it nonetheless ran green as part of `precommit`.

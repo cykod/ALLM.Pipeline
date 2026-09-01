@@ -71,6 +71,7 @@ defmodule ALLMPipeline.MixProject do
       extras: [
         "README.md",
         "guides/host_wiring.md": [title: "Wiring a host"],
+        "guides/building_a_pipeline.md": [title: "Building a pipeline"],
         "CHANGELOG.md": []
       ],
       # Prose references to private or `@doc false` targets. ExDoc autolinks

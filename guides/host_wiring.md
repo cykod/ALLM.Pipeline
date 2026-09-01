@@ -8,6 +8,10 @@ the normative moduledocs rather than duplicating them — each section names the
 module whose `@moduledoc` is the source of truth, and links stay live in
 hexdocs.
 
+This guide is the **wiring** reference; once a host is wired, see
+[the building-a-pipeline guide](building_a_pipeline.md) for the **application**
+layer — authoring steps and composing them into a pipeline.
+
 Throughout, `MyApp` stands for your host application.
 
 ## 1. Registry wiring

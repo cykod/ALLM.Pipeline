@@ -38,7 +38,7 @@ defmodule ALLM.Pipeline.Dsl do
   | `over:` | `(previous_stage_output)` |
   | `body:` / escape-hatch stage | `(ctx, subject)` |
   | `skip_when:` | `(ctx)` — or the data form `{:opt, key, default}` |
-  | `metrics …, from:` | `(summary)` |
+  | `metrics …, from:` | `(acc)` |
   | `summarize` | `(acc, ctx)` |
   | `resource …, start:` | `(ctx)` |
   | `resource …, stop:` | `(handle)` |
@@ -214,9 +214,9 @@ defmodule ALLM.Pipeline.Dsl do
 
       metrics "records", from: :funnel
 
-  `from:` receives the value `summarize` produced and returns an
-  `ALLM.Pipeline.Metrics.funnel()`. A pipeline that deliberately records no
-  metrics simply omits the declaration.
+  `from:` receives the accumulator — the value the stages folded, the same
+  input `summarize` sees — and returns an `ALLM.Pipeline.Metrics.funnel()`. A
+  pipeline that deliberately records no metrics simply omits the declaration.
   """
   defmacro metrics(entity_type, opts) do
     caller = __CALLER__

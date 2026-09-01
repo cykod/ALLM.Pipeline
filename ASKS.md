@@ -52,3 +52,5 @@
 [MILE] tue 9/1 12am - Committed hexdocs history-purge rule (agent-spec/DOCS.md), publish-time guard in release.exs, and CLAUDE.md/CODE_REVIEW.md pointers (Subphase 1)
 
 [MILE] tue 9/1 12am - Purged development-phase history and consumer names from 11 batch-A moduledocs, preserving current-constraint rationale (Subphase 2)
+
+[MILE] tue 9/1 1am - Purged history from 20 batch-B moduledocs, host-neutralized README/CHANGELOG, and closed a manifest omission in json_schema/llm_call_log (Subphase 3)
