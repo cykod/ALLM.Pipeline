@@ -25,10 +25,9 @@ defmodule ALLM.Pipeline.FanOut do
      it, and `GenServer.call` timeouts (Playwright, the browser manager) and
      `Task` deaths surface as exits.
 
-  Measured 2026-08-13 (n = 8 probes, Elixir 1.17.3/OTP 27) and independently by
-  a consumer's rescale service. Scope
-  is the mechanism, not any particular call site. It does **not** license
-  removing an existing `catch` — that is what keeps the child alive.
+  This is measured behaviour of `Task.async_stream` under `trap_exit` off, not
+  inferred. Scope is the mechanism, not any particular call site. It does **not**
+  license removing an existing `catch` — that is what keeps the child alive.
 
   ## Sites
 
@@ -45,11 +44,6 @@ defmodule ALLM.Pipeline.FanOut do
   `FrameworkBoundaryGuardsTest`-shaped "fan-out site census". A new consumer
   repo that fans out owes itself the same pair: a Sites table beside its code
   and a census test pinning it.
-
-  (One ported committee pipeline carried three rows here until
-  Phase 4.4 ported it onto `use ALLM.Pipeline` — its detail, transform and load
-  fan-outs are now the framework's single site above, a declared behaviour
-  change recorded in that pipeline's own moduledoc.)
 
   This table's MEMBERSHIP is machine-guarded by
   `test/allm/pipeline/fan_out_test.exs`, which scans this repo's `lib/` and
@@ -124,9 +118,9 @@ defmodule ALLM.Pipeline.FanOut do
       becomes `%Item{result: {:error, {:uncaught, kind, reason}}}` and **leaves
       `acc` unchanged for that item**, so the fold degrades one item and keeps
       folding rather than aborting the run. This is `reduce/5`'s own reason — a
-      sequential fold has no link hazard (the moduledoc's `ProjectRefreshPipeline`
-      sibling makes the same point) — and it also keeps `reduce/5` behaviourally
-      equivalent to the concurrent fan-out's always-on catch. It is `catch`,
+      sequential fold has no link hazard — and it also keeps `reduce/5`
+      behaviourally equivalent to the concurrent fan-out's always-on catch. It is
+      `catch`,
       never `rescue`: an exit is not an exception, and Playwright/`GenServer`
       teardowns arrive as exits. (Link safety proper applies only to the
       `Task.async_stream` path in `Dsl.Runtime.run_concurrent/7`.)
@@ -136,8 +130,7 @@ defmodule ALLM.Pipeline.FanOut do
     * `reduce/5` is **sequential only** — it folds a changing accumulator, and a
       concurrent fold has undefined order (`Dsl.Runtime`'s
       `assert_no_concurrent_fold!/2` exists to reject that very shape). A
-      concurrency-capable non-folding sibling is deliberately not provided
-      (Phase 4.5 Alternatives).
+      concurrency-capable non-folding sibling is deliberately not provided.
 
   ## Options
 
@@ -149,7 +142,8 @@ defmodule ALLM.Pipeline.FanOut do
 
   `section:` and `delay:` are **not** options here — the caller inlines them
   (`Executor.log_section/3` and `Process.sleep/1`). That split is the whole
-  point: it keeps this function from re-accepting the costume Phase 4.5 removed.
+  point: it keeps `reduce/5` a pure fold and leaves logging and pacing to the
+  body.
   """
   @spec reduce(
           Context.t(),
@@ -227,7 +221,7 @@ defmodule ALLM.Pipeline.FanOut do
 
   A 3-tuple `{:ok, value, %StepLog{}}` moves its log onto `step_log` and keeps
   `{:ok, value}` as the result; every other shape leaves `step_log` `nil` (the
-  two-element `{:ok, value}` form nominates no new parent — Phase 4 D2).
+  two-element `{:ok, value}` form nominates no new parent).
   """
   @spec to_item(term(), item_result()) :: Item.t()
   def to_item(item, {:ok, value, %StepLog{} = log}),

@@ -48,3 +48,5 @@
 
 [BUILD] tue 9/1 12am - Build all 4 subphases of the hexdocs overhaul (agent-spec rule + release guard, sweep batches A & B, new building_a_pipeline guide) per steering/2026-08-31_DOC_UPDATES.md
 2026-09-01 00:27 [FIX] Fix issues from DOC_UPDATES sub1 review set (code/security/design/functional); only F1 Medium actionable
+
+[MILE] tue 9/1 12am - Committed hexdocs history-purge rule (agent-spec/DOCS.md), publish-time guard in release.exs, and CLAUDE.md/CODE_REVIEW.md pointers (Subphase 1)

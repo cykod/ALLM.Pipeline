@@ -16,7 +16,7 @@ defmodule ALLM.Pipeline.Dsl do
   AST** onto `@allm_pipeline_stages`, and `ALLM.Pipeline.__before_compile__/1`
   splices that AST into the body of the generated `__pipeline__(:stages)`, where
   every `def`/`defp` in the module is already defined. That is what lets a hook
-  be written as a bare atom naming a **private** function (Phase 4 D6).
+  be written as a bare atom naming a **private** function.
 
   ## Hook forms
 
@@ -50,7 +50,7 @@ defmodule ALLM.Pipeline.Dsl do
 
   ## The two `stage/3` forms are told apart by AST SHAPE, not by a keyword
 
-  An alias — `MeetingListScraper` — arrives as `{:__aliases__, _, _}` and means
+  An alias — `MyApp.ListScraper` — arrives as `{:__aliases__, _, _}` and means
   the Step form. Anything else means the escape hatch. Matching on `is_atom/1`
   instead would treat every Step module as a hook, because an alias **is** an
   atom once expanded, and the failure would be a `FunctionClauseError` at the
@@ -157,8 +157,8 @@ defmodule ALLM.Pipeline.Dsl do
   @doc """
   Declare a stage that runs **once**.
 
-      stage :list, MeetingListScraper, input: :build_list_input
-      stage :committee_cache, fn _ctx, _prev -> {:ok, ensure_cache()} end
+      stage :list, MyApp.ListScraper, input: :build_list_input
+      stage :warm_cache, fn _ctx, _prev -> {:ok, ensure_cache()} end
 
   Options: `input:`, `skip_when:`, `carry:`, `on_error:`.
   """
@@ -170,16 +170,16 @@ defmodule ALLM.Pipeline.Dsl do
   @doc """
   Declare a stage that runs **once per item** produced by its `over:` hook.
 
-      fan_out :detail, CommitteeDetailScraper, over: :committees_from, input: :detail_input
+      fan_out :detail, MyApp.DetailScraper, over: :items_from, input: :detail_input
 
-  A `fan_out` always names a **Step-module** target. The `body:`-mode form was
-  removed in Phase 4.5 — to fold an ordinary body over the items, call
-  `ALLM.Pipeline.FanOut.reduce/5` from a plain `stage` body instead.
+  A `fan_out` always names a **Step-module** target. To fold an ordinary body
+  over the items instead, call `ALLM.Pipeline.FanOut.reduce/5` from a plain
+  `stage` body.
 
   Options: `input:` (required), `over:` (required), plus `skip_when:`,
   `parent:` and `concurrency:`. **Not** `carry:` — a
-  fan-out captures nothing to propagate (removed in Phase 4.5.3; read per-item
-  values off the `[Item.t()]` output instead). **Not** `on_error:` — that governs
+  fan-out captures nothing to propagate (read per-item values off the
+  `[Item.t()]` output instead). **Not** `on_error:` — that governs
   a whole-stage failure, which a fan-out does not have; both are a compile error
   here.
   """
@@ -199,8 +199,7 @@ defmodule ALLM.Pipeline.Dsl do
   acquired in declaration order and released in reverse.
 
   Teardown ordering, its failure handling, and why a teardown failure never
-  changes the run's status are `ALLM.Pipeline.Dsl.Resource`'s moduledoc
-  (Phase 4 D3).
+  changes the run's status are `ALLM.Pipeline.Dsl.Resource`'s moduledoc.
   """
   defmacro resource(name, opts) do
     spec = __resource__(__CALLER__, name, opts)
@@ -213,7 +212,7 @@ defmodule ALLM.Pipeline.Dsl do
   @doc """
   Declare the one `ALLM.Pipeline.Metrics` row this pipeline records.
 
-      metrics "meetings", from: :funnel
+      metrics "records", from: :funnel
 
   `from:` receives the value `summarize` produced and returns an
   `ALLM.Pipeline.Metrics.funnel()`. A pipeline that deliberately records no

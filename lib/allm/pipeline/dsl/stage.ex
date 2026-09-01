@@ -11,7 +11,7 @@ defmodule ALLM.Pipeline.Dsl.Stage do
   `Module.put_attribute/3` rejects those. The DSL accumulates quoted AST during
   the module body and splices it into that generated function, where a
   `:hook_name` atom becomes a local capture (`&hook_name/2`) — which is why a
-  hook may be `defp` (Phase 4 D6).
+  hook may be `defp`.
 
   ## Fields
 
@@ -34,13 +34,13 @@ defmodule ALLM.Pipeline.Dsl.Stage do
   The keys are captured from the stage's **own output** — not from its subject,
   which is the *previous* stage's output — and merged into the carry map for
   **every later stage**. That is what makes a carried value survive any number
-  of skipped stages between producer and consumer (D4). `Runtime.apply_result/3`
+  of skipped stages between producer and consumer. `Runtime.apply_result/3`
   performs the capture; `runtime_test.exs`'s "carry" describe pins it.
 
-  `carry:` is **not** available on a `fan_out` (removed in Phase 4.5.3): a
-  fan-out has N items and one successor, so there was no non-arbitrary value to
-  propagate, and the option only ever captured into each item's own context and
-  nowhere else — a silent-bug shape. To read a per-item value downstream, filter
+  `carry:` is **not** available on a `fan_out`: a fan-out has N items and one
+  successor, so there is no non-arbitrary value to propagate, and capturing would
+  only reach each item's own context and nowhere else — a silent-bug shape. To
+  read a per-item value downstream, filter
   the fan-out's `[ALLM.Pipeline.Dsl.Item.t()]` output with
   `ALLM.Pipeline.Dsl.Item.ok_items/1` in the next stage and read the field off
   each item. `Dsl.assert_carry_placement!/4` rejects `carry:` on a `fan_out` at
@@ -53,9 +53,9 @@ defmodule ALLM.Pipeline.Dsl.Stage do
   produces is knowable only at run time. A key that is not is **dropped**: the
   carry map is unchanged and every later `Context.carried(ctx, key)` returns its
   default. `Runtime.capture/3` logs a `Logger.warning` naming the key, the stage
-  and the subject's struct when that happens (user decision, 2026-08-21 — warn
-  rather than raise, since raising would change framework behaviour nothing
-  gates). It is a detector, not a gate: the run still succeeds, so a new
+  and the subject's struct when that happens — warn rather than raise, since
+  raising would change framework behaviour nothing gates. It is a detector, not a
+  gate: the run still succeeds, so a new
   `carry:` is verified by asserting the value ARRIVES in the consuming stage,
   never by the declaration compiling. `runtime_test.exs`'s "a carry: key the
   subject does not have is dropped LOUDLY" pins the message.

@@ -1,3 +1,20 @@
+## [DOC] Purge development history from batch-A moduledocs
+*Tuesday, September 1st at 12am*
+Subphase 2 of the hexdocs overhaul: apply the C1 rule to the 11 batch-A 
+moduledocs (the DSL/lifecycle/executor cluster — pipeline.ex, llm_step, 
+executor, dsl, dsl/item, dsl/resource, dsl/runtime, dsl/stage, fan_out, 
+context, lifecycle). Deletes development-phase narrative and drops (Phase N Dx) 
+tags, genericizes consumer-specific names to MyApp.*, and restates 
+historically-framed live status as present tense — while preserving every 
+current-constraint rationale (the over-strip guard). The flagship pipeline.ex 
+example is replaced wholesale with MyApp.ReportPipeline, retaining all five 
+hard DSL constructs. Only @moduledoc/@doc/@typedoc strings changed; the BATCH_A 
+banned-pattern grep over regenerated doc/*.md returns zero, ExDoc emits zero 
+warnings, and mix precommit stays green (600 tests, dialyzer clean). No 
+behavioral code.
+
+---
+
 ## [DOC] Add hexdocs history-purge rule and publish-time guard
 *Tuesday, September 1st at 12am*
 Subphase 1 of the hexdocs overhaul (steering/2026-08-31_DOC_UPDATES.md): 

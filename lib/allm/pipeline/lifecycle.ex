@@ -9,21 +9,22 @@ defmodule ALLM.Pipeline.Lifecycle do
   calling `owned_run/4` instead of growing a third hand-rolled copy of
   `try/rescue/catch` + `complete/2` + `fail_pipeline_run/2`.
 
-  That was not a hypothetical. Before Phase 4 the tree carried four orchestrator
-  entry points that terminated their run on *no* path, and two more with no
-  `rescue` at all; the DSL closed the declared ones and left the hand-written
-  `*_single` helpers — which resolve their own working set and therefore have no
-  declaration to express — one copy short.
+  This is not a hypothetical hazard. Hand-written orchestrators that terminate
+  their run on *no* path, or that carry only a `rescue` (which never sees an exit
+  or a throw), strand a run at `status = :running`. `use ALLM.Pipeline` closes
+  that for a declared pipeline; a hand-written `*_single` helper — which resolves
+  its own working set and therefore has no declaration to express — closes it by
+  calling `owned_run/4`.
 
   ## The two consumers
 
   | Consumer | Uses |
   |---|---|
-  | `ALLM.Pipeline.Dsl.Runtime.execute/4` | `guard/2` and `settle/4` separately, because resource teardown (Phase 4 D3) runs *between* them |
+  | `ALLM.Pipeline.Dsl.Runtime.execute/4` | `guard/2` and `settle/4` separately, because resource teardown runs *between* them |
   | A hand-written entry point | `owned_run/4`, which composes create → `guard/2` → `settle/4` |
 
-  Splitting `guard/2` from `settle/4` is what lets D3's ordering — stages →
-  outcome computed → **teardown** → terminal write — be expressed as three
+  Splitting `guard/2` from `settle/4` is what lets the teardown ordering — stages
+  → outcome computed → **teardown** → terminal write — be expressed as three
   statements in `Runtime` rather than as a flag threaded through one function.
 
   ## Versus `ALLM.Pipeline.Executor.finish_run/2`
@@ -41,8 +42,8 @@ defmodule ALLM.Pipeline.Lifecycle do
 
   So a hand-written entry point that **creates its own run** wants
   `owned_run/4`: `finish_run/2` on its own leaves every raise, exit and throw
-  between the create and the tail unterminated, which is the defect that put
-  four such entry points in the tree. `finish_run/2` remains right for a caller
+  between the create and the tail unterminated, which is exactly the orphan-run
+  defect this module exists to close. `finish_run/2` remains right for a caller
   that already holds an owning handle, has no metadata to write, and is already
   inside somebody else's guard.
 
@@ -81,9 +82,9 @@ defmodule ALLM.Pipeline.Lifecycle do
   @doc """
   Run `fun`, converting a raise, an exit **or** a throw into `{:raised, …}`.
 
-  `rescue` alone is insufficient and that is the whole point: two orchestrators
-  in this tree had only a `rescue`, so an exit or a throw stranded their run at
-  `status = :running`. `label` names the unit in the log line.
+  `rescue` alone is insufficient and that is the whole point: a `rescue` never
+  sees an exit or a throw, so either would strand the run at `status = :running`.
+  `label` names the unit in the log line.
 
   The failure is logged here and re-raised by `settle/4`, never swallowed.
   """
@@ -107,8 +108,7 @@ defmodule ALLM.Pipeline.Lifecycle do
   `ALLM.Pipeline.Dsl.Resource.release/2`'s output; when non-empty they are
   merged into the run's metadata under `"resource_teardown_errors"` on **either**
   terminal path, and they never change the status — a leaked handle is an
-  operational fault recorded beside the work's outcome, not a failure of it
-  (Phase 4 D3).
+  operational fault recorded beside the work's outcome, not a failure of it.
 
   Returns `{:ok, value, completed_run}` on success and `{:error, reason}` on a
   named failure. A `{:raised, …}` settlement fails the run and then re-raises
@@ -204,7 +204,7 @@ defmodule ALLM.Pipeline.Lifecycle do
   including an exit and a throw.
 
       def run_single(record, opts) do
-        Lifecycle.owned_run("meeting_single", %{id: record.id}, [], fn run ->
+        Lifecycle.owned_run("record_single", %{id: record.id}, [], fn run ->
           case process(run, record, opts) do
             {:ok, stats}     -> {:ok, stats, serialize(stats)}
             {:error, reason} -> {:error, reason}

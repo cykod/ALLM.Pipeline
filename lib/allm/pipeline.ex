@@ -2,38 +2,37 @@ defmodule ALLM.Pipeline do
   @moduledoc """
   `use ALLM.Pipeline` — the framework's notion of "a pipeline".
 
-  Before Phase 4 an orchestrator was a plain module, and every one of them
-  hand-wrote the same skeleton: `Executor.create_pipeline_run/3`, a sequence of
-  `Executor.run_step/5` calls threading `input_step_id` by hand, a `try/rescue`
-  that fails the run and reraises, a `Metrics.record/3`, and a terminal
-  `PipelineRun.complete/2`. That skeleton was not written the same way twice,
-  and its variations were the defects: entry points that terminate their run on
-  no path, `run_step` calls passing `nil` for lineage, orchestrators with no
-  `rescue` at all.
+  The DSL owns the run skeleton — run creation, lineage-threaded step
+  sequencing, the guard that fails-and-reraises, metrics, terminal complete — so
+  a pipeline declares stages, not boilerplate. Hand-writing that skeleton
+  (`Executor.create_pipeline_run/3`, a sequence of `Executor.run_step/5` calls
+  threading `input_step_id` by hand, a `try/rescue` that fails the run and
+  reraises, a `Metrics.record/3`, a terminal `PipelineRun.complete/2`) is what
+  produces the classic defects, because the skeleton is never written the same
+  way twice: entry points that terminate their run on no path, `run_step` calls
+  passing `nil` for lineage, orchestrators with no `rescue` at all.
 
-  The example below is the declaration `meeting_agenda` **actually ships** as of
-  Phase 4.5 — not a sketch. Its per-meeting fan-out is a plain `stage` whose body
-  calls `ALLM.Pipeline.FanOut.reduce/5`: Phase 4.5 retired `body:`-mode `fan_out`
-  (and its `section:`/`delay:` sub-surface) in favour of ordinary code, keeping
-  declarative `fan_out` for Step-module targets only.
+  A declaration whose per-item fan-out is a plain `stage` whose body calls
+  `ALLM.Pipeline.FanOut.reduce/5` — declarative `fan_out` is for Step-module
+  targets only, and folding an ordinary body over items is done in code:
 
-      defmodule MeetingAgendaPipeline do
+      defmodule MyApp.ReportPipeline do
         use ALLM.Pipeline,
-          name: "meeting_agenda_scrape",
+          name: "report_scrape",
           metadata: :run_metadata,
           complete_metadata: :serialize_metrics,
           init: :init_metrics,
           concurrency: 1,
           summary_type: :stats
 
-        stage :committee_cache, fn _ctx, _prev -> {:ok, ensure_committee_cache()} end
-        stage :list, MeetingListScraper, input: :build_list_input
+        stage :warm_cache, fn _ctx, _prev -> {:ok, ensure_cache()} end
+        stage :list, MyApp.ListScraper, input: :build_list_input
 
-        # The per-meeting fan-out is a plain `stage` whose body calls
+        # The per-record fan-out is a plain `stage` whose body calls
         # `FanOut.reduce/5`. The framework owns the link-safe catch, the `%Item{}`
         # wrapping and per-item lineage; the section log and the politeness delay
         # are ordinary code in the body below.
-        stage :meeting, :fan_out_meetings
+        stage :record, :fan_out_records
 
         # Run-level counters folded into the accumulator AFTER the fan-out, because
         # `complete_metadata:` is handed the ACCUMULATOR, not what `summarize`
@@ -41,16 +40,16 @@ defmodule ALLM.Pipeline do
         # lineage parent, so a structural-identity gate does not see it.
         stage :tally, :tally_run
 
-        metrics "meetings", from: :funnel
+        metrics "records", from: :funnel
         summarize :finalize
       end
 
-      # The `:meeting` stage body. `FanOut.reduce/5` folds `fold_one/3` over the
-      # scraped meetings, threading the accumulator; the outer 2-tuple `{:ok, items}`
+      # The `:record` stage body. `FanOut.reduce/5` folds `fold_one/3` over the
+      # scraped records, threading the accumulator; the outer 2-tuple `{:ok, items}`
       # is lineage-transparent, so `:tally` still receives the `[Item.t()]` list.
-      defp fan_out_meetings(ctx, prev) do
+      defp fan_out_records(ctx, prev) do
         {items, acc} =
-          FanOut.reduce(ctx, prev.meetings, Context.accumulator(ctx), &fold_one/3,
+          FanOut.reduce(ctx, prev.records, Context.accumulator(ctx), &fold_one/3,
             parent: :source_stage)
 
         {{:ok, items}, acc}
@@ -62,35 +61,26 @@ defmodule ALLM.Pipeline do
   return. So a skip the pipeline needs to COUNT — in its `metrics` funnel's
   `skipped:`, in `pipeline_runs.metadata`, in its own `summarize` return — must
   keep the decision **inside the body** and return `{{:skipped, payload},
-  updated_acc}`. `meeting_agenda` does exactly that; the reasoning is
-  `steering/2026-08-20_ALLM_PIPELINE_PHASE_4_RECORDS.md` → 4.2 Deviations D-8 and
-  D-9. Since Phase 7.4 the body ALSO calls `Executor.log_skipped/4` before that
+  updated_acc}`. The body ALSO calls `Executor.log_skipped/4` before that
   return, so the skip is a visible `:skipped` step log with its reason — the
   count still rides the accumulator (the log adds observability, not the count).
 
-  (Phase 4 had a declarative `gate:` fan_out option that looked like the way to
-  express "skip this item". It wrote **no step log** and could not touch the
-  accumulator, so declaring it zeroed any skip count silently and in every place
-  at once. It was removed in Phase 4.5.3 for exactly that reason —
-  `steering/ALLM_PIPELINE_DSL.md` §4.2 carries the lesson. Phase 7.4 did NOT
-  resurrect it: the skip log is written by an ordinary body call that keeps the
-  `{{:skipped, payload}, acc}` return, not by a declarative option.)
+  There is deliberately no declarative "skip this item" option: one would write
+  **no step log** and could not touch the accumulator, so declaring it would zero
+  any skip count silently and in every place at once. The skip log is written by
+  an ordinary body call that keeps the `{{:skipped, payload}, acc}` return, not
+  by a declarative option.
 
   ## The scope is the SKELETON, not the body
 
   The DSL owns run creation, the lineage parent, fan-out, skips, metrics and the
   terminal write. It wraps a per-item body that stays an **ordinary Elixir
-  function** — and a section log and a politeness delay are now ordinary calls in
-  that body, not `section:`/`delay:` options (removed in Phase 4.5.2). So
-  `meeting_agenda`'s
-  `process_single_meeting/2` and the call graph under it, the largest body in the
-  tree, with its runtime Step-module selection by committee name, is untouched by
-  the port. (This read "~600-line" until 2026-08-20; the real figure was ~750 and
-  the number had already been copied once into the host's own moduledoc. A count
-  of a HOST file cannot be re-derived from this package, so it is not written
-  here.) That is the design working, not a
-  shortfall: an honest read of eight orchestrators against a *full* declarative
-  construct set found 2 of 8 expressible.
+  function** — a section log and a politeness delay are ordinary calls in that
+  body, not declarative options. So a host's largest per-item body — its own call
+  graph, with any runtime Step-module selection it does — is untouched by adopting
+  the DSL. That is the design working, not a shortfall: the DSL expresses the run
+  skeleton, and a body that resolves its own working set stays hand-written code
+  the framework calls.
 
   It is also a **layer over `ALLM.Pipeline.Executor`, not a replacement**.
   `ALLM.Pipeline.Dsl.Runtime` reaches a `pipeline_runs`, `step_logs` or
@@ -164,8 +154,7 @@ defmodule ALLM.Pipeline do
   `& &1.concurrency`).
 
   `run/1` takes `run_name:` in `opts` to override `name:` for a mode variant
-  (`meeting_list_only` vs `meeting_agenda_scrape`); the run-name *set* is Phase
-  6's.
+  (a `list_only` run vs a full `report_scrape` run share one declaration).
 
   ## The item-result contract
 
@@ -178,59 +167,51 @@ defmodule ALLM.Pipeline do
       {:error, reason :: term()}
 
   …optionally wrapped as `{item_result, acc}` to write the accumulator. **That
-  second element is the only channel that writes it.** This is not sugar:
-  `meeting_agenda`'s per-item body updates a nine-key stats map through fifteen
-  call sites nested four levels deep, and none of those keys is recoverable from
-  any `item_result` shape. A body returning a bare `item_result` leaves the
-  accumulator untouched.
+  second element is the only channel that writes it.** This is not sugar: a
+  per-item body that maintains a multi-key stats map, updated at call sites nested
+  several levels deep, cannot recover those keys from any `item_result` shape. A
+  body returning a bare `item_result` leaves the accumulator untouched.
 
   Where a *label* rides on the result, it rides **inside the payload** —
   `{:error, {identifier, reason}}`.
 
   ## Lineage
 
-  Lineage **in** is free, lineage **out** is by hand (D2). A body receives the
+  Lineage **in** is free, lineage **out** is by hand. A body receives the
   current parent as `ALLM.Pipeline.Context.input_step_id(ctx)` and threads it to
-  its own `Executor.run_step/5` calls exactly as hand-written code does today —
-  which is what preserves `meeting_agenda`'s **flat** two-level tree, where all
-  seven leaf steps parent to the *list* step rather than chaining. A DSL that
-  "helpfully" chained them would fail the identity gate.
+  its own `Executor.run_step/5` calls exactly as hand-written code does — which
+  preserves a **flat** two-level tree, where every leaf step parents to the
+  producing stage rather than chaining. A DSL that "helpfully" chained them would
+  fail a structural-identity gate against the hand-written equivalent.
 
   Three rules follow:
 
   * A **skip is lineage-transparent**: the next stage's `input_step_id` is the
     last *successfully executed* step's log id — a skip row never becomes the
-    lineage PARENT of what follows. Since Phase 7.4 a `*ProcessingDecision`
-    skip DOES write a step log (a visible `:skipped` row via
-    `Executor.log_skipped/4` → `StepLog.create_skipped/4`), parented like the
-    processed step would have been, so it appears in `build_lineage_tree/1` at
-    the position the work would occupy — but as a sibling leaf, not an ancestor
-    (exactly like a `section`). Through Phase 6 the skip wrote nothing at all
-    (D8); promoting it was a behaviour change a structural-identity gate could
-    not absorb, which is why it waited for Phase 7 (the first phase whose gate
-    is not structural identity).
+    lineage PARENT of what follows. A skip DOES write a step log (a visible
+    `:skipped` row via `Executor.log_skipped/4` → `StepLog.create_skipped/4`),
+    parented like the processed step would have been, so it appears in
+    `build_lineage_tree/1` at the position the work would occupy — but as a
+    sibling leaf, not an ancestor (exactly like a `section`).
     A skip is also **subject-transparent**: `prev` stays whatever the stage
     BEFORE the skip produced, so the next stage silently receives it. Three
     paths do this — `skip_when:` fired, a body returning `{:skipped, _}`, and
     `on_error: :continue` swallowing an error — and each **names the struct
-    `prev` is carrying in its skip log line** (§9.1), so a downstream
+    `prev` is carrying in its skip log line**, so a downstream
     `FunctionClauseError` in an `input:` hook is one line below the name of the
     stage that was skipped. It is a **detector, not a gate**: it does not
-    prevent the type mismatch (that would need a declared `skip_to:`
-    pass-through, deferred to Phase 5) — it only makes it diagnosable.
+    prevent the type mismatch — it only makes it diagnosable.
   * A **section log is a sibling leaf, never the lineage parent**. A body that
     groups its items calls `Executor.log_section(run, title,
     Context.input_step_id(ctx))` — passing the *source* parent, not the section's
     own id — so the real `step_logs` row it writes never becomes the parent of
-    the steps under it. (Phase 4 had a `section:` fan_out option that did this
-    automatically; 4.5.2 removed it, so a section is now an ordinary call in the
-    body — `meeting_agenda`'s `fold_one/3` is the worked example.)
-  * `fan_out`'s `parent:` has two modes and both ports need a different one:
-    `:source_stage` (default) parents every item's steps to the fan-out's source
-    stage — `meeting_agenda`'s flat tree — while `:per_item` takes
-    `input_step_id` from each item's **own** producing step log, which is
-    `committee`'s chain. Getting this wrong is invisible to a spot check and
-    fatal to the gate.
+    the steps under it. A section is an ordinary call in the body, not a
+    declarative option.
+  * `fan_out`'s `parent:` has two modes, and a pipeline picks the one its tree
+    needs: `:source_stage` (default) parents every item's steps to the fan-out's
+    source stage — a flat tree — while `:per_item` takes `input_step_id` from
+    each item's **own** producing step log — a chained tree. Getting this wrong
+    is invisible to a spot check and fatal to a structural-identity gate.
 
   ## Per-item failures on a sequential fan_out are NOT caught
 
@@ -238,8 +219,8 @@ defmodule ALLM.Pipeline do
   wrapping `catch`. What survives a Step's own safety is infrastructure raising —
   pool exhaustion, a lost connection — and one of those should abort the run
   rather than be tallied as N individually-failed items under a `:success` run.
-  (Phase 5 removed the `catch_item_failures:` option that could opt into catching
-  on the sequential path; no pipeline consumed it.)
+  There is deliberately no option to opt the sequential path into catching
+  per-item failures.
 
   A `fan_out` with `concurrency > 1` is different, and not as a policy choice: it
   runs through `Task.async_stream`, which LINKS its children, so an uncaught
@@ -254,7 +235,7 @@ defmodule ALLM.Pipeline do
       resource :browser, start: :open_browser, stop: :close_browser
 
   Acquired **once per run** before the first stage — not once per fan-out item —
-  and released **before** the terminal write (D3). Every step and body reads it
+  and released **before** the terminal write. Every step and body reads it
   as `ALLM.Pipeline.Context.resource(ctx, :browser)`: a struct field, never an
   `opts` key, because a resource is framework-managed state with a lifecycle and
   burying it in the caller's option list makes it indistinguishable from a CLI
@@ -270,46 +251,40 @@ defmodule ALLM.Pipeline do
   teardown after the write could not record a failure anywhere, because the row
   is already terminal. Full contract: `ALLM.Pipeline.Dsl.Resource`.
 
-  > **Kept with its one consumer.** `resource` is wired into a consumer's
-  > enrichment pipeline (Phase 5.2). It is the
-  > sanctioned exception to the "earn its keep across more than one pipeline" bar
-  > (`steering/ALLM_PIPELINE_DSL.md` §6.2) **because it closes a named §1 defect
-  > class by construction** — a leaked handle on a raise, which a bare `after`
-  > block cannot catch (a Playwright/`GenServer` teardown surfaces as an exit).
+  > **What it's for.** `resource` exists for hosts whose steps hold an external
+  > handle (a browser session, a DB connection) that must be released even when a
+  > run raises. It closes a defect class by construction — a leaked handle on a
+  > raise, which a bare `after` block cannot catch, because a Playwright or
+  > `GenServer` teardown surfaces as an exit.
 
   ## Linking a child run
 
-  A ported pipeline invoked as a child of another (`ProjectEnrichmentPipeline`
-  is a child of `ProjectRefreshPipeline`) sets the queryable
+  A pipeline invoked as a child of another sets the queryable
   `pipeline_runs.parent_run_id` FK column by threading `parent_run_id:` in its
   `opts`: the generated self-owned `run/1` lifts it out of `opts` into
   `create_pipeline_run/3`'s attrs (`Dsl.Runtime.run_owned/3`), so it lands in
   the COLUMN rather than becoming a metadata key. No declarative construct is
   needed — a child is just another `run/1` call with `parent_run_id:` set.
-  (Phase 5 removed the `child_pipeline` construct: it had no production consumer,
-  and the one intended one, `project_refresh`, cannot adopt it — it injects the
-  child module at runtime as a test seam and chains two children per item. See
-  `steering/ALLM_PIPELINE_DSL.md` §6.2.)
 
   ## Running under a borrowed run
 
       use ALLM.Pipeline, name: "inner", borrowed_run: true
 
-  An umbrella pipeline lends its run by putting it under the `:pipeline_run`
+  An outer pipeline lends its run by putting it under the `:pipeline_run`
   opt. A pipeline declaring `borrowed_run: true` branches on
   `ALLM.Pipeline.Executor.borrowed_run/1`: given a lent run it executes its
-  stages under that handle and creates and terminates **nothing** — the umbrella
+  stages under that handle and creates and terminates **nothing** — the lending
   owner is the sole completer — and without one it is self-owned exactly as any
   other pipeline. The handle is non-owning, so a body's stray `complete/2` is a
   detectable `{:error, :not_run_owner}` rather than a mid-loop `:success` that
-  clobbers the umbrella's aggregate metadata.
+  clobbers the owner's aggregate metadata.
 
   Two consequences, both deliberate. A borrowed run records **no**
-  `pipeline_metrics` row (the funnel would be attributed to the umbrella and
+  `pipeline_metrics` row (the funnel would be attributed to the owner and
   double-count), and a resource teardown failure is **logged** rather than
   recorded, because there is no terminal write of this pipeline's own to hang it
   on. Under `returns: :run` the borrowed path hands back the borrowed run, which
-  is still `:running` — the umbrella completes it later.
+  is still `:running` — the owner completes it later.
 
   The declaration is what gates the branch. `Executor.borrowed_run/1` is not
   consulted for a pipeline that does not declare `borrowed_run: true`, so a
@@ -318,7 +293,7 @@ defmodule ALLM.Pipeline do
 
   ## `--dry-run`
 
-      use ALLM.Pipeline, name: "poi_thumbnails", dry_run: :plan
+      use ALLM.Pipeline, name: "thumbnails", dry_run: :plan
 
   **The contract, stated once, here.** When a pipeline declares a `dry_run:`
   plan hook AND is run with a truthy `:dry_run` opt AND is **self-owned**, the
@@ -356,21 +331,14 @@ defmodule ALLM.Pipeline do
   keeps a `skip_when: {:opt, :dry_run, false}` on its write stage (the second meaning
   below), which composes with `borrowed_run:` freely.
 
-  **`--dry-run` means two different things in the four hand-written host
-  implementations, and the framework implements only the first.** They are named
-  here because the difference is what a porter has to decide, and it is not
-  visible from either pipeline's flag name:
+  **`--dry-run` means two different things, and the framework's `dry_run:`
+  implements only the first.** The difference is what a pipeline author has to
+  decide, and it is not visible from a flag name:
 
-  Most of these hosts are now ported (Phase 5), so the "Host implementation"
-  column is the *pre-port* shape and the "Ports as" column is what each shipped;
-  only `ProjectRefreshPipeline` remains hand-written.
-
-  | Pre-port host implementation | Meaning | Ported as |
-  |---|---|---|
-  | `PoiThumbnailPipeline` (was `run_dry/2`) | **Skip everything.** Resolve the working set, log a section per item, complete. No step runs. | `dry_run:` hook (Phase 5.8) |
-  | `ProjectRefreshPipeline` | **Skip everything.** Compute the cohorts, log the summary, invoke no sub-pipeline. | not ported — stays hand-written |
-  | `VideoPipeline` | **Skip only the WRITE.** The LLM match step still runs and still spends tokens; only `apply_assignments/1` is skipped. | a `skip_when: {:opt, :dry_run, false}` body branch (Phase 5.7) |
-  | `RvcsPipeline` | **Skip only the WRITE.** Agenda and minutes are still fetched and transformed; only the loader is skipped. It also increments `meetings_processed` on the dry path, which the framework version does not. | a `skip_when: {:opt, :dry_run, false}` body branch (Phase 5.7) |
+  | Meaning | Expressed as |
+  |---|---|
+  | **Skip everything.** Resolve the working set, log a section per item, complete. No step runs. | a `dry_run:` plan hook |
+  | **Skip only the WRITE.** Earlier steps still run and still spend tokens (an LLM match, a fetch/transform); only the final write stage is skipped. | a `skip_when: {:opt, :dry_run, false}` body branch |
 
   A pipeline wanting the second meaning does **not** declare `dry_run:`; it
   keeps a `skip_when:` on its write stage, which is already expressible and

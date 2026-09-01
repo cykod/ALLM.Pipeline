@@ -4,15 +4,15 @@ defmodule ALLM.Pipeline.Dsl.Item do
 
   A `fan_out` stage's OUTPUT is a `[t()]` — one entry per element `over:`
   produced, in declaration order. The next stage's `over:` hook receives that
-  list, which is why `committee`'s shared `ok_items/1` hook is an ordinary
-  filter over these.
+  list, which is why a shared `ok_items/1` filter over these is the common way to
+  read a fan-out's successes downstream.
 
   ## Why the step log rides on the item
 
   `parent: :per_item` means "each item's steps parent to **its own** producing
-  step log" — `committee` chains each transform to *its* detail step and each
-  load to *its* transform step. The producing log is per element, so it can
-  only travel with the element. Under `parent: :per_item` the elements a
+  step log" — a chained tree, where each transform hangs off *its* detail step
+  and each load off *its* transform step. The producing log is per element, so it
+  can only travel with the element. Under `parent: :per_item` the elements a
   downstream `over:` hook returns must therefore still be `t()` structs (filter
   them; do not unwrap them), and `ALLM.Pipeline.Dsl.Runtime` reads
   `input_step_id` off `item.step_log`. Under the default `:source_stage` the
@@ -20,7 +20,7 @@ defmodule ALLM.Pipeline.Dsl.Item do
 
   `step_log` is `nil` for an item produced by a `body:` that returned the
   lineage-transparent `{:ok, value}` — the two-element form nominates no new
-  parent (Phase 4 D2).
+  parent.
 
   ## `input` and `result` are opposite ends of the item
 
@@ -31,9 +31,9 @@ defmodule ALLM.Pipeline.Dsl.Item do
   | `step_log` | the row that produced `result`, or `nil` |
 
   `ok_values/1` returns the payload out of `result`, i.e. the **outputs**;
-  `Enum.map(items, & &1.input)` returns the inputs. The field was named `value`
-  through 4.1's implementation, which made `& &1.value` read like the successful
-  payload and silently feed the previous stage's inputs forward.
+  `Enum.map(items, & &1.input)` returns the inputs. The two are named `result`
+  and `input` rather than `value`, so `& &1.result` cannot be mistaken for the
+  successful payload and silently feed the previous stage's inputs forward.
   """
 
   alias ALLM.Pipeline.StepLog

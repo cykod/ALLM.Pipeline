@@ -1,12 +1,12 @@
 defmodule ALLM.Pipeline.Context do
   @moduledoc """
-  Pipeline execution context passed to each step — and, since Phase 4, to every
+  Pipeline execution context passed to each step — and to every
   `ALLM.Pipeline` escape-hatch body and `FanOut.reduce/5` fold function as well.
 
   Contains the current pipeline run and step log, allowing steps to access
   pipeline-level information and log additional data.
 
-  ## One context, not two (Phase 4 D5)
+  ## One context, not two
 
   An escape-hatch body is **not** a step: it has no step log, and its lineage
   parent is the last successfully executed step's log id rather than its own
@@ -16,17 +16,17 @@ defmodule ALLM.Pipeline.Context do
 
   | Field | Accessor | Who writes it |
   |---|---|---|
-  | `resources` | `resource/2` | `ALLM.Pipeline.Dsl.Runtime` (`resource` is Phase 4.3; the field and reader ship in 4.1 so `Runtime` has one shape to build) |
+  | `resources` | `resource/2` | `ALLM.Pipeline.Dsl.Runtime` |
   | `carry` | `carried/2` | `Runtime`, from a stage's `carry: [...]` declaration |
   | `input_step_id` | `input_step_id/1` | `Runtime`, or derived from `step_log.input_step_id` |
   | `acc` | `accumulator/1` | `Runtime`, before each body invocation |
 
   `acc` is the **read** half of the accumulator channel. A body writes it by
   returning `{item_result, acc}` (`ALLM.Pipeline`'s item-result contract) —
-  which is only expressible if the body can also SEE the current value, since
-  `meeting_agenda`'s per-item body updates a nine-key stats map through fifteen
-  nested call sites. It is a snapshot taken before the body runs, never a
-  mutable handle: writing goes through the return value and nowhere else.
+  which is only expressible if the body can also SEE the current value, since a
+  per-item body that maintains a multi-key stats map updates it at call sites
+  nested several levels deep. It is a snapshot taken before the body runs, never
+  a mutable handle: writing goes through the return value and nowhere else.
 
   `resources` and `carry` are struct FIELDS, not `opts` keys. That is the whole
   point of §3.10's `Context.resource(ctx, :browser)` over
@@ -48,8 +48,7 @@ defmodule ALLM.Pipeline.Context do
   @typedoc """
   Values captured by a `carry: [...]` declaration, keyed by field name. Carried
   values live HERE rather than on a step log, which is what makes a `stage`'s
-  survive any number of skipped stages between producer and consumer (Phase 4
-  D4).
+  survive any number of skipped stages between producer and consumer.
 
   The scope depends on the declaring stage's kind and the two are not the same:
   a **`stage`** captures from its own output and the values reach every later
@@ -113,11 +112,10 @@ defmodule ALLM.Pipeline.Context do
   backfill, an eval harness, an ad-hoc `iex` call.
 
   Carries no run and no step log, only `opts`. This is the named replacement for
-  the `SomeStep.execute(%{}, input)` idiom, which stopped being in contract when
-  Phase 4 widened `t:ALLM.Pipeline.Step.context/0` from a bare map to this struct
-  (D5). The bare map still WORKS — a struct is a map and every such caller
-  ignores the context — so migrating the remaining sites is bookkeeping, tracked
-  in `.work/HANDOFF.md`, not a correctness fix.
+  the `SomeStep.execute(%{}, input)` idiom: `t:ALLM.Pipeline.Step.context/0` is
+  this struct, not a bare map. A bare map still WORKS — a struct is a map and
+  every such caller ignores the context — so migrating a remaining bare-map site
+  is bookkeeping, not a correctness fix.
   """
   @spec detached(keyword()) :: t()
   def detached(opts \\ []), do: %__MODULE__{opts: opts}
@@ -149,8 +147,8 @@ defmodule ALLM.Pipeline.Context do
   For a step, the step log's own `input_step_id`. For an escape-hatch body or
   `FanOut.reduce/5` fold function, the id of the last successfully executed step's log — which
   the body threads to its own `ALLM.Pipeline.Executor.run_step/5` calls exactly
-  as hand-written orchestrator code does today. Lineage **in** is free; lineage
-  **out** is by hand (Phase 4 D2).
+  as hand-written orchestrator code does. Lineage **in** is free; lineage
+  **out** is by hand.
   """
   @spec input_step_id(t()) :: Ecto.UUID.t() | nil
   def input_step_id(%__MODULE__{input_step_id: id}), do: id

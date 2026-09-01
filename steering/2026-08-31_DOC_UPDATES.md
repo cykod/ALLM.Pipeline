@@ -41,11 +41,11 @@ and `agent-spec/` + `CLAUDE.md`. **No behavioral code changes.**
 | Subphase | Concern | Status |
 |---|---|---|
 | 1 | Agent-spec rule + verification harness (the contract the sweep applies) | Complete |
-| 2 | Sweep batch A — the DSL / lifecycle / executor cluster (Phase-heavy) | Not Started |
+| 2 | Sweep batch A — the DSL / lifecycle / executor cluster (Phase-heavy) | Complete |
 | 3 | Sweep batch B — remaining modules + README + CHANGELOG | Not Started |
 | 4 | New guide — `guides/building_a_pipeline.md` | Not Started |
 
-**Overall Progress: 1/4**
+**Overall Progress: 2/4**
 
 Per-subphase records (deviations, closure ledger, verification transcripts) go
 to `steering/2026-08-31_DOC_UPDATES_RECORDS.md`, created on first need.

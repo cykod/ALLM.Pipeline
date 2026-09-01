@@ -6,11 +6,11 @@ defmodule ALLM.Pipeline.Dsl.Resource do
       resource :browser, start: :open_browser, stop: :close_browser
 
   `start:` is an arity-1 hook `(ctx)` returning the handle; `stop:` is an
-  arity-1 hook `(handle)`. Both may be `defp` atoms (Phase 4 D6). The handle
-  reaches every step and body as `ALLM.Pipeline.Context.resource(ctx, :browser)`
-  — a struct field, never an `opts` key.
+  arity-1 hook `(handle)`. Both may be `defp` atoms. The handle reaches every
+  step and body as `ALLM.Pipeline.Context.resource(ctx, :browser)` — a struct
+  field, never an `opts` key.
 
-  ## Why teardown runs BEFORE the terminal write (Phase 4 D3)
+  ## Why teardown runs BEFORE the terminal write
 
   The ordering is: stages → outcome computed (`summarize`, `metrics`) →
   **teardown** → terminal write. Two properties follow, and both are the reason:
@@ -18,7 +18,7 @@ defmodule ALLM.Pipeline.Dsl.Resource do
   * Teardown *after* the write could not record a teardown failure anywhere,
     because the run row is already terminal.
   * Teardown that can throw *past* the terminal write re-creates the orphan-run
-    defect Phase 4 exists to close.
+    defect the lifecycle guard exists to close.
 
   So `release/2` wraps every `stop` in `catch kind, reason` covering **all
   three** kinds. `rescue` alone is insufficient: a Playwright or `GenServer`
@@ -41,10 +41,10 @@ defmodule ALLM.Pipeline.Dsl.Resource do
   `release/2` releases in **reverse** declaration order (LIFO), which is what a
   resource declared *after* another and depending on it needs.
 
-  > **No production consumer as of Phase 4.5 — deadlined to Phase 5.** No pipeline
-  > declares a `resource` yet; it is wired into a named Phase 5 port that consumes
-  > it, or removed (§8.6 Rec 3; `.work/HANDOFF.md`). Kept, tested, and not deleted
-  > because Phase 5's browser/session ports are its intended consumers.
+  > **No in-tree consumer yet.** No pipeline in this repo declares a `resource`.
+  > It exists for hosts whose steps hold an external handle — a browser session,
+  > a DB connection — that must be released even when a run raises, and is kept
+  > and tested for those consumers.
   """
 
   alias ALLM.Pipeline.{Context, Encodable}

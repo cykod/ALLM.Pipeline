@@ -3,8 +3,8 @@ defmodule ALLM.Pipeline.Executor do
   Base utilities for executing pipeline steps.
 
   Provides step execution, validation, and artifact storage.
-  Specific pipelines (CommitteePipeline, MeetingsPipeline, etc.) use these
-  utilities to orchestrate their domain-specific flows.
+  Specific pipelines use these utilities to orchestrate their domain-specific
+  flows.
 
   ## Persistence goes through `ALLM.Pipeline.Store`
 
@@ -49,8 +49,7 @@ defmodule ALLM.Pipeline.Executor do
 
   `attrs` carries first-class COLUMN values — `:trigger` (what fired the run)
   and `:parent_run_id` (a linking sub-pipeline parent). They ride as scalar
-  changeset fields, NOT through `metadata`, so they stay SQL/GraphQL-filterable
-  (Subphase 2).
+  changeset fields, NOT through `metadata`, so they stay SQL/GraphQL-filterable.
 
   When `:trigger` is absent from `attrs`, it is backfilled from the process
   dictionary via `trigger_from_process/0` (cron-stamped `"cron:<name>"`, else
@@ -91,17 +90,17 @@ defmodule ALLM.Pipeline.Executor do
   @doc """
   Resolve a **borrowed** pipeline run from an inner pipeline's `opts`.
 
-  The canonical borrowed-run boundary. An umbrella pipeline lends its run by
+  The canonical borrowed-run boundary. An outer pipeline lends its run by
   putting it under the `:pipeline_run` opt; the inner pipeline reads it here and
   receives a NON-OWNING handle (`PipelineRun.borrow/1`), so an accidental
   `PipelineRun.complete/2` on the inner side is a detectable
   `{:error, :not_run_owner}` rather than a silent mid-loop `:success` that
-  clobbers the umbrella's aggregate metadata.
+  clobbers the outer run's aggregate metadata.
 
   The strip happens on RECEIPT rather than at the lending call site on purpose:
-  a future umbrella that forgets to mark its lend still cannot have its run
-  completed out from under it. Returns `:error` when no run was lent, which is
-  the self-owned (`*_single` / CLI) branch.
+  a lender that forgets to mark its lend still cannot have its run completed out
+  from under it. Returns `:error` when no run was lent, which is the self-owned
+  (single-run / CLI) branch.
   """
   @spec borrowed_run(keyword()) :: {:ok, PipelineRun.t()} | :error
   def borrowed_run(opts) do
@@ -288,10 +287,8 @@ defmodule ALLM.Pipeline.Executor do
   1. **It does not replay anything.** All it does is validate the step and put
      the run back to `:running` (`PipelineRun.start/1`); no step output is
      restored and no step is skipped, so a caller that re-drives the pipeline
-     re-executes everything. Recorded in §2.5 of
-     `steering/2026-08-10_ALLM_PIPELINE_EXTRACTION.md`; resume-from-log — step
-     fingerprints, replaying a `:success` log instead of executing — is Phase 7
-     (§3.11) and is not attempted here.
+     re-executes everything. Resume-from-log — step fingerprints, replaying a
+     `:success` log instead of executing — is not attempted here.
   2. **The returned handle is NOT an owner.** The run is loaded via
      `PipelineRun.get/1`, and `:completion_token` is virtual, so the handle
      comes back token-less by construction and `PipelineRun.complete/2`,
@@ -304,10 +301,9 @@ defmodule ALLM.Pipeline.Executor do
 
      Deliberately not re-minted inside this function: that would make `resume/2`
      a second, implicit mint point and undercut the invariant the whole
-     ownership design rests on (user decision, 2026-08-13 — see
-     `steering/2026-08-10_ALLM_PIPELINE_EXTRACTION_RECORDS.md`). Pinned by
-     `pipeline_run_test.exs`'s "every terminal writer refuses a non-owning
-     handle", which loops this provenance alongside borrowed and re-loaded ones.
+     ownership design rests on. Pinned by `pipeline_run_test.exs`'s "every
+     terminal writer refuses a non-owning handle", which loops this provenance
+     alongside borrowed and re-loaded ones.
 
   There are no production callers today; the callers are tests.
   """

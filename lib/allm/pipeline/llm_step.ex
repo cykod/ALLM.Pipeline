@@ -2,20 +2,19 @@ defmodule ALLM.Pipeline.LLMStep do
   @moduledoc """
   A macro for the LLM-calling half of an `ALLM.Pipeline.Step`.
 
-  An LLM step used to carry four parallel artifacts: an Input struct, an Output
-  struct, a hand-written strict-mode JSON schema, and — where the Output had an
-  enum — a per-module string→atom coercion map. Phase 2 made the Output
-  declaration authoritative for the struct and its types; Phase 3.1 made it
-  authoritative for the JSON schema. This macro makes it authoritative for the
-  **parse path** too, so a ported step carries one declaration and a prompt.
+  The Output declaration is the single authority for an LLM step: it derives the
+  struct and its types, the strict-mode JSON schema, and — through this macro —
+  the **parse path** too, including any string→atom coercion for enum fields. So
+  a step carries one declaration and a prompt, not four parallel hand-written
+  artifacts.
 
-      defmodule MyStep do
+      defmodule MyApp.TransformStep do
         use ALLM.Pipeline.LLMStep,
-          type: :transform_ordinance,
+          type: :transform_record,
           input: __MODULE__.Input,
           output: __MODULE__.Output,
           engine: :nano,
-          schema_name: "ordinance"
+          schema_name: "record"
 
         @impl true
         def prompt(%Input{} = input), do: "…"
@@ -75,31 +74,31 @@ defmodule ALLM.Pipeline.LLMStep do
   consults `:wire`, `:values` and `:generated_types`:
 
     * **`wire: false`** — never read from the payload. The field is populated by
-      the harness, not the model (`bill_number` from the Input, `tokens_used`
+      the harness, not the model (an id carried from the Input, `tokens_used`
       from the response envelope), so the derived schema omits it and so does
       this.
     * **`wire: "summary"`** — read from `parsed["summary"]` into the field named
       `ai_summary`. The wire contract and the struct's field names are allowed
       to differ, and on every real transformer they do.
     * **an absent or `null` payload value** — the field is left out of the
-      struct entirely, so its declared `default:` applies. This is what the
-      hand-rolled `response["x"] || false` / `|| []` idioms did at every retired
-      call site. A `null` **element** inside an array is dropped from the list
-      for the same reason, for **every** list type (see the table below).
+      struct entirely, so its declared `default:` applies. This is what a
+      hand-rolled `response["x"] || false` / `|| []` idiom does. A `null`
+      **element** inside an array is dropped from the list for the same reason,
+      for **every** list type (see the table below).
     * **`atom()` with `values:`** — the string is matched against the declared
       vocabulary. Never `String.to_atom/1` or `String.to_existing_atom/1` on
       model output: the vocabulary is the allowlist. An unrecognized string
       becomes `:other` **iff** `:other` is a declared member, and is otherwise a
       coercion failure that fails the step.
     * **`String.t()` with `values:`** — emitted as a JSON `enum`, stored
-      unchanged. `projects.scale` is a string column and coercing it to an atom
+      unchanged. When the field maps to a string column, coercing it to an atom
       would change what the loader writes.
     * **`Date.t()`** — parsed from ISO-8601. An unparseable value degrades to
-      `nil` rather than failing the step, matching the `parse_date/1` helpers
-      this replaces; the field is nullable in the derived schema either way.
+      `nil` rather than failing the step, matching a hand-rolled `parse_date/1`
+      helper; the field is nullable in the derived schema either way.
     * **`tokens_used`** — populated from the response envelope **iff** the
-      Output declares the field. `MeetingImportanceScorer.Output` does not, and
-      that must not raise. An Output that declares it **must** declare it
+      Output declares the field. An Output that omits it must not raise here. An
+      Output that declares it **must** declare it
       `wire: false`; the macro refuses to compile otherwise, because the
       derivation would otherwise ask the model to invent a count `coerce/2`
       immediately overwrites.
@@ -116,55 +115,48 @@ defmodule ALLM.Pipeline.LLMStep do
   else — `[String.t()]`, a nested schema module, a nested list — is the identity
   (`coerce_scalar(:passthrough, raw, _)`). The two list-level rules are applied
   by `read/3` and `map_ok/3` **before** the element kind is consulted, so they
-  do not vary with it. Measured 2026-08-19, not inferred:
+  do not vary with it:
 
   | Declared type | `coercion/1` | `["a", nil, "b"]` | a bare `"a"` |
   |---|---|---|---|
   | `[atom()]` with `values:` | `{:list, :atom}` | `[:a, :b]` — `nil` dropped | fails: `{:not_a_list, "a"}` |
-  | `[Date.t()]` | `{:list, :date}` | `[~D[2026-01-01]]` — `nil` dropped | fails: `{:not_a_list, "a"}` |
+  | `[Date.t()]` | `{:list, :date}` | one parsed date — `nil` dropped | fails: `{:not_a_list, "a"}` |
   | `[String.t()]` | `{:list, :passthrough}` | `["a", "b"]` — `nil` dropped | fails: `{:not_a_list, "a"}` |
 
-  This uniformity is deliberate and was **widened on 2026-08-19** (a user
-  decision, prompted by the 3.3 review's F3). `[String.t()]` used to collapse to
-  a bare `:passthrough`, which made both rules unreachable for the one list type
-  every ported step actually declares — the doc said "an array" and meant
-  "`[atom()]` or `[Date.t()]`". The tradeoff accepted with it: a malformed
-  payload on a `[String.t()]` field that used to be absorbed silently now fails
-  the step with `{:error, {:coerce, [{field, {:not_a_list, raw}}]}}`.
+  This uniformity is deliberate, and it covers `[String.t()]` — the one list
+  type most steps actually declare — as much as `[atom()]` and `[Date.t()]`. The
+  consequence: a malformed payload on a `[String.t()]` field fails the step with
+  `{:error, {:coerce, [{field, {:not_a_list, raw}}]}}` rather than being absorbed
+  silently.
 
   **Consequence when porting a step.** A hand-rolled `filter_strings/1`-shaped
-  defense on a list field is no longer load-bearing against `null` elements or a
-  bare scalar — `coerce/2` is the boundary for those, whatever the element type.
-  It may still be doing other work (`OrdinanceTransformer`'s drops any
-  non-string element a `json_schema:`-hatched field could still admit, and its
-  `parse_provisions/1` / `parse_areas/1` rebuild nested structs), and
-  `post_process/2` is **public**, so a caller can hand it a struct `coerce/2`
+  defense on a list field is not load-bearing against `null` elements or a bare
+  scalar — `coerce/2` is the boundary for those, whatever the element type. It
+  may still be doing other work (dropping a non-string element a
+  `json_schema:`-hatched field could still admit, or rebuilding nested structs),
+  and `post_process/2` is **public**, so a caller can hand it a struct `coerce/2`
   never touched. Keep the clauses; do not delete one merely because the coercion
-  path can no longer reach it.
+  path does not reach it.
 
   The struct is built with `struct/2`, not `struct!/2`: a `required: true` field
-  that is also `wire: false` (`bill_number`) is legitimately unset at this point
-  and is filled by `post_process/2` or by an overriding `execute/2`.
+  that is also `wire: false` is legitimately unset at this point and is filled by
+  `post_process/2` or by an overriding `execute/2`.
 
   ### The boundary: nested schema modules are NOT rebuilt
 
   A field typed by a nested `ALLM.Pipeline.Schema` module keeps the model's raw
   string-keyed map. `coerce/2` resolves no aliases — it runs at runtime, where
-  the `Macro.Env` that
-  `ALLM.Pipeline.Schema.JsonSchema` expands short aliases against no longer
-  exists — so it cannot tell `KeyProvision` inside a parent from a top-level
-  module of that name. Rebuilding the nested struct is therefore the step's
-  work, in `post_process/2`, which is where every transformer this replaces
-  already did it (`parse_provisions/1`, `parse_appointment_details/1`).
+  the `Macro.Env` that `ALLM.Pipeline.Schema.JsonSchema` expands short aliases
+  against does not exist — so it cannot tell a nested `Provision` module inside a
+  parent from a top-level module of that name. Rebuilding the nested struct is
+  therefore the step's work, in `post_process/2`.
 
-  **Declare the STRUCT type** — `[KeyProvision.t()]` — and pin the wire shape
+  **Declare the STRUCT type** — `[Provision.t()]` — and pin the wire shape
   with the per-field `json_schema:` hatch, so the generated `@type t` describes
   what `post_process/2` returns rather than what the wire carries; the two
   overlap at `[]`, so declaring the wire type instead is invisible to dialyzer.
-  (This paragraph read "declare such a field `[String.t()]`" until 2026-08-19;
-  the ordinance port measured the hatch byte-identical on the wire and
-  compile-enforced — dropping it is an `ArgumentError`, since the nested struct
-  does not declare `json_schema: true`.) Such a field still classifies
+  Dropping the hatch is an `ArgumentError`, since the nested struct does not
+  declare `json_schema: true`. Such a field still classifies
   `{:list, :passthrough}`, so the LIST-level rules above apply to it and its
   ELEMENTS still arrive as the model's raw maps.
 

@@ -31,8 +31,8 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   The owning handle is confined to the four private functions that create or
   settle a run — `run_owned/3`, `execute/4`, `execute_dry/4` and `settle/5` —
   and is passed to no hook and to no return value. (`run_borrowed/4` never sees
-  one: on that path the umbrella owns the run and this pipeline terminates
-  nothing.) Re-derive rather than trusting the list:
+  one: on that path the lending pipeline owns the run and this pipeline
+  terminates nothing.) Re-derive rather than trusting the list:
   `grep -n 'owning' lib/allm/pipeline/dsl/runtime.ex`. Every `Context` a stage body, `over:`,
   `input:`, `skip_when:` or `summarize` hook receives is built from
   `PipelineRun.borrow/1`'s projection, so a body reading `ctx.pipeline_run`
@@ -98,7 +98,7 @@ defmodule ALLM.Pipeline.Dsl.Runtime do
   Two declarations divert before any of that:
 
   * `borrowed_run: true` **and** a lent `:pipeline_run` in `opts` — the stages
-    run under the umbrella's handle and this function creates and terminates
+    run under the lender's handle and this function creates and terminates
     nothing.
   * `dry_run:` **and** a truthy `:dry_run` in `opts` — see `ALLM.Pipeline`'s
     moduledoc, `## --dry-run`, which is where that contract is stated.
