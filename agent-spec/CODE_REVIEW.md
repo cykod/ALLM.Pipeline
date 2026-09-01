@@ -66,6 +66,14 @@ teaches the next agent to undo a decision:
 - **Comment-tense greps** over touched files: future-tense claims about unbuilt
   siblings, and stale "not yet"/"no caller" claims the diff itself falsified —
   the second licenses a cleanup pass to delete something load-bearing.
+- **Published-doc history**: flag category-A/B/C patterns in a touched
+  `@moduledoc`/`@doc` — development-phase numbering, "used to / no longer"
+  narrative, `batch N` / `extraction plan` / `steering/20…` references, or
+  consumer-specific proper nouns (`meeting_agenda`, `committee`, `Amesbury`, …).
+  The hexdocs are present-tense and host-neutral; rationale is preserved, only
+  narrative deleted. Watch the two things the release-time grep can't: an
+  over-stripped rewrite that lost the "why", and host framing paraphrased
+  generically. Cite `agent-spec/DOCS.md` (C1 table + "What the grep can't see").
 - **Test smells**: a conjunctive test whose later conjuncts a first-assertion
   failure masks; an assertion on a raw config literal a normalizer rewrites; a
   new callback obligation with no test exercising the real consumer.

@@ -1,3 +1,18 @@
+## [DOC] Add hexdocs history-purge rule and publish-time guard
+*Tuesday, September 1st at 12am*
+Subphase 1 of the hexdocs overhaul (steering/2026-08-31_DOC_UPDATES.md): 
+establish the durable rule that published hexdocs describe current 
+functionality in the present tense, with no development-phase numbering or 
+consumer-specific names. New agent-spec/DOCS.md carries the C1 categorization 
+table, the C2 banned-pattern grep recipe (hard gate + positive control + soft 
+advisory), and the C3 zero-warning invariant. A WARN-only 
+hexdocs_history_warning/0 in scripts/release.exs regenerates doc/ at release 
+time and flags any surviving history references (excluding changelog.md). 
+CLAUDE.md and agent-spec/CODE_REVIEW.md gain pointer lines. Docs and 
+release-script only — no behavioral code changed.
+
+---
+
 ## [OTHR] Gate dialyzer in precommit and fix its 13 warnings
 *Monday, August 31st at 9pm*
 Dialyzer had never actually run to completion in this repo: a host-built PLT

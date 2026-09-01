@@ -37,6 +37,10 @@ find test -name '*_test.exs' | wc -l   # test files
 > that are specific to working **inside** this repo and that the code does not
 > make obvious.
 
+Published hexdocs are present-tense and history-free — see `agent-spec/DOCS.md`.
+(This file, the agent guide, deliberately keeps its own phase history — it is not
+a hexdocs `:extra`.)
+
 ---
 
 ## 1. The dep list's omission is the architecture

@@ -41,3 +41,10 @@
 [MILE] mon 8/31 8pm - Designed the second-consumer gap closure (steering/2026-08-31_SECOND_CONSUMER_GAPS.md) and wrote the item-by-item reply doc for the consuming project
 
 [MILE] mon 8/31 8pm - Recorded subphase 2 landing host-side and moved MULTI_CONSUMER_HEX_PREP to 5/6 (only the v0.1.0 publish remains, user-gated)
+
+[MILE] mon 8/31 9pm - Added dialyzer to the precommit gate and fixed the 13 pre-existing warnings it surfaced (status-type nilability, :mix/:ex_unit PLT apps, Dynamo key_definitions shape) once a container-native PLT let it run
+
+[DSGN] mon 8/31 9pm - Design hexdocs update: add a real-project implementation guide, strip phase/history references to focus on current functionality, and update agent-spec to keep hexdocs history-free
+
+[BUILD] tue 9/1 12am - Build all 4 subphases of the hexdocs overhaul (agent-spec rule + release guard, sweep batches A & B, new building_a_pipeline guide) per steering/2026-08-31_DOC_UPDATES.md
+2026-09-01 00:27 [FIX] Fix issues from DOC_UPDATES sub1 review set (code/security/design/functional); only F1 Medium actionable

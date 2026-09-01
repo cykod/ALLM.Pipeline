@@ -110,6 +110,17 @@ defmodule ALLM.Pipeline.Release do
   @changelog_path "CHANGELOG.md"
   @migrations_dir "priv/test_repo/migrations/"
 
+  # The hard banned-pattern regex for published-doc history, mirroring the `HARD`
+  # literal in `agent-spec/DOCS.md` C2 (single source of truth). Development-phase
+  # numbering, ISO-dated rationale, `batch N` / `extraction plan` / `steering/20…`
+  # references, and consumer-specific proper nouns. Reproduced here so the release
+  # can grep the regenerated hexdocs; keep it byte-for-byte in step with DOCS.md
+  # (which names this `@hexdocs_history_pattern` back as its executable copy).
+  # The only sanctioned difference is this sigil escaping `steering\/20`. There
+  # is no automated drift guard by design; the two files reference each other and
+  # are edited as a pair.
+  @hexdocs_history_pattern ~r/[Pp]hases? [0-9]|\(D[0-9]|used to |no longer|predates|retired|Before Phase|As of 20[0-9][0-9]|20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]|batch [0-9]|extraction plan|steering\/20|meeting_agenda|MeetingAgenda|MeetingList|MeetingImportance|MeetingsPipeline|CommitteePipeline|committee|Government|Scorer|Ordinance|ordinance|Amesbury|amesbury/
+
   def main(argv) do
     case parse_args(argv) do
       :help ->
@@ -252,6 +263,9 @@ defmodule ALLM.Pipeline.Release do
 
     log_step("step 6b", "test-harness migrations changed since last tag?")
     migration_touch_warning(current)
+
+    log_step("step 6c", "hexdocs free of development-history references?")
+    hexdocs_history_warning()
 
     log_step("step 7", "quality gates")
     run_quality_gates(opts)
@@ -417,6 +431,58 @@ defmodule ALLM.Pipeline.Release do
 
       {_out, _} ->
         IO.puts("  (no previous tag #{previous_tag}; skipping migration-touch warning)")
+    end
+  end
+
+  # ----- step 6c: hexdocs history warning ------------------------------------
+  #
+  # Regenerates the published surface (`doc/*.md` — this is the release path's
+  # first `mix docs` run) and greps it for the C2 `HARD` pattern
+  # (`@hexdocs_history_pattern`, mirrored from `agent-spec/DOCS.md`). `doc/` is
+  # gitignored build output; ExDoc renders only `@moduledoc`/`@doc`, so this is
+  # the literal published text. `changelog.md` is carved out — a changelog
+  # legitimately records the rename it performed. A hit only WARNs (advisory tone,
+  # like the migration-touch and `Excluding tags` warnings); a release is never
+  # blocked by a doc grep, only flagged.
+  defp hexdocs_history_warning do
+    case System.cmd("mix", ["docs"], stderr_to_stdout: true) do
+      {_out, 0} ->
+        hits =
+          "doc/*.md"
+          |> Path.wildcard()
+          |> Enum.reject(&(Path.basename(&1) == "changelog.md"))
+          |> Enum.flat_map(fn path ->
+            path
+            |> File.read!()
+            |> String.split("\n")
+            |> Enum.with_index(1)
+            |> Enum.filter(fn {line, _n} -> Regex.match?(@hexdocs_history_pattern, line) end)
+            |> Enum.map(fn {line, n} -> "#{path}:#{n}: #{line}" end)
+          end)
+
+        if hits == [] do
+          IO.puts("  hexdocs free of development-history references")
+        else
+          IO.puts(:stderr, "")
+
+          IO.puts(
+            :stderr,
+            "WARNING: hexdocs still contain development-history references " <>
+              "(#{length(hits)} line#{if length(hits) == 1, do: "", else: "s"}) " <>
+              "— see agent-spec/DOCS.md."
+          )
+
+          Enum.each(hits, &IO.puts(:stderr, "         #{&1}"))
+          IO.puts(:stderr, "")
+        end
+
+      {out, code} ->
+        IO.puts(:stderr, out)
+
+        IO.puts(
+          :stderr,
+          "  (mix docs failed, exit #{code}; skipping hexdocs-history warning)"
+        )
     end
   end
 
