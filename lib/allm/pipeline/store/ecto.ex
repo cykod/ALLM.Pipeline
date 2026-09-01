@@ -31,9 +31,9 @@ defmodule ALLM.Pipeline.Store.Ecto do
 
   `step_logs` and `pipeline_runs` are inlined in `StepLog.build_lineage_tree/1`
   raw SQL, queried by string from a host app (one that cannot see
-  this package's config), and `committees.last_step_log_id` is a real Postgres
-  FK. There is no `table_prefix` option, and the four migrations that own these
-  tables stay in the host.
+  this package's config), and a host table may carry a real Postgres FK onto
+  `step_logs.id`. There is no `table_prefix` option, and the migrations that own
+  these tables stay in the host.
   """
 
   @behaviour ALLM.Pipeline.Store

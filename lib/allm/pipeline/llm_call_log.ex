@@ -36,7 +36,7 @@ defmodule ALLM.Pipeline.LLMCallLog do
   @typedoc """
   One logical LLM call's captured input/output.
 
-  Built by `LLMEngine.generate_structured/4`; the map carries the redacted
+  Built by a host's LLM engine's `generate_structured/4`; the map carries the redacted
   `messages`, the `schema_name`, the requested `model` / `adapter` / `params`,
   and — depending on outcome — the raw `response_text` / `usage` /
   `finish_reason` / `served_model`, or an `error` string. The exact keys are

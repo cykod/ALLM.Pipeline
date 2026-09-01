@@ -9,14 +9,13 @@ defmodule Mix.Tasks.AllmPipeline.Names do
 
   `--format json` (the default) prints a single-line JSON object on stdout:
 
-      {"pipeline_names":["committee",...],"browser_pipelines":["project","project_refresh","video"]}
+      {"pipeline_names":["daily_report",...],"browser_pipelines":["listing","listing_refresh"]}
 
   `pipeline_names` are the entries' `name`s rendered as strings, in declaration
-  order; `browser_pipelines` are those with `browser: true`, same order. This is
-  the committed-artifact source (`scripts/pipeline-names.json`) the shell
-  `stage-scraper.sh` reads, and the input the `sst/scraper.ts` / entrypoint
-  codegen consumes — a single source of truth for the pipeline-name allowlists
-  that would otherwise be hand-mirrored across four runtimes.
+  order; `browser_pipelines` are those with `browser: true`, same order. It gives
+  a host a single machine-readable source of truth for its pipeline-name
+  allowlists — the shell scripts, deploy tooling and codegen that would
+  otherwise hand-mirror the same list across several runtimes read this instead.
 
   `--format elixir` prints the same two lists as an inspectable term, for a human
   eyeballing the registry.

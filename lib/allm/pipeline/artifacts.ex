@@ -35,27 +35,26 @@ defmodule ALLM.Pipeline.Artifacts do
         impl: ALLM.Pipeline.Artifacts.Filesystem
 
   Resolved at RUNTIME (`impl/0`), like every other config read in this package
-  — see `ALLM.Pipeline.Config`. Batch 1.C moved *which module* onto a
-  compile-time host registry (`ALLM.Pipeline.Registry`), so for a host that
-  declares one the `artifacts:` declaration supplies this key's default and the
-  config form above overrides it per environment (see that module's
-  "Precedence"). Adapters keep resolving their own values (table names, roots,
-  buckets) at runtime regardless.
+  — see `ALLM.Pipeline.Config`. *Which module* is chosen at a host's compile
+  time by its registry (`ALLM.Pipeline.Registry`): for a host that declares one,
+  the `artifacts:` declaration supplies this key's default and the config form
+  above overrides it per environment (see that module's "Precedence"). Adapters
+  keep resolving their own values (table names, roots, buckets) at runtime
+  regardless.
 
   ## Adapters
 
   | Adapter | URL scheme | Notes |
   |---|---|---|
   | `ALLM.Pipeline.Artifacts.Dynamo` | `dynamo://` | fits a 400KB item; the small tier |
-  | `ALLM.Pipeline.Artifacts.S3` | `s3://` | the large tier — oversize bodies (Phase 7.5); optional `ex_aws_s3` dep |
+  | `ALLM.Pipeline.Artifacts.S3` | `s3://` | the large tier — oversize bodies; optional `ex_aws_s3` dep |
   | `ALLM.Pipeline.Artifacts.Tiered` | routes by size | the production default: `{small: Dynamo, large: S3}` |
   | `ALLM.Pipeline.Artifacts.Filesystem` | `file://` | a fresh clone runs pipelines with zero cloud infra |
   | `ALLM.Pipeline.Artifacts.Memory` | `memory://` | tests; dies with the VM |
 
-  Since Phase 7.5 `Tiered` gives an oversize artifact a real home (S3), so the
-  wrapper no longer discards it and `Executor.build_envelope/3` no longer drops
-  bodies to fit a DynamoDB item — it applies only a single pathological-size
-  sanity bound.
+  `Tiered` gives an oversize artifact a real home (S3), so the wrapper never
+  discards it and `Executor.build_envelope/3` does not drop bodies to fit a
+  DynamoDB item — it applies only a single pathological-size sanity bound.
   """
 
   @typedoc """
@@ -141,8 +140,8 @@ defmodule ALLM.Pipeline.Artifacts do
   Drop artifacts older than `opts[:older_than]` (a `DateTime`, default now),
   returning how many were removed.
 
-  **Optional**, and no Phase 1 caller dispatches to it — retention/TTL is the
-  Phase 7 item (extraction plan §3.6). `Memory` and `Filesystem` implement it
+  **Optional**, and nothing in the framework dispatches to it yet — it exists for
+  a host that wants retention/TTL. `Memory` and `Filesystem` implement it
   because it is also their natural reset hook; `Dynamo` does not (its lifecycle
   is the table's, via `clear_table/0`).
   """

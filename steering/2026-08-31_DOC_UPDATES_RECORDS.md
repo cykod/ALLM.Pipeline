@@ -283,3 +283,270 @@ DATABASE_HOST=host.docker.internal DATABASE_USER=pascalrettig mix precommit
 The `[error] Refusing to … pipeline run …` log lines during `store_test` are the
 designed ownership-refusal log noise, not failures (0 failures). No `@spec` was
 touched — doc-string edits only.
+
+---
+
+## Subphase 3 — Sweep batch B (remaining modules + README + CHANGELOG)
+
+**Status: Completed.** (Applied the C1 rule to the 20 batch-B
+`@moduledoc`/`@doc`/`@typedoc` strings, plus `README.md` (Q1 = Option A, fully
+host-neutral) and `CHANGELOG.md` (Q1 = Option A, `:amesbury_scraper` note kept,
+phase clause reworded). Code review: ship as-is; its one Low note was elevated to
+deviation D6 and fixed (two un-manifested files, `json_schema.ex` +
+`llm_call_log.ex`, carried host-specific refs via non-HARD tokens — genericized).
+Security/functional/design N/A. Gates green. After this batch the WHOLE published surface's HARD grep
+is zero (CHANGELOG carved out). Local gates green — see transcripts. Review lanes
+not yet run — the orchestrator ticks the design's Status table.)
+
+Only `@moduledoc`/`@doc`/`@typedoc` strings were edited. No `#` code comment, no
+`@spec`, no function body, no `iex>` block was touched. `text.ex`'s two live
+doctests (`normalize/1`, `truncate/2`) were preserved verbatim — its banned hits
+sat in the moduledoc, well away — and `mix precommit`'s `3 doctests` confirms
+they still run. Many `#` comments in these files carry `Phase N` / `used to` /
+dated history and were **deliberately left** — ExDoc never renders them
+(maintainer notes, per DOCS.md Scope).
+
+### Per-file summary (categories applied)
+
+- **`pipeline_run.ex`** — **A/D**: "As of 2026-08-13 the guard is inert on every
+  live path… 28 fail / 17 complete sites" → present-tense "a membership guard
+  against the next call site; every live site holds a `create/3` handle, so none
+  trips it today" (the completion-token guard's *what it prevents* preserved).
+  "`fail/2` … which it no longer is" → "`fail/2` is ownership-guarded like the
+  other terminal writers". **C** (host-framing): every borrowed-run "umbrella
+  lending its run" / "the umbrella's aggregate metadata" → "outer pipeline" /
+  "owner" / "lender" (matching batch A). Dropped the `VideoSummaryPipeline` lends
+  to `MeetingSummaryPipeline` production example and the "user decision,
+  2026-08-13" parenthetical. `"video_summary"` slug examples in `list/1` → generic
+  `"daily_report"`.
+- **`metrics.ex`** (the grep-invisible page) — **C**: "sole completer for
+  umbrella/borrowed runs" → "the owner is the sole completer, so metrics are
+  emitted once per run, on the owning handle" (role preserved). **A**: "batch 1.C
+  moved it off a hardcoded `@expects_data_pipelines`" dropped (declaration is now
+  the whole story); "the two namespaces do not line up (extraction plan §3.8a)" →
+  namespace sentence kept, cite dropped; "structural-identity property from
+  Phases 1-6" → "structural-identity property".
+- **`config.ex`** — **A**: "_(Decided in batch 1.B, 2026-08-14 … see
+  `2026-08-10_ALLM_PIPELINE_PHASE_1.md` §5.1.)_" blockquote deleted (the `repo/0`
+  single-handle rationale that follows it — four consumers, two outside `Store` —
+  is untouched); "landed in batch 1.C" (×2) reworded to present; "extraction plan
+  §1.3c" / "moved onto the registry in batch 1.C" → "host facts, declared on the
+  host's registry"; "(added by the Phase 1 polish pass)" tag dropped. `lock_keys`
+  example `[project_refresh: :project]` → `[some_refresh: :some]` (the file's own
+  other examples' convention).
+- **`query.ex`** — **A**: "the host cutover (Phase 7.2)" / "since Phase 7.1 … an
+  in-umbrella dep then, the Phase 8 path dep now" → present-tense "a host routes
+  its reads through this module … keeps the host depending on the package and
+  never the reverse". **C + C3 autolink**: `Government.resolve_step_log/1`
+  (unresolvable host module, ExDoc hazard) removed — reworded to "a host resolves
+  a step log's identity through here"; "(7.2)" cites on `llm_artifact_url/2`
+  dropped ("how deep to walk is host policy").
+- **`step_log.ex`** — **A**: dropped "subphase 2.2's tuple clause turned …",
+  "measured 2026-08-14", the `refsweep.py` "→ 1 hit" dated re-derive block, the
+  "closed once, by tracing … `.work/security-reviews/2026-08-14-allm-p2c.md`,
+  Informational 4 … since Phase 5.10" trace, "through Phase 6", "wired … in Phase
+  7.4" — every current constraint preserved (the changeset silent-write hazard,
+  the `prepare_changes/2` raise, the standing `%Ecto.Changeset{}`-clause fix,
+  `create_skipped/4`'s zero-duration `:skipped` behaviour). **C**: `meeting_agenda_scrape`
+  ~2600-row / measured-2026-08-21 figure → "a large scrape can reach a few
+  thousand rows / several MB"; "the video↔meeting match-decision log" → "a
+  match-decision log".
+- **`encodable.ex`** — **A**: the whole "Two divergent copies used to exist —
+  `Executor.normalize_metadata/1` and `PipelineRun.stringify_keys/1`" origin story
+  and its "Came from" table column collapsed to a present-tense "the metadata
+  create path applies encoding twice … one implementation that is a fixed point".
+  "Phase 2.2 converged the leaves" → "the two serializers converge on the leaves";
+  two "(Corrected 2026-08-14 … code review F3)" parentheticals deleted; "used to
+  raise now serializes silently" → "instead of raising, such a struct serializes
+  silently" (the credential-leak constraint preserved); "the global-by-name wart
+  Phase 2 removed from `StepLog`" → "the wart per-field `log:`/`redact:` flags
+  exist to remove"; "in subphase 2.3" cite dropped.
+- **`artifacts.ex`** — **A**: "Batch 1.C moved *which module* onto …" → "*Which
+  module* is chosen at a host's compile time by its registry"; "(Phase 7.5)" /
+  "Since Phase 7.5 … no longer discards … no longer drops bodies" → present-tense
+  "`Tiered` gives an oversize artifact a real home … does not drop bodies";
+  `gc/1`'s "no Phase 1 caller … the Phase 7 item (extraction plan §3.6)" →
+  "nothing in the framework dispatches to it yet — it exists for a host that wants
+  retention/TTL". (tiering-is-adapter-choice rule preserved.)
+- **`schema.ex`** — **C**: `values: Schemas.Ordinance.fiscal_impacts()` →
+  `values: MyApp.Schemas.impacts()`; `projects.scale` string-column example →
+  "a field backed by a string column". **A/D**: `redact:` "Four paths … subphase
+  2.3 closed the second … they used to `inspect/1`" → present-tense "four paths
+  lie outside its reach; one … is closed in code; three remain" (all four still
+  enumerated). "(extraction plan Phase 3.2)" cite dropped.
+- **`lock/advisory.ex`** — **A**: "batch 1.C moved it onto the host's registry" /
+  "batch 1.C moved it off two hardcoded clauses" → present-tense "host domain
+  knowledge, declared on the host's registry"; "a consumer repo's
+  registry-declared-values test" kept as the host-side guard. **C**: "an ordinance
+  pipeline still grinding through PDFs" → "a document pipeline".
+- **`artifact_store.ex`** — **B**: heading "## Tiering is an adapter choice
+  (Phase 7)" → "## Tiering is an adapter choice". **A**: "This module no longer
+  routes by size … `build_envelope/3` no longer truncates … in two rounds" →
+  present-tense "does not route by size … does not truncate … to fit an item".
+- **`text.ex`** — **A**: "duplicated in the host's core app for Phases 1–6 …
+  Phase 7.2 (2026-08-24) converged them … 7.1 … the Phase 8 path dep now" + two
+  `steering/20…` file cites → present-tense "This module is the one home for text
+  scrubbing: a host … calls `ALLM.Pipeline.Text.scrub/1` directly … no code path
+  calls back into a host module". **Doctests preserved verbatim.**
+- **`store.ex`** — **A**: "(batch 1.C)" (×2) dropped; "the extraction plan §3.2
+  routes host reads" → "host reads route through"; "Phase 7.4 wired the three
+  `ProcessingDecision` skip branches" → present-tense "a host's `ProcessingDecision`
+  skip branches write a visible `:skipped` row". (`log_skipped/4` callback
+  rationale preserved.)
+- **`step.ex`** — **A/B**: `context` typedoc "Widened from a bare map in Phase 4
+  (D5)" → present-tense "`run_with_step_log/5` always builds this struct, so the
+  type names it". **C**: `step_type` callback example `:scrape_committee_list` →
+  `:fetch_page`.
+- **`artifacts/dynamo.ex`** — **A**: `exclusions/0` `@doc` "since Phase 8 they
+  live in DIFFERENT repos" (×2) → "they live in DIFFERENT repos" / "each host is a
+  different repo entirely"; "PHASE_1 §5.5" precedent cite dropped. (cross-repo
+  drift-guard rationale preserved.)
+- **`registry.ex`** — **C**: `{CommitteePipeline, :run}` → `{MyApp.ReportPipeline,
+  :run}` and "the host's `Runner`" → "a host's own runner"; "One SST cron schedule
+  entry" typedoc → "One cron schedule entry". **A**: "the extraction plan's
+  §3.8a/§3.8b codegen … shell/SST/stage-scraper consumers" → "a host's codegen …
+  a host's shell/deploy/stage-scraper consumers"; "extraction plan §3.8a" cite in
+  the `use` `@doc` dropped.
+- **`lock.ex`** — **A**: "batch 1.C moved it off `Advisory`'s two hardcoded
+  clauses … this package no longer carries it" → "host domain knowledge, and this
+  package does not carry it … declared on the host's registry". **C**:
+  `NarrativeGenerator`'s ~40s OpenAI-call example → "tens of seconds of model
+  calls".
+- **`store/ecto.ex`** — **C**: `committees.last_step_log_id` host FK example → "a
+  host table may carry a real Postgres FK onto `step_logs.id`"; "the four
+  migrations" → "the migrations".
+- **`artifacts/tiered.ex`** — **A**: "the hard-coded S3 residue
+  `ALLM.Pipeline.ArtifactStore` used to carry (architecture §3.6, §2.7)" → "a size
+  decision hard-coded into `ALLM.Pipeline.ArtifactStore`".
+- **`mix/tasks/allm_pipeline.names.ex`** — **C**: example JSON `"committee"` /
+  `["project","project_refresh","video"]` → `"daily_report"` /
+  `["listing","listing_refresh"]`; "the shell `stage-scraper.sh` … `sst/scraper.ts`
+  … across four runtimes" → host-neutral "the shell scripts, deploy tooling and
+  codegen … across several runtimes".
+- **`mix/tasks/allm_pipeline.nilability.ex`** — **A**: "before subphase 2.4's
+  follow-up the parse discarded all three of its elements" → present-tense "a typo
+  … fails loudly rather than exiting 0"; the dated `refsweep.py` re-derive block +
+  "(This paragraph previously claimed …)" correction + `apps` host-layout paths →
+  a NUL-safe `grep … lib test` over the package's own trees.
+
+### README (Q1 = Option A — fully host-neutral, hexdocs `main: "readme"`)
+
+Deleted the "Extracted from a production Elixir umbrella (Phases 1–8 …)"
+narrative and the entire "### The path-dep umbrella" section (named-Amesbury,
+`~/Projects/ALLM.Pipeline`, `deploy.sh`, readonly-mount specifics). The
+consumption *mechanism* stays, described generically: a host consumes it as a
+path dep or (once published) a Hex requirement, wiring the same way through
+`use ALLM.Pipeline.Registry`. Also genericized three residual host references:
+"Same images and ports as the host umbrella's stack", "Unlike the umbrella's
+devcontainer", and "Publishing does not change the host umbrella".
+
+### CHANGELOG (Q1 = Option A — carved OUT of the hard grep)
+
+**Kept** line 5's `(previously the host's :amesbury_scraper)` migration note
+(actionable consumer-migration info). **Reworded only** line 13's clause:
+"extracted from its original host umbrella (extraction plan Phases 1–8)" →
+"Initial standalone release of `ALLM.Pipeline`". The whole-surface HARD grep runs
+`--exclude=changelog.md`, so `doc/changelog.md` still carries the kept
+`:amesbury_scraper` note — intended.
+
+### Deviations
+
+- **D4 — genericized host proper nouns beyond the HARD token set.** Same shape as
+  batch A's D2. Names not in the HARD grep (`NarrativeGenerator`, `CommitteePipeline`
+  as an `entry:` MFA example — actually a HARD token, caught either way,
+  `project_refresh`/`project`, `video_summary`, `committees.last_step_log_id`,
+  `Schemas.Ordinance.fiscal_impacts`, `projects.scale`, `stage-scraper.sh`,
+  `sst/scraper.ts`, `SST`, `Runner`, `VideoSummaryPipeline`/`MeetingSummaryPipeline`)
+  were genericized or dropped under the review-lane "host-framing paraphrase"
+  obligation, not the grep.
+- **D5 — reworded present-tense `no longer` / `used to` sentences.** Several
+  sentences (`artifact_store.ex`, `artifacts.ex`, `pipeline_run.ex`,
+  `tiered.ex`, `encodable.ex`, `nilability.ex`) used the hard-banned "no longer" /
+  "used to" tokens to state *current* behaviour. Reworded to plain present tense
+  with the same meaning rather than deleted (over-strip guard).
+- **D6 — manifest omission: two un-listed files carried host-specific refs via
+  non-HARD tokens (found in code review, fixed by the orchestrator).** The design's
+  batch-A/B manifest was built from a HARD-token source grep, so it inherited that
+  grep's blind spot: `lib/allm/pipeline/schema/json_schema.ex` and
+  `lib/allm/pipeline/llm_call_log.ex` were never listed, yet their `@moduledoc`s
+  named a specific host engine function (`LLMEngine.normalize_schema/1`,
+  `LLMEngine.generate_structured/4`), a host test file
+  (`derived_schema_normalization_test.exs`), and host domain nouns
+  (`key_provisions`/`KeyProvision`) — all category-C leaks on published pages, none
+  of them HARD tokens, so the C2 hard grep AND the C2b advisory (`umbrella|host
+  application`) both missed them. This is exactly the "grep is a floor, not a
+  completeness oracle" case the design's own C1 warns about, surfaced by the
+  code-review lane (its charge for host-framing the grep can't see). Genericized in
+  place, preserving each moduledoc's technical rationale: `LLMEngine.*` → generic
+  "a host's engine" / "the host normalizer" prose (matching each file's existing
+  nearby generic phrasing at `llm_call_log.ex:6` and `json_schema.ex:90`);
+  `derived_schema_normalization_test.exs` → "a consumer repo's schema-normalization
+  test" (CLAUDE.md §1 style); `key_provisions`/`KeyProvision` → `line_items`/`LineItem`.
+  Re-verified: the host-specific identifiers are gone from `doc/*.md`, the
+  whole-surface HARD grep stays zero, `mix docs` stays warning-free, `mix precommit`
+  green (exit 0, dialyzer 0 errors). The clean-generic un-listed files (`llm.ex`
+  with `MyApp.LLMEngine`, `telemetry.ex`) and the other unswept adapters
+  (filesystem/memory/s3/noop/pipeline_metric — only cite this package's own
+  `*_test.exs`) were left correctly untouched.
+- **No behavioral / spec change**, so `agent-spec/REVIEW.md` is N/A and
+  `mix dialyzer` needed no separate run beyond precommit's.
+
+### Verification transcripts (run 2026-09-01, inside devcontainer)
+
+`doc/` is gitignored — regenerated with `mix docs`, greps run against the fresh
+output; nothing under `doc/` committed.
+
+```
+mix docs >/dev/null                                       # exit 0
+# WHOLE-surface HARD grep ($HARD from C2), CHANGELOG carved out:
+grep -rInE "$HARD" --exclude=changelog.md doc/*.md         # NO OUTPUT (grep exit 1)
+# positive control:
+grep -rIl 'Pipeline' doc/*.md | head -1                    # doc/ALLM.Pipeline.Artifacts.Dynamo.md
+# umbrella / host-application advisory (whole surface):
+grep -rInE 'umbrella|host application' doc/*.md
+#   doc/Mix.Tasks.AllmPipeline.Nilability.md:142: … this package names no host application.
+#   doc/host_wiring.md:11: Throughout, `MyApp` stands for your host application.
+# C3 zero-warning:
+mix docs 2>&1 | grep -iE 'warning|error'                   # NO OUTPUT (grep exit 1)
+```
+
+Pre-sweep the whole surface carried **72** HARD hits (all batch B) and **19**
+`umbrella` advisory lines; post-sweep the HARD grep is **zero** and **no**
+`umbrella` line survives. The two surviving advisory lines match `host
+application`, not `umbrella`, and are both justified-generic: one states a fact
+about the package (it names no host application), the other is in the
+deliberately-untouched `host_wiring.md` defining the `MyApp` convention. The
+reviewer reads them to justified-zero.
+
+### Release guard goes silent
+
+`scripts/release.exs`'s `hexdocs_history_warning/0` (its `@hexdocs_history_pattern`
++ `Path.wildcard`/`Regex`, `--exclude=changelog.md`) run standalone against the
+regenerated docs:
+
+```
+guard hit lines: 0
+```
+
+It fired on the pre-sweep tree (Subphase 1 recorded 174 hits) and is now
+**silent** on the swept tree — the positive-control → cleared arc the guard was
+designed for.
+
+### `mix precommit`
+
+Green. Per CLAUDE.md §2 (run inside the devcontainer) with
+`DATABASE_HOST=host.docker.internal DATABASE_USER=pascalrettig`.
+
+```
+DATABASE_HOST=host.docker.internal DATABASE_USER=pascalrettig mix precommit
+  ...
+  3 doctests, 600 tests, 0 failures        # no "Excluding tags" — :dynamo set ran;
+                                           #   the Text doctest (3 total) preserved and passing
+  PLT is up to date! ... Total errors: 0   # dialyzer clean
+  precommit exit: 0
+```
+
+The `[error] Refusing to … pipeline run …` log lines during `store_test` are the
+designed ownership-refusal log noise from a function body (`refuse/2`'s `Logger`
+call — not a doc, never reaches `doc/*.md`), not failures (0 failures). No
+`@spec` was touched — doc-string edits only.

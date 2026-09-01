@@ -2,7 +2,8 @@ defmodule ALLM.Pipeline.Metrics do
   @moduledoc """
   Record and query normalized pipeline metrics (the found → mapped → processed funnel).
   Emission point: a pipeline calls `record/3` at the SAME place it calls
-  `PipelineRun.complete/2` (the sole completer for umbrella/borrowed runs).
+  `PipelineRun.complete/2` — the owner is the sole completer, so metrics are
+  emitted once per run, on the owning handle.
   """
   import Ecto.Query
   require Logger
@@ -26,14 +27,14 @@ defmodule ALLM.Pipeline.Metrics do
   The SET is host domain knowledge, not framework knowledge: which pipelines
   re-scrape a complete source listing every run — and which are legitimately
   empty — is a fact about the host's sources. It is declared as
-  `alert_on_empty:` on the host's `ALLM.Pipeline.Registry` (batch 1.C moved it
-  off a hardcoded `@expects_data_pipelines` here) and resolved at runtime by
-  `ALLM.Pipeline.Config.alert_on_empty/0`. The reasons for each inclusion and
-  the one deliberate exclusion travel WITH the values, on the declaration.
+  `alert_on_empty:` on the host's `ALLM.Pipeline.Registry` and resolved at
+  runtime by `ALLM.Pipeline.Config.alert_on_empty/0`. The reasons for each
+  inclusion and any deliberate exclusion travel WITH the values, on the
+  declaration.
 
   Keyed by the run `name` (= `pipeline_metrics.pipeline_name`), a string —
-  not a cron atom; the two namespaces do not line up (extraction plan §3.8a).
-  Default is OFF for anything undeclared.
+  not a cron atom; the two namespaces do not line up. Default is OFF for
+  anything undeclared.
   """
   @spec expects_data?(String.t() | nil) :: boolean()
   def expects_data?(pipeline_name), do: pipeline_name in Config.alert_on_empty()
@@ -68,7 +69,7 @@ defmodule ALLM.Pipeline.Metrics do
   step-log row named by `metadata.step_id`.
 
   Touches only the `queue_time_ms` column — the step-log structural-identity
-  property from Phases 1-6 holds for every other column. Best-effort: a write
+  property holds for every other column. Best-effort: a write
   failure (e.g. a child task with no shared sandbox connection under test) is
   logged and swallowed so telemetry never fails a run, and the handler is not
   detached by `:telemetry` for a transient error.

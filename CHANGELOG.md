@@ -9,9 +9,8 @@ Consumer-facing configuration (wire against these):
   unset (set `config :allm_pipeline, :dynamo, table_name:` to override).
 
 Other changes:
-- Initial standalone release of `ALLM.Pipeline`, extracted from its original
-  host umbrella (extraction plan Phases 1–8): `Step` / `Executor` / `StepLog` /
-  `ArtifactStore` (DynamoDB + S3 tiered), run lifecycle ownership
+- Initial standalone release of `ALLM.Pipeline`: `Step` / `Executor` /
+  `StepLog` / `ArtifactStore` (DynamoDB + S3 tiered), run lifecycle ownership
   (`Lifecycle`), the `use ALLM.Pipeline` DSL, `use ALLM.Pipeline.LLMStep`
   on top of `allm`, and `use ALLM.Pipeline.Registry` for host wiring.
 - Add a `guides/host_wiring.md` onboarding guide (a hexdocs extra) covering

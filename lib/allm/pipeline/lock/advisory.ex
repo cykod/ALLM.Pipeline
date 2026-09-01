@@ -6,16 +6,16 @@ defmodule ALLM.Pipeline.Lock.Advisory do
   `ALLM.Pipeline.Lock.Noop` — see `ALLM.Pipeline.Lock` for
   why the lock was dropped and how to restore this one. This module is kept
   intact so the guarantee can be brought back deliberately rather than
-  reconstructed from scratch. The serialization mapping it applies is no longer
-  its own — batch 1.C moved it onto the host's `ALLM.Pipeline.Registry`
-  (`lock_keys:`); the host-side membership guard is a consumer repo's
-  registry-declared-values test, with its runner test pinning the derived
-  lock keys.
+  reconstructed from scratch. The serialization mapping it applies is not its
+  own — it is host domain knowledge, declared on the host's
+  `ALLM.Pipeline.Registry` (`lock_keys:`); a consumer's own
+  registry-declared-values test is the host-side membership guard, with its
+  runner test pinning the derived lock keys.
 
   ## Mechanism
 
   Scheduled cron runs of the same pipeline can overlap if a previous run is
-  slow (e.g. an ordinance pipeline still grinding through PDFs when the next
+  slow (e.g. a document pipeline still grinding through PDFs when the next
   weekly trigger fires). To prevent overlap on the shared Postgres database,
   each invocation acquires a session-scoped advisory lock keyed on the pipeline
   name.
@@ -88,10 +88,9 @@ defmodule ALLM.Pipeline.Lock.Advisory do
 
   WHICH pipelines must serialize is host domain knowledge — it depends on what
   external session they share and which rows they replace — so the mapping is
-  declared as `lock_keys:` on the host's `ALLM.Pipeline.Registry` (batch 1.C
-  moved it off two hardcoded clauses here) and resolved at runtime by
-  `ALLM.Pipeline.Config.lock_keys/0`. The per-pair reasons travel WITH the
-  values, on that declaration.
+  declared as `lock_keys:` on the host's `ALLM.Pipeline.Registry` and resolved
+  at runtime by `ALLM.Pipeline.Config.lock_keys/0`. The per-pair reasons travel
+  WITH the values, on that declaration.
 
   An undeclared pipeline maps to itself, so it gets its own key and runs
   concurrently with everything else.

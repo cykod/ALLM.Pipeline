@@ -23,7 +23,7 @@ defmodule ALLM.Pipeline.Lock do
 
   The advisory lock is *session*-scoped, so it required pinning ONE Postgres
   connection (via `Repo.checkout/2`) for the ENTIRE run. During long LLM-bound
-  steps (e.g. `NarrativeGenerator`'s ~40s of OpenAI calls) that pinned
+  steps (tens of seconds of model calls) that pinned
   connection sits idle at the protocol level, and a checked-out connection is
   NOT kept warm by DBConnection's idle ping — so if anything reaps the idle
   socket (an RDS `idle_session_timeout`, a network idle timeout) the run's
@@ -40,9 +40,9 @@ defmodule ALLM.Pipeline.Lock do
   becomes a real problem.
 
   The serialization mapping (which names must share a key) is **host domain
-  knowledge, and this package no longer carries it**: batch 1.C moved it off
-  `Advisory`'s two hardcoded clauses onto the host's `ALLM.Pipeline.Registry`
-  (`lock_keys:`), where `ALLM.Pipeline.Config.lock_keys/0` reads it and
+  knowledge, and this package does not carry it**: it is declared on the host's
+  `ALLM.Pipeline.Registry` (`lock_keys:`), where
+  `ALLM.Pipeline.Config.lock_keys/0` reads it and
   `Advisory.canonical_lock_name/1` applies it. A host declares it on its own
   `ALLM.Pipeline.Registry`.
   """

@@ -24,17 +24,17 @@ defmodule ALLM.Pipeline.PipelineRun do
       below.
     * A run **loaded from the database** (`get/1`, `get_with_steps/1`) carries
       no token, so a read path can never stamp a run terminal.
-    * A **borrowed** run — an umbrella lending its run to an inner pipeline via
-      the `:pipeline_run` opt — is passed through `borrow/1` at the receiving
+    * A **borrowed** run — an outer pipeline lending its run to an inner pipeline
+      via the `:pipeline_run` opt — is passed through `borrow/1` at the receiving
       boundary (`Executor.borrowed_run/1`), which strips the token. An inner
       `complete/2` (or `fail/2`) is then a detectable `{:error, :not_run_owner}`
       instead of silently stamping the run terminal mid-loop and clobbering the
-      umbrella's aggregate metadata with the last item's.
+      owner's aggregate metadata with the last item's.
 
-  As of 2026-08-13 the guard is **inert on every live path**: all 28
-  `fail`/`fail_pipeline_run` and 17 `complete` sites hold a handle that came
-  straight from `create/3`. It is a membership guard against the next call site,
-  not a fix for a current one.
+  The guard is a **membership guard against the next call site**, not a fix for a
+  current one: every live `fail`/`fail_pipeline_run` and `complete` site holds a
+  handle that came straight from `create/3`, so none trips it today. It is what
+  keeps the next borrowed or re-loaded handle from stamping a run terminal.
 
   ## One mint implementation, two deliberate entry points
 
@@ -49,16 +49,16 @@ defmodule ALLM.Pipeline.PipelineRun do
       open in `.work/HANDOFF.md`).
 
   Do not add a third: a re-mint hidden inside a function whose name does not say
-  "I am taking ownership" (`resume/2` was the near miss — user decision,
-  2026-08-13) turns the ownership story back into a convention. `borrow/1` is
-  the inverse and the only other writer of the field.
+  "I am taking ownership" turns the ownership story back into a convention.
+  `borrow/1` is the inverse and the only other writer of the field.
 
   The token is data, not a lock: it detects the borrowed-run mistake, which is
   the one that actually happens. It does not (and cannot) detect an orchestrator
   process that dies without terminating the run at all — that leaves a run at
   `status = running`, and needs a watchdog or sweeper, not a token. That sweeper
   takes over stranded runs via `assume_ownership/1` rather than relying on
-  `fail/2` being open by omission — which it no longer is.
+  `fail/2` being open by omission — `fail/2` is ownership-guarded like the other
+  terminal writers.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -183,8 +183,8 @@ defmodule ALLM.Pipeline.PipelineRun do
   Named rather than inlined on purpose: a re-mint is a real transfer of the
   right to stamp a run terminal, so it should be greppable and appear in a diff.
   **Do not call it to silence `{:error, :not_run_owner}`** — on a *borrowed*
-  umbrella handle it re-creates precisely the mid-loop clobber the token exists
-  to detect. Ask first whether this caller really is the one that should finish
+  handle it re-creates precisely the mid-loop clobber the token exists to
+  detect. Ask first whether this caller really is the one that should finish
   the run.
   """
   @spec assume_ownership(t()) :: t()
@@ -202,8 +202,8 @@ defmodule ALLM.Pipeline.PipelineRun do
   completion token.
 
   Called at the borrowed-run boundary (`Executor.borrowed_run/1`) so an inner
-  pipeline handed an umbrella's run can log steps under it but cannot complete
-  it. See the moduledoc.
+  pipeline handed an outer pipeline's run can log steps under it but cannot
+  complete it. See the moduledoc.
   """
   @spec borrow(t()) :: t()
   def borrow(%__MODULE__{} = pipeline_run), do: %{pipeline_run | completion_token: nil}
@@ -231,20 +231,19 @@ defmodule ALLM.Pipeline.PipelineRun do
   Mark a pipeline run as successfully completed.
 
   Requires an **owning** handle (see the moduledoc). A handle with no completion
-  token — a borrowed umbrella run, or a run re-loaded from the database —
-  returns `{:error, :not_run_owner}` and writes nothing.
+  token — a borrowed run, or a run re-loaded from the database — returns
+  `{:error, :not_run_owner}` and writes nothing.
 
-  It logs at `:error` as well as returning, because almost every call site today
+  It logs at `:error` as well as returning, because almost every call site
   discards this function's return value (`PipelineRun.complete(run, stats)` as a
   statement); the log line, not the tuple, is what surfaces the mistake in a
   real run.
 
-  Deliberately NOT a raise: the borrowed-run idiom is live in production
-  (`VideoSummaryPipeline` lends its umbrella run to `MeetingSummaryPipeline`),
-  and turning a wrong-but-working path into a crash would trade a metadata bug
-  for an outage. Deliberately not a silent no-op either: that is the
-  "first-write-wins" idempotency fix the design doc rejects (§2.4), which only
-  swaps which pipeline's metadata is lost.
+  Deliberately NOT a raise: the borrowed-run idiom is live (an outer pipeline
+  lends its run to an inner one), and turning a wrong-but-working path into a
+  crash would trade a metadata bug for an outage. Deliberately not a silent
+  no-op either: that is a "first-write-wins" idempotency fix that only swaps
+  which pipeline's metadata is lost.
   """
   @spec complete(t(), map()) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()} | {:error, :not_run_owner}
@@ -343,11 +342,11 @@ defmodule ALLM.Pipeline.PipelineRun do
   ## Options
 
   - `:status` / `:trigger` - exact match
-  - `:name` - **exact** match on the pipeline slug (`"video_summary"`). Callers
+  - `:name` - **exact** match on the pipeline slug (`"daily_report"`). Callers
     that assert on a specific pipeline rely on this NOT matching siblings such as
-    `"video_summary_single"`.
-  - `:name_contains` - case-insensitive **substring** match, for the review UI's
-    free-text search box (`"video"` matches `video_listing`, `video_summary`, …)
+    `"daily_report_single"`.
+  - `:name_contains` - case-insensitive **substring** match, for a review UI's
+    free-text search box (`"report"` matches `report_listing`, `daily_report`, …)
   - `:limit` / `:offset` - pagination
 
   Ordered newest-first. `inserted_at` alone is not a total order (a batch can

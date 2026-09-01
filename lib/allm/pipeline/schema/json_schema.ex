@@ -105,15 +105,14 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   compliance is the author's responsibility**, and the compiler will not check
   it.
 
-  The consequence is a divergence, not a production defect: the host's
-  `LLMEngine.normalize_schema/1` runs unconditionally inside
-  `generate_structured/4`, so the model still receives a repaired, compliant
-  schema. What is lost is this module's headline guarantee — that a malformed
-  wire contract is a *compile* error rather than something a downstream
-  normalizer quietly fixes. Both halves are pinned: the package test asserts an
-  object-shaped literal is emitted untouched, and the host-side
-  `derived_schema_normalization_test.exs` asserts the normalizer is what repairs
-  it.
+  The consequence is a divergence, not a production defect: a host's engine
+  normalizes the schema unconditionally inside its `generate_structured/4`
+  path, so the model still receives a repaired, compliant schema. What is lost
+  is this module's headline guarantee — that a malformed wire contract is a
+  *compile* error rather than something a downstream normalizer quietly fixes.
+  Both halves are pinned: the package test asserts an object-shaped literal is
+  emitted untouched, and a consumer repo's schema-normalization test asserts
+  the host normalizer is what repairs it.
 
   ## Nested schemas
 
@@ -124,8 +123,8 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
   Resolution expands the alias against the *using* module's environment.
   `Module.concat/1` on the raw AST parts is **not** sufficient: the stored type
   AST is unexpanded, and nested schemas are declared inside their parent and
-  referenced by short alias (`field(:key_provisions, [KeyProvision.t()])`), so
-  naive resolution yields `Elixir.KeyProvision` — a module that does not exist,
+  referenced by short alias (`field(:line_items, [LineItem.t()])`), so
+  naive resolution yields `Elixir.LineItem` — a module that does not exist,
   whose absence would turn a perfectly good nested schema into an unmappable
   type.
 

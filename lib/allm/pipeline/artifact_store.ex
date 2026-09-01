@@ -29,15 +29,15 @@ defmodule ALLM.Pipeline.ArtifactStore do
   - Memory: `memory://artifact_id`
   - S3: `s3://bucket_name/key`
 
-  ## Tiering is an adapter choice (Phase 7)
+  ## Tiering is an adapter choice
 
-  This module no longer routes by size or special-cases an `s3://` URL. Every
+  This module does not route by size or special-case an `s3://` URL. Every
   URL is handed to `Artifacts.impl/0`, which for the production wiring is
   `ALLM.Pipeline.Artifacts.Tiered` — it measures the post-encode size and routes
   small→DynamoDB / large→S3 on `put/4`, and dispatches `fetch`/`delete`/`exists?`
-  by URL scheme. An oversize artifact now has a real home, which is why
-  `ALLM.Pipeline.Executor.build_envelope/3` no longer truncates its LLM envelope
-  in two rounds.
+  by URL scheme. An oversize artifact has a real home, which is why
+  `ALLM.Pipeline.Executor.build_envelope/3` does not truncate its LLM envelope
+  to fit an item.
 
   ## The gunzip is bounded (memory-safety)
 

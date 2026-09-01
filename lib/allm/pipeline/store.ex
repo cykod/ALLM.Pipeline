@@ -46,12 +46,12 @@ defmodule ALLM.Pipeline.Store do
   skip path), `PipelineRun.list/1`,
   `count/1`, `get_with_steps/1` and the lineage/query functions are absent for
   a different reason: nothing in the framework calls them today (their callers
-  are the host's review UI), and the extraction plan §3.2 routes host reads
-  through a separate `ALLM.Pipeline.Query`. Add a callback when a framework
-  caller appears, not before — which is exactly what happened for the CREATE
-  skip path: Phase 7.4 wired the three `ProcessingDecision` skip branches to
-  write a visible `:skipped` row, so `StepLog.create_skipped/4` earned the
-  `log_skipped/4` callback below.
+  are a host's review UI), and host reads route through a separate
+  `ALLM.Pipeline.Query`. Add a callback when a framework caller appears, not
+  before — which is exactly what the CREATE skip path did: a host's
+  `ProcessingDecision` skip branches write a visible `:skipped` row through
+  `StepLog.create_skipped/4`, which is why it earned the `log_skipped/4`
+  callback below.
 
   ## Configuration
 
@@ -189,7 +189,7 @@ defmodule ALLM.Pipeline.Store do
   Resolved at RUNTIME, like every config read in this package;
   `ALLM.Pipeline.Registry` is what fixes WHICH module at the host's compile
   time. `ALLM.Pipeline.Executor` dispatches every run/step write and read
-  through it (batch 1.C), except `PipelineRun.borrow/1` and
+  through it, except `PipelineRun.borrow/1` and
   `assume_ownership/1` — see "Not callbacks" above.
   """
   @spec impl() :: module()

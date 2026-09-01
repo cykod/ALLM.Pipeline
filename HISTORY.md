@@ -1,3 +1,21 @@
+## [DOC] Purge history from batch-B moduledocs, README, CHANGELOG
+*Tuesday, September 1st at 1am*
+Subphase 3 (final sweep) of the hexdocs overhaul: apply the C1 rule to the 
+remaining ~20 batch-B moduledocs, host-neutralize the README (the hexdocs main 
+page — drop the Phases 1-8 narrative and the path-dep umbrella section, keep 
+the consumption mechanism generic), and reword the CHANGELOG's extraction-plan 
+clause while keeping its :amesbury_scraper migration note. Also closes a 
+manifest omission (deviation D6): two files the design's HARD-token source grep 
+never listed — json_schema.ex and llm_call_log.ex — still named a host 
+engine function, a host test file, and host domain nouns in their moduledocs; 
+the code-review lane caught them and they were genericized in place. After this 
+batch the whole-surface banned-pattern grep over doc/*.md (changelog carved 
+out) returns zero, the release guard goes silent, ExDoc emits zero warnings, 
+the ALLM.Pipeline.Text doctest is preserved, and mix precommit is green (600 
+tests, dialyzer clean). No behavioral code.
+
+---
+
 ## [DOC] Purge development history from batch-A moduledocs
 *Tuesday, September 1st at 12am*
 Subphase 2 of the hexdocs overhaul: apply the C1 rule to the 11 batch-A 

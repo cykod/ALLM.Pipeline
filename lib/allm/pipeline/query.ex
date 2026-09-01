@@ -4,12 +4,10 @@ defmodule ALLM.Pipeline.Query do
 
   Every function here delegates to an existing implementation on `PipelineRun`,
   `StepLog` or `ArtifactStore`. The value is a single, `@spec`'d, host-facing
-  module instead of hosts reaching into three schemas directly — the host cutover
-  (Phase 7.2) routes a host app's provenance/lineage reads through this
-  module rather than hand-writing raw `"step_logs"` / `"pipeline_runs"` queries to
-  avoid inverting the host->package dependency (a dependency that, since
-  Phase 7.1, the host's core app may legitimately declare — an in-umbrella dep
-  then, the Phase 8 path dep now).
+  module instead of hosts reaching into three schemas directly: a host app
+  routes its provenance/lineage reads through this module rather than
+  hand-writing raw `"step_logs"` / `"pipeline_runs"` queries, which keeps the
+  host depending on the package and never the reverse.
 
   ## Read-only by contract
 
@@ -35,8 +33,8 @@ defmodule ALLM.Pipeline.Query do
 
   Returns a **map**, deliberately not a `{run_id, name, step_type}` tuple: a map
   lets a future field be added without breaking callers. This is the host
-  provenance-attribution read path (`Government.resolve_step_log/1`, retired onto
-  this in 7.2).
+  provenance-attribution read path — a host resolves a step log's identity
+  through here rather than joining the two schemas itself.
   """
   @spec resolve_step_log(Ecto.UUID.t() | nil) ::
           %{run_id: Ecto.UUID.t(), pipeline_name: String.t(), step_type: String.t()} | nil
@@ -57,11 +55,10 @@ defmodule ALLM.Pipeline.Query do
   (nearest) step's `llm_artifact_url`, or `nil` when none is found within
   `max_depth` hops.
 
-  The depth cap is a **parameter**, not a package constant — the host's
-  `@llm_lineage_max_depth` stays host policy and is passed in (7.2). `max_depth`
+  The depth cap is a **parameter**, not a package constant — how deep to walk is
+  host policy and is passed in. `max_depth`
   of `0` returns `nil` without examining any step; `max_depth` of `n` examines
-  the steps at distance `0..n-1` from `step_log_id`, matching the host's original
-  recursive walk exactly.
+  the steps at distance `0..n-1` from `step_log_id`.
 
   The upward traversal reuses `StepLog.build_lineage_tree/1`'s recursive CTE
   rather than carrying a second `input_step_id` walker in the package (one

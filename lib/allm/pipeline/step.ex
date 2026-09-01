@@ -56,16 +56,16 @@ defmodule ALLM.Pipeline.Step do
   @typedoc """
   What a step receives as its first argument: an `ALLM.Pipeline.Context` struct.
 
-  Widened from a bare map in Phase 4 (D5). It always WAS that struct —
-  `ALLM.Pipeline.Executor.run_with_step_log/5` has only ever built one — but the
-  type said `%{pipeline_run: …, step_log: …}`, which is both weaker and, since
-  `step_log` became nilable for escape-hatch bodies, wrong. A struct is a map,
-  so this narrows nothing at runtime and is dialyzer-visible only.
+  `ALLM.Pipeline.Executor.run_with_step_log/5` always builds this struct, so the
+  type names it rather than a bare `%{pipeline_run: …, step_log: …}` map — which
+  is both weaker and, because `step_log` is nilable for escape-hatch bodies,
+  wrong. A struct is a map, so this narrows nothing at runtime and is
+  dialyzer-visible only.
   """
   @type context :: ALLM.Pipeline.Context.t()
   @type execute_result :: {:ok, output :: struct()} | {:error, reason :: term()}
 
-  @doc "The step type identifier (e.g., :scrape_committee_list)"
+  @doc "The step type identifier (e.g., :fetch_page)"
   @callback step_type() :: atom()
 
   @doc "The struct module for input (plain Elixir struct with typespecs)"

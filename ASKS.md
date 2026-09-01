@@ -50,3 +50,5 @@
 2026-09-01 00:27 [FIX] Fix issues from DOC_UPDATES sub1 review set (code/security/design/functional); only F1 Medium actionable
 
 [MILE] tue 9/1 12am - Committed hexdocs history-purge rule (agent-spec/DOCS.md), publish-time guard in release.exs, and CLAUDE.md/CODE_REVIEW.md pointers (Subphase 1)
+
+[MILE] tue 9/1 12am - Purged development-phase history and consumer names from 11 batch-A moduledocs, preserving current-constraint rationale (Subphase 2)

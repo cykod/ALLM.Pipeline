@@ -2,8 +2,8 @@ defmodule ALLM.Pipeline.Artifacts.Tiered do
   @moduledoc """
   A size-routing `ALLM.Pipeline.Artifacts` adapter — small artifacts go to one
   backend, large ones to another. It is what makes the tier list an adapter
-  *choice* rather than the hard-coded S3 residue `ALLM.Pipeline.ArtifactStore`
-  used to carry (architecture §3.6, §2.7).
+  *choice* rather than a size decision hard-coded into
+  `ALLM.Pipeline.ArtifactStore`.
 
   The canonical wiring: DynamoDB for what fits an item, S3 for what does not.
 

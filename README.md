@@ -4,12 +4,11 @@ A step-based LLM pipeline framework for Elixir: typed steps with persistent
 step logs, artifact lineage (DynamoDB/S3-tiered), run lifecycle ownership, and
 a declarative pipeline DSL (`use ALLM.Pipeline`).
 
-Extracted from a production Elixir umbrella (Phases 1–8 of the ALLM pipeline
-extraction plan), which is currently its sole consumer — it consumes this repo
-as a path dependency. The framework is host-neutral and onboarding-ready: a new
-host wires in through `use ALLM.Pipeline.Registry` following the
-[host-wiring guide](guides/host_wiring.md). Publishable to Hex as `allm_pipeline`
-via `scripts/release.exs` (see "Releasing to Hex"); not yet published.
+The framework is host-neutral and onboarding-ready: a host wires in through
+`use ALLM.Pipeline.Registry` following the
+[host-wiring guide](guides/host_wiring.md). It can be consumed as a path
+dependency or published to Hex as `allm_pipeline` via `scripts/release.exs`
+(see "Releasing to Hex").
 
 ## What's here
 
@@ -61,8 +60,8 @@ docker compose up -d                       # DynamoDB Local :4028 + MinIO :4026 
 docker compose --profile postgres up -d    # …plus Postgres :5432 if the host has none
 ```
 
-Same images and ports as the host umbrella's stack — run one or the other;
-if the umbrella's is already up, this suite just uses it.
+If another service stack on the same images and ports is already up, this suite
+just uses it — run one or the other.
 
 ### Devcontainer
 
@@ -72,9 +71,8 @@ The service stack runs on the **host** daemon (`docker compose up -d` from
 inside the container publishes on the host) and is reached back through
 `host.docker.internal` — `containerEnv` presets `DATABASE_HOST`,
 `DYNAMODB_ENDPOINT` and `MEDIA_ENDPOINT` accordingly, with
-`DATABASE_USER=postgres` matching the compose `postgres` profile. Unlike the
-umbrella's devcontainer, this repo is the workspace (read-write), so
-`mix test` and `mix precommit` run inside it.
+`DATABASE_USER=postgres` matching the compose `postgres` profile. This repo is
+the workspace (read-write), so `mix test` and `mix precommit` run inside it.
 
 ## Gates
 
@@ -115,8 +113,8 @@ schema-parity check first). Hex auth is `~/.hex/hex.config` per maintainer
 the file in or set `HEX_API_KEY`). Hotfix runbook and co-maintainer
 onboarding are in the script's header.
 
-Publishing does not change the host umbrella, which consumes this repo as a
-path dep until it opts into `{:allm_pipeline, "~> X.Y"}`.
+Publishing does not change a path-dependency consumer, which keeps consuming
+this repo as a path dep until it opts into `{:allm_pipeline, "~> X.Y"}`.
 
 ## Host consumption
 
@@ -126,13 +124,7 @@ consumers: start with the [host-wiring guide](guides/host_wiring.md)**, which
 walks through the registry declaration, the optional `llm:` seam, adopting the
 production DDL, provisioning the artifact backends, and the test-suite pattern.
 
-### The path-dep umbrella
-
-The first consumer, an internal umbrella, consumes this repo as
-`{:allm_pipeline, path: ...}` — sibling checkout at `~/Projects/ALLM.Pipeline`
-on the host, readonly bind mount at `/workspaces/ALLM.Pipeline` in its
-devcontainer (the mount appears only after a container rebuild — see the
-umbrella's `CLAUDE.md` on devcontainer declarations), and a vendored copy
-staged by its `scripts/deploy.sh` for production Docker builds. Inside that
-devcontainer this suite is **not runnable** (readonly mount — `_build` can't be
-written); run it on the host.
+A host may consume the framework as a path dependency
+(`{:allm_pipeline, path: ...}`) or, once published, as a Hex requirement
+(`{:allm_pipeline, "~> X.Y"}`). The wiring through `use ALLM.Pipeline.Registry`
+is the same either way.

@@ -10,10 +10,6 @@ defmodule ALLM.Pipeline.Config do
 
   ## This module is permanent by design — `Store` does not replace it
 
-  _(Decided in batch 1.B, 2026-08-14. This section previously framed the module
-  as temporary until the registry landed. It is not, and the two options were
-  weighed explicitly — see `2026-08-10_ALLM_PIPELINE_PHASE_1.md` §5.1.)_
-
   The repo is a **package-level** collaborator, not an adapter-local one. Four
   modules need it and only two of them are behind `ALLM.Pipeline.Store`:
 
@@ -37,11 +33,10 @@ defmodule ALLM.Pipeline.Config do
 
   ## What the registry changes, and what it does not
 
-  The extraction plan's §3.3 puts store / artifacts / lock module wiring on an
-  `ALLM.Pipeline.Registry` the host `use`s, resolved at compile time, alongside
-  a top-level `repo:` declaration. That landed in batch 1.C, and it is the
-  thing that FEEDS this key — it did not become a second way to read it, and
-  `repo/0` stays the package's only accessor (`ALLM.Pipeline.Registry`
+  `ALLM.Pipeline.Registry` — the compile-time declaration a host `use`s — puts
+  store / artifacts / lock module wiring alongside a top-level `repo:`
+  declaration. It is the thing that FEEDS this key — it is not a second way to
+  read it, and `repo/0` stays the package's only accessor (`ALLM.Pipeline.Registry`
   generates no `repo/0`; `behaviours_test.exs` pins that exactly one module in
   the package exposes one). Adapters keep resolving *their own values* (table
   names, endpoints, roots) at runtime via `Application.get_env`, under
@@ -50,19 +45,19 @@ defmodule ALLM.Pipeline.Config do
 
   ## The two domain collections
 
-  `alert_on_empty/0` and `lock_keys/0` resolve host **domain knowledge** the
-  framework used to carry as hardcoded literals (extraction plan §1.3c): the
+  `alert_on_empty/0` and `lock_keys/0` resolve host **domain knowledge** — the
   set of run names for which an empty scrape is an alert, and the pipelines
-  that must collapse to one serialization key. Both moved onto the registry in
-  batch 1.C. They read the same way everything else here does, and both default
+  that must collapse to one serialization key. Both are host facts, not
+  framework facts, so both are declared on the host's registry. They read the
+  same way everything else here does, and both default
   to empty so a host with no registry gets the neutral behaviour (nothing
   alerts on empty; every pipeline gets its own lock key) rather than a raise —
   unlike `repo/0`, which has no neutral default because there is nothing to
   persist through.
 
   An *absent* value is therefore neutral, but a **wrongly-shaped** one raises
-  here exactly as `repo/0` does, naming the key and the package (added by the
-  Phase 1 polish pass). The registry validates its own options, so this guard
+  here exactly as `repo/0` does, naming the key and the package. The registry
+  validates its own options, so this guard
   is for the direct-config route `repo/0`'s `@doc` documents as supported —
   where both keys previously failed open: a bad `alert_on_empty` degraded to a
   permanent `false` from `Metrics.expects_data?/1`, and `lock_keys` in the
@@ -184,7 +179,7 @@ defmodule ALLM.Pipeline.Config do
 
   A host configuring the key directly — which `repo/0`'s `@doc` documents as
   supported for a registry-less host — naturally writes the **keyword** form
-  `lock_keys: [project_refresh: :project]`, the exact shape the registry takes.
+  `lock_keys: [some_refresh: :some]`, the exact shape the registry takes.
   That is accepted and normalized here rather than reaching
   `Advisory.canonical_lock_name/1` as a `BadMapError` from `Map.get/3`, far
   from the cause. Anything else raises naming the key and both shapes.

@@ -55,18 +55,18 @@ defmodule ALLM.Pipeline.Schema do
   nothing on their own; `ALLM.Pipeline.Schema.JsonSchema` reads them.
 
   `values:` takes a compile-time **expression**, not only a literal list —
-  `field/3` `unquote`s its options, so `values: Schemas.Ordinance.fiscal_impacts()`
+  `field/3` `unquote`s its options, so `values: MyApp.Schemas.impacts()`
   is evaluated at the using module's compile time and validated as the resolved
-  list. That is deliberate: the real vocabularies in this project are accessor
-  calls with a single owner, and requiring a literal would prescribe a copy of
-  a list that already has one. The list must be non-empty and homogeneous —
+  list. That is deliberate: a vocabulary is often an accessor call with a single
+  owner, and requiring a literal would prescribe a copy of a list that already
+  has one. The list must be non-empty and homogeneous —
   all atoms or all binaries — and may not contain `nil`, because a `null`
   member is **derived** from the field's nilability, never declared
   (`is_atom(nil)` is `true`, so a bare list-of-atoms check would wave it
   through).
 
-  Strings are the common case: `projects.scale` is a string column, so its
-  field is `String.t()` with a string `values:` and no atom coercion. Atom
+  Strings are the common case: a field backed by a string column is
+  `String.t()` with a string `values:` and no atom coercion. Atom
   coercion is a property of the declared **type** (`atom()`), not of `values:`.
 
   `wire: false` marks a field the harness populates rather than the model — a
@@ -136,19 +136,20 @@ defmodule ALLM.Pipeline.Schema do
 
   The value is replaced by the literal string `"[REDACTED]"` when
   `ALLM.Pipeline.StepLog` serializes the struct — construction-time scrubbing
-  would destroy the value the field exists to carry. Four paths were therefore
-  **not** covered; subphase 2.3 closed the second in code and **three** remain
-  uncovered, none of which the flag can reach:
+  would destroy the value the field exists to carry. Because the flag fires only
+  at serialization, four paths lie outside its reach. One (the Executor's
+  validation error messages) is closed in code; **three** remain uncovered, none
+  of which the flag can reach:
 
   1. **`artifact_content/1`** — an opaque binary the Step builds itself. The rule
      that replaces coverage is documentation: *a `redact: true` field must not be
      included in `artifact_content/1`.*
   2. ~~**`ALLM.Pipeline.Executor`'s validation error messages**~~ — **closed in
-     subphase 2.3.** They used to `inspect/1` the rejected term into
-     `step_logs.error` and the logs; `Executor`'s `render_shape/1` now renders
-     the term's type and key NAMES only, never its values. Listed rather than
-     deleted because it is the one of the four that a code fix could reach, and
-     the reason it could is that the Executor owns the whole message.
+     code.** Rather than `inspect/1`-ing the rejected term into `step_logs.error`
+     and the logs, `Executor`'s `render_shape/1` renders the term's type and key
+     NAMES only, never its values. Listed rather than deleted because it is the
+     one of the four that a code fix could reach, and the reason it could is that
+     the Executor owns the whole message.
   3. **`ALLM.Pipeline.Executor.log_summary/4`**, which writes a caller-supplied
      map straight to `output_data` without passing through the serializer at all.
   4. **`Inspect` and exception messages.** DSL structs derive no `Inspect`
@@ -239,10 +240,9 @@ defmodule ALLM.Pipeline.Schema do
   ## Not implemented here
 
   The coercion half of `values:` and `wire:` — reading a model's parsed
-  payload back into this struct — belongs to `ALLM.Pipeline.LLMStep`
-  (extraction plan Phase 3.2), which reads `__allm_schema__(:values)` and
-  `__allm_schema__(:wire)`. This module records the declaration; it never
-  parses a payload.
+  payload back into this struct — belongs to `ALLM.Pipeline.LLMStep`, which
+  reads `__allm_schema__(:values)` and `__allm_schema__(:wire)`. This module
+  records the declaration; it never parses a payload.
   """
 
   @use_options [:json, :json_schema]

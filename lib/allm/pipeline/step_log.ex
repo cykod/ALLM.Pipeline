@@ -40,8 +40,8 @@ defmodule ALLM.Pipeline.StepLog do
 
   `Ecto.Changeset` is the one declared divergence from `ALLM.Pipeline.Encodable`'s
   leaf rules (`Encodable` renders it as `%{"changeset_errors" => …}`; this module
-  treats it as an ordinary struct), and subphase 2.2's tuple clause turned that
-  divergence from a loud failure into a quiet write. A changeset now flattens to
+  treats it as an ordinary struct), and the serializer's tuple clause makes that
+  divergence a quiet write rather than a loud failure. A changeset flattens to
   all **fifteen** `defstruct` keys and persists `params`, `data`, `types`,
   `changes` and `errors` **in full** — so a changeset built from user or LLM
   input writes those raw params into `input_data` / `output_data`, where
@@ -50,45 +50,25 @@ defmodule ALLM.Pipeline.StepLog do
   `ALLM.Pipeline.Encodable`'s moduledoc documents for its own `is_struct`
   widening, mirrored here because `StepLog` is the path that reaches a row.
 
-  The quiet write is **not** total, which is the trap: measured 2026-08-14, a
-  changeset that has been through `Ecto.Changeset.prepare_changes/2` carries
-  anonymous functions in `:prepare`, which reach `Jason` unchanged and still
-  raise `Protocol.UndefinedError` on the un-rescued `log_start/4` path. So the
-  same type both writes and raises depending on how it was built.
+  The quiet write is **not** total, which is the trap: a changeset that has been
+  through `Ecto.Changeset.prepare_changes/2` carries anonymous functions in
+  `:prepare`, which reach `Jason` unchanged and still raise
+  `Protocol.UndefinedError` on the un-rescued `log_start/4` path. So the same
+  type both writes and raises depending on how it was built.
 
-  **No field DECLARES a changeset type today**, and that is the exact scope of
-  the claim — the sweep is type-declaration-based while the hazard is not.
-  Re-derive it NUL-safely and across both extensions (2026-08-14):
+  **No field DECLARES a changeset type**, and that is the exact scope of the
+  claim — the check is type-declaration-based while the hazard is not. What no
+  such check can see is a field declared `term()`, `map()` or `[map()]` that
+  *holds* a changeset at runtime — which is exactly how one would arrive, since
+  Step Outputs routinely carry `term()`-typed result collections. That half is
+  not closed by any grep: it depends on which loaders actually surface a
+  changeset, a property of the callers rather than of this module, and a new
+  `term()`-typed Step Output can change it without touching anything here.
 
-      python3 scripts/refsweep.py 'field\\(.*Changeset' apps scripts steering \\
-        --include '*.ex' --include '*.exs' --format hits
-
-  → **1 hit, and it is this moduledoc**, at the line just below quoting the
-  superseded command `grep -rna "field(.*Changeset" apps/ --include=*.ex` (which
-  could not see `.exs` at all). Real declarations: **zero**. Read the expected
-  count as "every hit is prose", not as a number — this paragraph supplies its
-  own match, so a bare `→ 1` would stop meaning anything the moment someone
-  rewords it.
-
-  What no such sweep can see is a field declared `term()`, `map()` or
-  `[map()]` that *holds* a changeset at runtime — which is exactly how one would
-  arrive, since Step Outputs routinely carry `term()`-typed result collections.
-  That half is not closed by any grep. It was closed once, by tracing, and the
-  trace is **not re-derivable from this file**: subphase 2.3's security review
-  (`.work/security-reviews/2026-08-14-allm-p2c.md`, Informational 4) walked the
-  five loaders and found a changeset surfacing only as a failure return (→
-  `normalize_error/1`, which since Phase 5.10 renders it params-free via
-  `Encodable.encode/1`'s `changeset_errors` leaf) and via `Encodable.encode/1`
-  (→ `changeset_errors` only),
-  so none reaches this serializer. That is a **dated observation about the
-  loaders**, not a property of this module, and a new `term()`-typed Step Output
-  can falsify it without touching anything here.
-
-  Which is why the standing fix is not a wider sweep: give `serialize_struct/2`
+  Which is why the standing fix is not a wider check: give `serialize_struct/2`
   an `%Ecto.Changeset{}` clause mirroring `Encodable`'s `changeset_errors` leaf.
   It closes the silent write, the `prepare_changes/2` raise, and the declared
-  divergence at once, and it needs no dated evidence. Tracked as an open item in
-  `.work/HANDOFF.md`.
+  divergence at once. Tracked as an open item in `.work/HANDOFF.md`.
   """
   use Ecto.Schema
   import Ecto.Changeset
@@ -332,13 +312,13 @@ defmodule ALLM.Pipeline.StepLog do
   Unlike `log_skipped/2` (which UPDATES a row a step already started), this is a
   CREATE path: a `*ProcessingDecision` skip fires before any step log exists, so
   there is no `%StepLog{}` and no `started_at` to diff against — `started_at` and
-  `completed_at` are both `now`, giving `duration_ms: 0`. Promoted to a `Store`
-  callback and wired to the three `ProcessingDecision` skip branches in Phase 7.4
-  so a skip is a queryable `:skipped` row (counted by `get_pipeline_stats/1`)
-  rather than the invisible `{:skipped, …}` return it was through Phase 6.
+  `completed_at` are both `now`, giving `duration_ms: 0`. Exposed as a `Store`
+  callback and wired to a host's `ProcessingDecision` skip branches so a skip is
+  a queryable `:skipped` row (counted by `get_pipeline_stats/1`) rather than an
+  invisible `{:skipped, …}` return.
 
-  `reason` is an arbitrary term (the pipelines pass a `{scraper_identifier,
-  reason}` payload). It is made jsonb-safe by `Encodable.encode/1` — which
+  `reason` is an arbitrary term (a host passes a `{scraper_identifier, reason}`
+  payload). It is made jsonb-safe by `Encodable.encode/1` — which
   flattens the tuple to a list and scrubs binaries — and stored under
   `output_data["reason"]` (the audit-artifact column, as `log_summary/4` uses,
   NOT `error`: a skip is a benign decision, not a failure). `input_step_id`
@@ -400,8 +380,8 @@ defmodule ALLM.Pipeline.StepLog do
   Create a successful, zero-duration step that carries structured `output_data`.
 
   Unlike `log_section/3` (which only holds a title for visual grouping), this
-  records a real audit artifact — e.g. the video↔meeting match-decision log —
-  that the pipeline-review UI renders. `output_data` must be JSON-serializable.
+  records a real audit artifact — e.g. a match-decision log — that a
+  pipeline-review UI renders. `output_data` must be JSON-serializable.
   """
   @spec log_summary(Ecto.UUID.t(), String.t(), map(), Ecto.UUID.t() | nil) ::
           {:ok, t()} | {:error, Ecto.Changeset.t()}
@@ -447,10 +427,9 @@ defmodule ALLM.Pipeline.StepLog do
   succeeded". Use this — not `get_pipeline_steps/1` + `Enum.group_by/2` — when
   the answer is a COUNT: `get_pipeline_steps/1` is `select *` and materialises
   every row's `input_data`/`output_data` jsonb, which is a few kilobytes for a
-  31-item run and **megabytes** for a large one (the biggest
-  `meeting_agenda_scrape` runs in dev are ~2600 rows / ~5 MB, measured
-  2026-08-21). A `use ALLM.Pipeline` pipeline folding run-level counters in a
-  `stage :tally` is the canonical caller.
+  small run and **megabytes** for a large one (a large scrape can reach a few
+  thousand rows / several MB). A `use ALLM.Pipeline` pipeline folding run-level
+  counters in a `stage :tally` is the canonical caller.
 
   Sections are INCLUDED (unlike `get_pipeline_stats/1`, which excludes them):
   callers key on a specific `Step.step_type()`, so a `"section"` bucket is

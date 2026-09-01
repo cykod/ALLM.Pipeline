@@ -6,17 +6,10 @@ defmodule ALLM.Pipeline.Text do
 
   ## `scrub/1` / `scrub_strings/1` are the single implementation
 
-  These were duplicated in the host's core app for Phases 1–6
-  (that app could not yet name `ALLM.Pipeline.*`), guarded against
-  drift by a host-side parity test. **Phase 7.2 (2026-08-24) converged them**:
-  the host's core app took its own `:allm_pipeline` dependency (7.1 — an
-  in-umbrella dep then; the Phase 8 path dep now),
-  the host copy and the parity test were deleted, and every scrub call
-  site re-points here. This module is now the only copy,
-  and no code path calls back into a host module.
-
-  See `steering/2026-08-10_ALLM_PIPELINE_EXTRACTION.md` §3.9 (the copy→converge
-  sequence) and `steering/2026-08-24_ALLM_PIPELINE_PHASE_7.md` §7.2.
+  This module is the one home for text scrubbing: a host depends on
+  `allm_pipeline` and calls `ALLM.Pipeline.Text.scrub/1` directly rather than
+  carrying its own copy, so there is nothing to keep in sync and no code path
+  calls back into a host module.
   """
 
   @typedoc """

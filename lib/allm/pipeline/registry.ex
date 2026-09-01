@@ -54,20 +54,20 @@ defmodule ALLM.Pipeline.Registry do
 
   `pipelines:` is the host's per-pipeline metadata table — one entry per
   cron-dispatchable pipeline, each a map of `name` / `entry` / `browser` /
-  `run_names` / `schedules`. It is the single source of truth the extraction
-  plan's §3.8a/§3.8b codegen is built on: a host's pipeline runner derives its
-  dispatch table and name lists from it, and `mix allm_pipeline.names` emits it
-  as JSON for the shell/SST/stage-scraper consumers.
+  `run_names` / `schedules`. It is the single source of truth a host's codegen
+  is built on: a host's pipeline runner derives its dispatch table and name
+  lists from it, and `mix allm_pipeline.names` emits it as JSON for a host's
+  shell / deploy / stage-scraper consumers.
 
   Unlike the wiring keys above, `pipelines:` is **not** installed into the
   application environment — `install/0` ignores it — because it is host domain
   data read on demand, not framework wiring resolved at runtime. It is read
   through `__registry__(:pipelines)` (an empty list when undeclared).
 
-  The `entry:` MFAs name **host** modules (`{CommitteePipeline, :run}`), so they
-  are stored as opaque data: package code never references them, only the host's
-  `Runner` does. That keeps the leaf boundary intact — the package task reads
-  `name`/`browser` only, never `entry`.
+  The `entry:` MFAs name **host** modules (`{MyApp.ReportPipeline, :run}`), so
+  they are stored as opaque data: package code never references them, only a
+  host's own runner does. That keeps the leaf boundary intact — the package task
+  reads `name`/`browser` only, never `entry`.
 
   ## The `artifacts:` tuple form
 
@@ -193,7 +193,7 @@ defmodule ALLM.Pipeline.Registry do
           "`@seam_keys` validates at compile time and then installs nothing."
   end
 
-  @typedoc "One SST cron schedule entry attached to a pipeline."
+  @typedoc "One cron schedule entry attached to a pipeline."
   @type schedule_entry :: %{
           id: String.t(),
           cron: String.t(),
@@ -244,8 +244,8 @@ defmodule ALLM.Pipeline.Registry do
   (a keyword list of pipeline atom → canonical atom) default to empty.
 
   Note `:alert_on_empty` keys on run-name strings rather than cron atoms: the
-  two namespaces do not line up (one pipeline module emits several run names by
-  mode — extraction plan §3.8a), while `:lock_keys` keys on the cron atom
+  two namespaces do not line up (one pipeline module can emit several run names
+  by mode), while `:lock_keys` keys on the cron atom
   `ALLM.Pipeline.Lock.with_lock/2` is called with.
 
   `:pipelines` (optional, default `[]`) is the per-pipeline metadata list — see

@@ -9,10 +9,9 @@ defmodule Mix.Tasks.AllmPipeline.Nilability do
 
   `--report` is the default and only mode: the task never edits a file, and
   every **valid** invocation exits 0. An unrecognised switch or a stray
-  positional argument is refused with `Mix.raise/1` — before subphase 2.4's
-  follow-up the parse discarded all three of its elements, so
-  `mix allm_pipeline.nilability --reprot` exited 0 with a full report and a typo
-  was indistinguishable from a request.
+  positional argument is refused with `Mix.raise/1`, so a typo such as
+  `mix allm_pipeline.nilability --reprot` fails loudly rather than exiting 0 with
+  a full report — a typo must not be indistinguishable from a request.
 
   ## The rule
 
@@ -76,19 +75,13 @@ defmodule Mix.Tasks.AllmPipeline.Nilability do
   forever.
 
   There are **zero** `nilable:` declarations in the `lib/` trees this task can
-  enumerate. The tree does carry **six**, all `.exs` test fixtures in this
-  package (`schema_test.exs` ×5, this task's own test ×1), and none is reachable
-  by `schema_modules/0` — it reads `Application.spec(app, :modules)`, which is
-  built from `lib/` only. So the `0 pending` result is exact rather than lucky.
-  Re-derive with a NUL-safe sweep that sees **both** extensions (2026-08-14):
+  enumerate; the only `nilable:` fields in the package are `.exs` test fixtures,
+  none reachable by `schema_modules/0` — it reads
+  `Application.spec(app, :modules)`, which is built from `lib/` only. So the
+  `0 pending` result is exact rather than lucky. Re-derive NUL-safely across
+  `.ex` and `.exs`:
 
-      python3 scripts/refsweep.py 'field\\(.*nilable:' apps \\
-        --include '*.ex' --include '*.exs' --format hits
-
-  *(This paragraph previously claimed zero declarations tree-wide and cited
-  `grep -rna "nilable:" apps/ --include=*.ex`, which structurally cannot see the
-  six `.exs` ones. The conclusion held; the evidence was narrower than the
-  claim.)*
+      grep -rIn 'field(.*nilable:' lib test --include '*.ex' --include '*.exs'
 
   If a `nilable: false` field is ever declared in `lib/`, the honest fix is to
   widen the introspection contract, not to special-case it here.

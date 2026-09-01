@@ -393,11 +393,10 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
 
   **Single source of truth for the tag list.** Each consuming repo's own
   `test_helper.exs` and this repo's own need the same answer, because each
-  suite starts ExUnit with its own option
-  set, and since Phase 8 they live in DIFFERENT repos. Hand-copying the
-  probe was survivable; hand-copying the TAG LIST is the "a rule enforced in
-  more than one shape needs a membership guard" defect in its data-map form
-  — add a third tag on one side and the
+  suite starts ExUnit with its own option set, and they live in DIFFERENT repos.
+  Hand-copying the probe was survivable; hand-copying the TAG LIST is the "a
+  rule enforced in more than one shape needs a membership guard" defect in its
+  data-map form — add a third tag on one side and the
   other tree silently stops honouring it. This module is package `lib/` code,
   so every suite calls the SAME implementation — that shared function is the
   cross-repo drift guard.
@@ -405,11 +404,9 @@ defmodule ALLM.Pipeline.Artifacts.Dynamo do
   **Why test-harness support sits in `lib/` rather than `test/support/`:** a
   `test/support/` module is visible to exactly one repo's test tree, and this
   answer is needed by two or more — trees that, by design, cannot see each
-  other's support code (the package declares no host dependency, and since
-  Phase 8 each host is a different repo entirely). `lib/` is the only place all
-  can reach. Same reasoning, and the same precedent, as `ALLM.Pipeline.Test`
-  shipping in `lib/` (PHASE_1 §5.5). It does no I/O beyond the probe and is not
-  referenced by any production path.
+  other's support code (the package declares no host dependency, and each host
+  is a different repo entirely). `lib/` is the only place all can reach. It does
+  no I/O beyond the probe and is not referenced by any production path.
 
   Returns `{[], nil}` when the stack is up (nothing excluded, nothing to print)
   and `{tags, message}` when it is down. The message is the caller's to print;
