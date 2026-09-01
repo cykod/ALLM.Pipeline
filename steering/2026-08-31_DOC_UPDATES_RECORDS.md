@@ -579,12 +579,18 @@ the value the stages folded, the same input `summarize` sees". Post-fix:
 `doc/ALLM.Pipeline.Dsl.md` consistent with the guide, zero ExDoc warnings,
 whole-surface HARD grep still zero.
 
-**Deferred to the user (out of this docs run's scope):** the identical factual
-error survives in a compile-time **raise message** at `dsl.ex:228` ("an arity-1
-hook taking what `summarize` produced"). That is behavioral surface (a raised
-string, not rendered to hexdocs); correcting it would break this run's "no
-behavioral code changes" invariant, so it is surfaced for a follow-up rather than
-changed here. No test pins the wording.
+**Third occurrence — closed in the phase-retro fix step.** The identical factual
+error also lived in the compile-time **raise message** at `dsl.ex:228` ("an
+arity-1 hook taking what `summarize` produced"). It was deferred during subphase
+4 as behavioral surface (a raised string, not rendered to hexdocs) to preserve
+the run's "no behavioral code changes" invariant, then re-surfaced by the phase
+retro as a code-actionable tail and fixed there (`/safe-build` Step 5.5):
+reworded to "taking the accumulator", touching only the false clause and leaving
+the non-rendered `(Phase 4 D10)` history tag alone. No test pins the wording
+(`dsl_test.exs` → 37 tests, 0 failures after the edit; `mix compile
+--warnings-as-errors` clean). All three occurrences of the falsehood are now
+corrected. This crosses the docs-run "no behavioral code" line by exactly one
+string literal — recorded here as the deliberate, retro-sanctioned exception.
 
 ### What the guide covers (C4)
 

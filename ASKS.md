@@ -54,3 +54,7 @@
 [MILE] tue 9/1 12am - Purged development-phase history and consumer names from 11 batch-A moduledocs, preserving current-constraint rationale (Subphase 2)
 
 [MILE] tue 9/1 1am - Purged history from 20 batch-B moduledocs, host-neutralized README/CHANGELOG, and closed a manifest omission in json_schema/llm_call_log (Subphase 3)
+
+[MILE] tue 9/1 1am - Added guides/building_a_pipeline.md tutorial and corrected a false metrics from: doc in dsl.ex; hexdocs overhaul complete 4/4 (Subphase 4)
+
+[RETR] tue 9/1 1am - Retro on the /safe-build run of the Hexdocs Overhaul (4 subphases of steering/2026-08-31_DOC_UPDATES.md)

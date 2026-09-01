@@ -225,7 +225,7 @@ defmodule ALLM.Pipeline.Dsl do
     unless keyword_ast?(opts) and Keyword.has_key?(opts, :from) do
       raise ArgumentError,
             "#{inspect(caller.module)}: `metrics #{inspect(entity)}, …` requires `from:` " <>
-              "— an arity-1 hook taking what `summarize` produced and returning an " <>
+              "— an arity-1 hook taking the accumulator and returning an " <>
               "ALLM.Pipeline.Metrics.funnel(). There is one `metrics` form (Phase 4 D10)."
     end
 

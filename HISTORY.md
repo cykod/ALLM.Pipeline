@@ -1,3 +1,15 @@
+## [BUG] Fix false metrics from: text in the dsl.ex raise message
+*Tuesday, September 1st at 1am*
+Phase-retro follow-up to the hexdocs overhaul: the compile-time ArgumentError 
+raised when 'metrics' is declared without 'from:' described the hook as 'taking 
+what summarize produced'. The runtime applies the from: hook to the accumulator 
+(from.(acc)), so the message was factually wrong — the same falsehood the doc 
+sweep already corrected in the rendered ALLM.Pipeline.Dsl moduledoc. Reworded 
+to 'taking the accumulator'. No behavioral change beyond the error string; no 
+test pinned the wording (dsl_test 37 tests, 0 failures).
+
+---
+
 ## [DOC] Add building-a-pipeline guide; fix false metrics from: doc
 *Tuesday, September 1st at 1am*
 Final subphase of the hexdocs overhaul. Adds guides/building_a_pipeline.md, an 
