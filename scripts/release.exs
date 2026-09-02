@@ -108,7 +108,16 @@ defmodule ALLM.Pipeline.Release do
   @package "allm_pipeline"
   @mix_exs_path "mix.exs"
   @changelog_path "CHANGELOG.md"
+  @asks_path "ASKS.md"
   @migrations_dir "priv/test_repo/migrations/"
+
+  # Paths the clean-tree check tolerates dirty going INTO Phase A, and that Phase
+  # B stages into the release commit: `/changelog` writes CHANGELOG.md and leaves
+  # it uncommitted, and ask-logging appends to ASKS.md throughout a release. Both
+  # are maintainer-written record files, expected-dirty at release time — so a
+  # tree dirty by ONLY these does not need the blunt `--allow-dirty`. Any other
+  # dirty path still aborts (or needs `--allow-dirty`).
+  @release_dirty_allowlist [@changelog_path, @asks_path]
 
   # The hard banned-pattern regex for published-doc history, mirroring the `HARD`
   # literal in `agent-spec/DOCS.md` C2 (single source of truth). Development-phase
@@ -198,8 +207,9 @@ defmodule ALLM.Pipeline.Release do
       and exits. Publish manually so its OAuth flow gets a real terminal.
 
     Phase B (`--finalize`):
-      After `mix hex.publish` succeeds: commit `mix.exs` + `CHANGELOG.md`,
-      create an annotated tag, print the `git push` command (push is manual).
+      After `mix hex.publish` succeeds: commit `mix.exs` + `CHANGELOG.md` +
+      `ASKS.md`, create an annotated tag, print the `git push` command
+      (push is manual).
 
     <bump>:
       patch | minor | major | <semver>   e.g. 0.2.0-rc.1
@@ -208,7 +218,8 @@ defmodule ALLM.Pipeline.Release do
       --finalize        Phase B mode (no <bump> arg)
       --skip-dialyzer   skip `mix dialyzer` (PLT slow)
       --dry-run         run every Phase A gate; stop before bump; no mutations
-      --allow-dirty     bypass git-clean check (loud warning)
+      --allow-dirty     bypass git-clean check entirely (loud warning);
+                        CHANGELOG.md + ASKS.md are already tolerated without it
       --help, -h        this message
     """)
   end
@@ -351,12 +362,39 @@ defmodule ALLM.Pipeline.Release do
   defp check_working_tree(false) do
     {out, 0} = System.cmd("git", ["status", "--porcelain"])
 
-    if out == "" do
-      IO.puts("  clean")
-    else
-      IO.puts(:stderr, out)
-      abort("git working tree is dirty; commit/stash or pass --allow-dirty")
+    cond do
+      out == "" ->
+        IO.puts("  clean")
+
+      dirty_paths(out) -- @release_dirty_allowlist == [] ->
+        IO.puts(
+          "  clean except #{Enum.join(@release_dirty_allowlist, ", ")} " <>
+            "(allowed dirty; Phase B commits them)"
+        )
+
+      true ->
+        IO.puts(:stderr, out)
+
+        abort(
+          "git working tree is dirty beyond #{Enum.join(@release_dirty_allowlist, ", ")}; " <>
+            "commit/stash or pass --allow-dirty"
+        )
     end
+  end
+
+  # Paths from `git status --porcelain` output. Porcelain v1 is `XY <path>`; a
+  # rename is `R  <old> -> <new>` — take the destination. CHANGELOG.md / ASKS.md
+  # are plain names (never quoted or renamed), so this stays simple.
+  defp dirty_paths(porcelain_out) do
+    porcelain_out
+    |> String.split("\n", trim: true)
+    |> Enum.map(fn line ->
+      line
+      |> String.slice(3..-1//1)
+      |> String.split(" -> ")
+      |> List.last()
+      |> String.trim()
+    end)
   end
 
   defp check_branch do
@@ -560,8 +598,8 @@ defmodule ALLM.Pipeline.Release do
   # ----- step 9: diff preview -----------------------------------------------
 
   defp show_diff do
-    case System.cmd("git", ["diff", "--", @mix_exs_path, @changelog_path]) do
-      {"", 0} -> IO.puts("  (no diff in mix.exs / CHANGELOG.md)")
+    case System.cmd("git", ["diff", "--" | [@mix_exs_path | @release_dirty_allowlist]]) do
+      {"", 0} -> IO.puts("  (no diff in mix.exs / CHANGELOG.md / ASKS.md)")
       {out, 0} -> IO.puts("\n" <> out <> "\n")
     end
   end
@@ -582,8 +620,8 @@ defmodule ALLM.Pipeline.Release do
     end
   end
 
-  # Only mix.exs is mutated by the script; CHANGELOG.md is maintainer-written
-  # and must NOT be checked out (would blow away notes under --allow-dirty).
+  # Only mix.exs is mutated by the script; CHANGELOG.md and ASKS.md are
+  # maintainer-written and must NOT be checked out (would blow away notes/logs).
   defp rollback_edits(reason) do
     {_out, _code} = System.cmd("git", ["checkout", "--", @mix_exs_path], stderr_to_stdout: true)
     IO.puts("  reverted #{@mix_exs_path} (#{reason})")
@@ -608,8 +646,8 @@ defmodule ALLM.Pipeline.Release do
 
         mix run scripts/release.exs --finalize
 
-    Phase B commits mix.exs + CHANGELOG.md, creates annotated tag #{tag},
-    and prints the `git push` command.
+    Phase B commits mix.exs + CHANGELOG.md + ASKS.md, creates annotated tag
+    #{tag}, and prints the `git push` command.
 
     If the publish fails or you abort, roll back with
     `git checkout -- #{@mix_exs_path}` or just re-run Phase A.
@@ -619,7 +657,7 @@ defmodule ALLM.Pipeline.Release do
   # ----- Phase B: commit + tag (NO push) -------------------------------------
 
   defp finalize_release!(new_version, tag) do
-    run!("git", ["add", @mix_exs_path, @changelog_path])
+    run!("git", ["add" | [@mix_exs_path | @release_dirty_allowlist]])
 
     # `git diff --cached --quiet` exits 0 when nothing is staged (bump already
     # committed — tag HEAD directly), 1 when there are staged changes.

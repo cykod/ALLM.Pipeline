@@ -1,3 +1,15 @@
+## [TWK] Release script tolerates dirty CHANGELOG.md and ASKS.md
+*Wednesday, September 2nd at 3pm*
+The Phase A clean-working-tree check no longer requires --allow-dirty when the 
+only dirty paths are CHANGELOG.md and ASKS.md — exactly the record files that 
+/changelog and ask-logging leave uncommitted going into a release. Any other 
+dirty path still aborts (or needs --allow-dirty, which remains as the full 
+bypass). Phase B (--finalize) now stages ASKS.md alongside mix.exs and 
+CHANGELOG.md into the Release commit. The script still mutates only mix.exs and 
+never checks out the record files, so a rollback can't clobber notes or logs.
+
+---
+
 ## [DOC] Broaden the docs-review lane's grep-blind-spot charge
 *Tuesday, September 1st at 9am*
 Applied the DOC_UPDATES phase retro's one rule-worthy finding: the code-review 

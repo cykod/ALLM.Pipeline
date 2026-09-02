@@ -62,3 +62,5 @@
 [FIX] tue 9/1 1am - Fixed the false 'metrics from:' wording in the dsl.ex compile-time raise message (phase-retro follow-up), closing deviation D7 across all three occurrences
 
 [GATE] tue 9/1 8am - Gate-review the DOC_UPDATES hexdocs overhaul (4 subphases) — assess whether each subphase succeeded and was actually exercised by its review/oracle
+
+[MILE] tue 9/1 9am - Applied the DOC_UPDATES retro: broadened the docs-review lane's grep-blind-spot charge in agent-spec/CODE_REVIEW.md and marked the retro applied
