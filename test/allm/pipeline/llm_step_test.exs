@@ -566,12 +566,27 @@ defmodule ALLM.Pipeline.LLMStepTest do
       assert message =~ "prompt/1"
     end
 
-    test "each missing `use` option is named" do
-      for key <- [:type, :input, :output, :engine, :schema_name] do
+    test "each missing REQUIRED `use` option is named" do
+      for key <- [:type, :engine, :schema_name] do
         message =
           assert_raise(ArgumentError, fn -> compile_step(Keyword.put([], key, :__drop__)) end).message
 
         assert message =~ "#{key}:"
+      end
+    end
+
+    test "an omitted `input:`/`output:` is checked as the DEFAULTED module" do
+      # They are the two options that default (to the nested `Input`/`Output`),
+      # so omitting them is a declaration rather than an omission — and the
+      # compile-time checks still run, against the defaulted name. A step that
+      # declares neither the block nor a nested module therefore fails naming
+      # the module it was defaulted to, not the option it left out.
+      for {key, suffix} <- [input: "Input", output: "Output"] do
+        message =
+          assert_raise(ArgumentError, fn -> compile_step(Keyword.put([], key, :__drop__)) end).message
+
+        assert message =~ "#{key}:"
+        assert message =~ suffix
       end
     end
 
@@ -623,6 +638,84 @@ defmodule ALLM.Pipeline.LLMStepTest do
       # that declares it correctly is too (`WidgetStep`).
       refute :tokens_used in Widget.Output.__allm_schema__(:json_schema)["required"]
     end
+  end
+
+  describe "the inline schema declarations" do
+    defmodule InlineStep do
+      @moduledoc false
+      use ALLM.Pipeline.LLMStep,
+        type: :inline,
+        engine: :nano,
+        schema_name: "inline"
+
+      input_schema do
+        field(:record, map(), required: true)
+      end
+
+      output_schema do
+        field(:summary, String.t(), required: true, description: "A one-line summary")
+        field(:importance, atom(), values: [:low, :medium, :high])
+        field(:tokens_used, integer(), wire: false)
+      end
+
+      def prompt(%Input{} = input), do: "summarize #{inspect(input.record)}"
+    end
+
+    test "the blocks declare the modules `input:`/`output:` default to" do
+      assert InlineStep.input_schema() == ALLM.Pipeline.LLMStepTest.InlineStep.Input
+      assert InlineStep.output_schema() == ALLM.Pipeline.LLMStepTest.InlineStep.Output
+    end
+
+    test "`output_schema` defaults `json_schema: true` on, so json_schema/0 is derived" do
+      # The whole point of the LLM-specific import: an LLM step's Output always
+      # needs the derivation, and `__before_compile__/1` refuses one without it.
+      schema = InlineStep.json_schema()
+
+      assert schema["required"] == ["importance", "summary"]
+      assert schema["properties"]["importance"]["enum"] == ["low", "medium", "high", nil]
+      # `wire: false` still holds — the harness fills `tokens_used`, not the model.
+      refute Map.has_key?(schema["properties"], "tokens_used")
+    end
+
+    test "the short aliases reach prompt/1" do
+      assert InlineStep.prompt(%InlineStep.Input{record: %{"id" => 1}}) =~ ~s("id" => 1)
+    end
+
+    test "a supplied `json_schema: false` wins over the default, and is then refused" do
+      # Pins the merge order: the defaults are `Keyword.merge/2`'s FIRST
+      # argument, so a supplied option overrides them. It reaches
+      # `assert_derives_json_schema!/2` rather than being silently ignored.
+      message =
+        assert_raise(ArgumentError, fn ->
+          compile_inline_step("""
+          output_schema json_schema: false do
+            field(:summary, String.t())
+          end
+          """)
+        end).message
+
+      assert message =~ "json_schema: true"
+    end
+  end
+
+  # A step whose Input/Output come from the blocks, under a unique module name.
+  @spec compile_inline_step(String.t()) :: term()
+  defp compile_inline_step(body) do
+    module = "ALLM.Pipeline.LLMStepTest.Inline#{System.unique_integer([:positive])}"
+
+    Code.eval_string("""
+    defmodule #{module} do
+      use ALLM.Pipeline.LLMStep, type: :inline, engine: :nano, schema_name: "inline"
+
+      input_schema do
+        field(:record, map(), required: true)
+      end
+
+      #{body}
+
+      def prompt(%Input{} = input), do: "summarize \#{inspect(input.record)}"
+    end
+    """)
   end
 
   defmodule OnWire do

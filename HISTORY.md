@@ -1,3 +1,29 @@
+## [FEAT] Inline input_schema/output_schema blocks for steps
+*Thursday, September 3rd at 6pm*
+A step can now declare its Input and Output schemas inline instead of writing 
+out the nested modules and then restating them in the `use` options. The 
+hand-written form is unchanged and still required for a schema shared by two 
+steps or living in its own file — the sugar is additive, and every existing 
+declaration compiles as before.
+
+- `ALLM.Pipeline.Schema` gains `input_schema/2` and `output_schema/2`, which 
+expand to exactly the nested module written out by hand. The `defmodule` is 
+emitted as an alias rather than a computed atom, which is what keeps the short 
+`%Input{}` alias resolving in the step body.
+- `use ALLM.Pipeline.LLMStep` defaults `input:`/`output:` to the nested 
+`Input`/`Output`, and imports its own `output_schema/2` that defaults 
+`json_schema: true` on. The compile-time struct and derivation probes still 
+run, against the defaulted names.
+- New `use ALLM.Pipeline.Step` injects the behaviour, imports the blocks, and 
+derives `input_schema/0`/`output_schema/0` from whichever blocks a module 
+declares. A block plus a hand-written accessor of the same name raises rather 
+than degrading into a "clauses must be grouped" warning against generated code.
+- Corrects the `@impl true` on `prompt/1` in the moduledoc and guide examples: 
+it is required by the macro, not by the `Step` behaviour, so copying it was a 
+`--warnings-as-errors` build failure for a consumer.
+
+---
+
 ## [TWK] Release script tolerates dirty CHANGELOG.md and ASKS.md
 *Wednesday, September 2nd at 3pm*
 The Phase A clean-working-tree check no longer requires --allow-dirty when the 

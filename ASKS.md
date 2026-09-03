@@ -64,3 +64,7 @@
 [GATE] tue 9/1 8am - Gate-review the DOC_UPDATES hexdocs overhaul (4 subphases) — assess whether each subphase succeeded and was actually exercised by its review/oracle
 
 [MILE] tue 9/1 9am - Applied the DOC_UPDATES retro: broadened the docs-review lane's grep-blind-spot charge in agent-spec/CODE_REVIEW.md and marked the retro applied
+
+[MILE] wed 9/2 3pm - Committed the release-script clean-tree allowlist for CHANGELOG.md/ASKS.md and Phase-B ASKS.md staging (release.exs + ASKS.md only)
+
+[ASKS] wed 9/2 3pm - Assess whether the Step macros can autogenerate __MODULE__.Input/Output from inline input_schema/output_schema blocks to cut declaration noise

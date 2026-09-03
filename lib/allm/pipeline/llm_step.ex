@@ -11,20 +11,39 @@ defmodule ALLM.Pipeline.LLMStep do
       defmodule MyApp.TransformStep do
         use ALLM.Pipeline.LLMStep,
           type: :transform_record,
-          input: __MODULE__.Input,
-          output: __MODULE__.Output,
           engine: :nano,
           schema_name: "record"
 
-        @impl true
+        input_schema do
+          field :record, map(), required: true
+        end
+
+        output_schema do
+          field :summary, String.t(), required: true, description: "A one-line summary"
+          field :tokens_used, integer(), wire: false
+        end
+
         def prompt(%Input{} = input), do: "…"
       end
+
+  ## Where the schema modules come from
+
+  `input_schema/2` (from `ALLM.Pipeline.Schema`) and `output_schema/2` declare
+  the nested `Input` / `Output` modules inline, and `input:` / `output:` default
+  to exactly those — so the common case names neither. The `Output` block
+  defaults `json_schema: true` on, which an LLM step always needs.
+
+  Declaring the modules by hand stays supported and is unchanged: pass `input:`
+  / `output:` when the schema lives in its own file, is shared by two steps, or
+  wants a moduledoc of its own (a generated module carries `@moduledoc false`).
+  The two forms are exclusive per schema — a block generates the module, so
+  pointing `output:` at a different one leaves the generated module unused.
 
   ## What it generates
 
   | Function | Contract |
   |---|---|
-  | `step_type/0`, `input_schema/0`, `output_schema/0` | the `ALLM.Pipeline.Step` callbacks, from the `use` options |
+  | `step_type/0`, `input_schema/0`, `output_schema/0` | the `ALLM.Pipeline.Step` callbacks, from the `use` options (see "Where the schema modules come from") |
   | `json_schema/0` | the Output's derived strict-mode schema — `output.__allm_schema__(:json_schema)` |
   | `call_llm/1` | `prompt/1` → `ALLM.Pipeline.LLM.impl().generate_structured/4`; `{:ok, parsed, tokens}` or `{:error, {:llm_error, reason}}` |
   | `coerce/2` | parsed payload + token count → the Output struct |
@@ -170,12 +189,15 @@ defmodule ALLM.Pipeline.LLMStep do
   require Logger
 
   @use_options [:type, :input, :output, :engine, :schema_name]
+  @required_options [:type, :engine, :schema_name]
 
   @typedoc """
   A validated `use` declaration.
 
   `:input` and `:output` are module names resolved in the using module's
-  context, so `__MODULE__.Output` arrives here already expanded.
+  context, so `__MODULE__.Output` arrives here already expanded. Omitted, they
+  default to the using module's nested `Input` / `Output` — which is what
+  `input_schema do … end` and `output_schema/2` declare.
   """
   @type declaration :: %{
           type: atom(),
@@ -188,14 +210,21 @@ defmodule ALLM.Pipeline.LLMStep do
   @doc """
   Generate the `Step` callbacks, the engine call and the parse path.
 
-  Options — all five are required: `:type` (the `step_type/0` atom), `:input`
-  and `:output` (schema modules), `:engine` (a host engine name) and
-  `:schema_name` (the strict-mode schema's name on the wire).
+  Options — `:type` (the `step_type/0` atom), `:engine` (a host engine name)
+  and `:schema_name` (the strict-mode schema's name on the wire) are required.
+  `:input` and `:output` name the schema modules and default to the using
+  module's nested `Input` / `Output`.
+
+  Also imports `ALLM.Pipeline.Schema.input_schema/2` and this module's
+  `output_schema/2`, which declare those nested modules inline.
   """
   defmacro __using__(opts) do
     quote do
       @behaviour ALLM.Pipeline.Step
       @before_compile ALLM.Pipeline.LLMStep
+
+      import ALLM.Pipeline.Schema, only: [input_schema: 1, input_schema: 2]
+      import ALLM.Pipeline.LLMStep, only: [output_schema: 1, output_schema: 2]
 
       @allm_llm_step ALLM.Pipeline.LLMStep.__validate__!(__MODULE__, unquote(opts))
       @allm_llm_step_type Map.fetch!(@allm_llm_step, :type)
@@ -271,6 +300,39 @@ defmodule ALLM.Pipeline.LLMStep do
     end
   end
 
+  @doc """
+  Declares the enclosing module's nested `Output` schema module inline.
+
+  `ALLM.Pipeline.Schema.output_schema/2` with `json_schema: true` defaulted on:
+  an LLM step's wire contract IS its Output declaration, `json_schema/0` reads
+  the derivation on every call, and `__before_compile__/1` refuses an Output
+  without it. Supplied options still win over the default, which makes
+  `output_schema json_schema: false do … end` a compile error rather than a
+  quiet opt-out; the pass-through is there for the other options (`json: true`).
+
+  Every other rule is `ALLM.Pipeline.Schema.output_schema/2`'s, unchanged.
+  """
+  defmacro output_schema(opts \\ [], do: block) do
+    body =
+      ALLM.Pipeline.Schema.__nested_body__(
+        ALLM.Pipeline.Schema.__nested_opts__(
+          __CALLER__.module,
+          :output_schema,
+          opts,
+          json_schema: true
+        ),
+        block
+      )
+
+    quote do
+      defmodule Output do
+        unquote(body)
+      end
+
+      Module.put_attribute(__MODULE__, :allm_pipeline_output_schema, __MODULE__.Output)
+    end
+  end
+
   @doc false
   defmacro __before_compile__(env) do
     declaration = Module.get_attribute(env.module, :allm_llm_step)
@@ -300,8 +362,8 @@ defmodule ALLM.Pipeline.LLMStep do
 
     %{
       type: fetch_atom!(opts, :type, module, "an atom"),
-      input: fetch_atom!(opts, :input, module, "a schema module"),
-      output: fetch_atom!(opts, :output, module, "a schema module"),
+      input: fetch_schema_module!(opts, :input, module, Module.concat(module, Input)),
+      output: fetch_schema_module!(opts, :output, module, Module.concat(module, Output)),
       engine: fetch_atom!(opts, :engine, module, "an atom"),
       schema_name: fetch_schema_name!(opts, module)
     }
@@ -697,6 +759,19 @@ defmodule ALLM.Pipeline.LLMStep do
     end
   end
 
+  # `input:`/`output:` are the two options with a defensible default, and it is
+  # the one the nested-module convention already implies — so an omitted pair is
+  # a declaration, not an omission. The shape check on a SUPPLIED value is
+  # `fetch_atom!/4`'s, unchanged; only the `:error` arm differs, and the real
+  # module check still runs in `__before_compile__/1` either way.
+  @spec fetch_schema_module!(keyword(), atom(), module(), module()) :: module()
+  defp fetch_schema_module!(opts, key, module, default) do
+    case Keyword.has_key?(opts, key) do
+      true -> fetch_atom!(opts, key, module, "a schema module")
+      false -> default
+    end
+  end
+
   @spec fetch_schema_name!(keyword(), module()) :: String.t()
   defp fetch_schema_name!(opts, module) do
     case Keyword.fetch(opts, :schema_name) do
@@ -715,9 +790,9 @@ defmodule ALLM.Pipeline.LLMStep do
 
   @spec missing_message(module(), atom()) :: String.t()
   defp missing_message(module, key) do
-    "#{inspect(module)}: `use ALLM.Pipeline.LLMStep` requires `#{key}:`. All of " <>
-      "#{inspect(@use_options)} are mandatory — the macro derives the whole call from them, " <>
-      "and a defaulted engine or schema name would be a wire-contract decision taken by " <>
-      "omission."
+    "#{inspect(module)}: `use ALLM.Pipeline.LLMStep` requires `#{key}:`. #{inspect(@required_options)} " <>
+      "are mandatory — the macro derives the whole call from them, and a defaulted engine or " <>
+      "schema name would be a wire-contract decision taken by omission. Only `input:`/`output:` " <>
+      "default, to the nested `Input`/`Output`."
   end
 end

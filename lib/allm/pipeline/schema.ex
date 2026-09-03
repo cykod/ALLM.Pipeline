@@ -379,6 +379,102 @@ defmodule ALLM.Pipeline.Schema do
     end
   end
 
+  @doc """
+  Declares the enclosing module's nested `Input` schema module inline.
+
+  Expands to exactly the module written out by hand:
+
+      defmodule Input do
+        use ALLM.Pipeline.Schema
+        schema do
+          field :record, map(), required: true
+        end
+      end
+
+  Imported by `use ALLM.Pipeline.Step` and `use ALLM.Pipeline.LLMStep`, which
+  also derive `input_schema/0` from it — so a step declaring the block names
+  neither the module nor the accessor.
+
+  `opts` are the `use ALLM.Pipeline.Schema` options and must be a **literal**
+  keyword list: they are read as AST at the enclosing module's compile time and
+  spliced into the generated `use`, so `input_schema @opts do` is a compile
+  error rather than a feature.
+
+  Writing the module out by hand stays supported, and is the only form
+  available when the schema is shared by two steps, lives in its own file, or
+  wants a moduledoc of its own — a generated module carries `@moduledoc false`.
+  """
+  defmacro input_schema(opts \\ [], do: block) do
+    body = __nested_body__(__nested_opts__(__CALLER__.module, :input_schema, opts, []), block)
+
+    quote do
+      defmodule Input do
+        unquote(body)
+      end
+
+      Module.put_attribute(__MODULE__, :allm_pipeline_input_schema, __MODULE__.Input)
+    end
+  end
+
+  @doc """
+  Declares the enclosing module's nested `Output` schema module inline.
+
+  The `input_schema/2` rules apply unchanged. This one does **not** imply
+  `json_schema: true`: the derivation is opt-in per module because an
+  unmappable type (`map()`, `term()`, a bare `list()`) makes it a compile
+  error, and a plain step's Output legitimately carries such fields. An LLM
+  step's Output always needs it, which is why `ALLM.Pipeline.LLMStep` imports
+  its own `output_schema/2` that defaults it on.
+  """
+  defmacro output_schema(opts \\ [], do: block) do
+    body = __nested_body__(__nested_opts__(__CALLER__.module, :output_schema, opts, []), block)
+
+    quote do
+      defmodule Output do
+        unquote(body)
+      end
+
+      Module.put_attribute(__MODULE__, :allm_pipeline_output_schema, __MODULE__.Output)
+    end
+  end
+
+  # The generated module's BODY, shared with `ALLM.Pipeline.LLMStep.output_schema/2`
+  # — which wraps it in its own `defmodule Output` rather than calling
+  # `output_schema/2` above, because the two differ only in the defaulted
+  # options and a macro cannot pass a `do` block through another macro without
+  # re-quoting it.
+  #
+  # `defmodule Input` is written as an ALIAS here, never as an already-computed
+  # `Module.concat(caller, Input)` atom: only the alias form nests under the
+  # enclosing module AND registers the short alias, which is what lets the step
+  # body keep matching `%Input{}`. An atom would define a TOP-LEVEL `Input`.
+  @doc false
+  @spec __nested_body__(keyword(), Macro.t()) :: Macro.t()
+  def __nested_body__(opts, block) do
+    quote do
+      @moduledoc false
+      use ALLM.Pipeline.Schema, unquote(opts)
+
+      schema do
+        unquote(block)
+      end
+    end
+  end
+
+  @doc false
+  @spec __nested_opts__(module(), atom(), Macro.t(), keyword()) :: keyword()
+  def __nested_opts__(caller, macro, opts, defaults) do
+    unless Keyword.keyword?(opts) do
+      raise ArgumentError,
+            "#{inspect(caller)}: `#{macro}` takes a literal keyword list of " <>
+              "`use ALLM.Pipeline.Schema` options, got: #{Macro.to_string(opts)}. The options " <>
+              "are read as AST and spliced into the generated module's `use`, so a computed " <>
+              "list cannot be resolved here."
+    end
+
+    Keyword.merge(defaults, opts)
+  end
+
   @doc false
   defmacro __before_compile__(env) do
     fields = Module.get_attribute(env.module, :schema_fields) |> Enum.reverse()

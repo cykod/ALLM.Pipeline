@@ -13,7 +13,8 @@ dependency or published to Hex as `allm_pipeline` via `scripts/release.exs`
 ## What's here
 
 - `ALLM.Pipeline.Step` — the step behaviour: typed Input/Output structs
-  (`use ALLM.Pipeline.Schema`), executed with lineage via
+  (`use ALLM.Pipeline.Schema`, or an `input_schema do … end` block under
+  `use ALLM.Pipeline.Step`), executed with lineage via
   `ALLM.Pipeline.Executor.run_step/5`.
 - `ALLM.Pipeline.StepLog` / `PipelineRun` / `PipelineMetric` — persistent
   step logs and run records (Ecto schemas; the **host** owns the repo and the

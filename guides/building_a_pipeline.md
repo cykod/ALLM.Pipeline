@@ -21,41 +21,29 @@ reference for every construct shown here.
 A step is a module implementing the `ALLM.Pipeline.Step` behaviour: it declares
 its `step_type/0`, an `input_schema/0` and `output_schema/0`, and an
 `execute/2` that turns a typed Input struct into a typed Output. The Input and
-Output are structs; `use ALLM.Pipeline.Schema` generates them from a `schema do
-… end` declaration with less boilerplate than a hand-written `defstruct` plus
-`@type` plus `@enforce_keys`. `ALLM.Pipeline.Schema`'s moduledoc is the
+Output are structs generated from a field declaration — the `input_schema do …
+end` / `output_schema do … end` blocks below, or the same declaration written
+out as a module of its own under `use ALLM.Pipeline.Schema` — with less
+boilerplate than a hand-written `defstruct` plus `@type` plus `@enforce_keys`.
+`ALLM.Pipeline.Schema`'s moduledoc is the
 authority for the field options (`required:`, `default:`, `artifact:`,
 `redact:`, `log:`, and the LLM-facing `values:` / `description:` / `wire:`).
 
 ```elixir
 defmodule MyApp.ListStep do
-  @behaviour ALLM.Pipeline.Step
+  use ALLM.Pipeline.Step
 
-  defmodule Input do
-    use ALLM.Pipeline.Schema
-
-    schema do
-      field :source_url, String.t(), required: true
-    end
+  input_schema do
+    field :source_url, String.t(), required: true
   end
 
-  defmodule Output do
-    use ALLM.Pipeline.Schema
-
-    schema do
-      field :records, [map()], required: true
-      field :raw_html, String.t(), artifact: true
-    end
+  output_schema do
+    field :records, [map()], required: true
+    field :raw_html, String.t(), artifact: true
   end
 
   @impl true
   def step_type, do: :list
-
-  @impl true
-  def input_schema, do: __MODULE__.Input
-
-  @impl true
-  def output_schema, do: __MODULE__.Output
 
   @impl true
   def execute(_ctx, %Input{source_url: url}) do
@@ -64,6 +52,13 @@ defmodule MyApp.ListStep do
   end
 end
 ```
+
+`use ALLM.Pipeline.Step` injects the behaviour and imports `input_schema/2` and
+`output_schema/2`, which declare the nested `Input` / `Output` modules and
+derive `input_schema/0` / `output_schema/0` from them. Write either module out
+by hand instead — nested, or in its own file — when it is shared by two steps
+or wants a moduledoc of its own, and write that accessor yourself;
+`@behaviour ALLM.Pipeline.Step` on its own remains valid and generates nothing.
 
 The `artifact: true` field is the convention for a heavy body (scraped HTML,
 extracted text) that belongs in the artifact store rather than inline in the
@@ -85,40 +80,37 @@ generates the whole call path from the Output declaration: the `step_type/0` /
 (`json_schema/0`), the LLM call (`call_llm/1`), the parse into the Output
 struct (`coerce/2`), and the composed `execute/2`. `ALLM.Pipeline.LLMStep`'s
 moduledoc is the authority for what it generates and what it checks at compile
-time; the Output declares `json_schema: true` so the schema is a derived
-artifact of the declaration rather than a second hand-written description.
+time. The Output is declared with `json_schema: true` — defaulted on by the
+block below — which makes the wire schema a derived artifact of the declaration
+rather than a second hand-written description.
 
 ```elixir
 defmodule MyApp.SummarizeStep do
   use ALLM.Pipeline.LLMStep,
     type: :summarize,
-    input: __MODULE__.Input,
-    output: __MODULE__.Output,
     engine: :nano,
     schema_name: "record_summary"
 
-  defmodule Input do
-    use ALLM.Pipeline.Schema
-
-    schema do
-      field :record, map(), required: true
-    end
+  input_schema do
+    field :record, map(), required: true
   end
 
-  defmodule Output do
-    use ALLM.Pipeline.Schema, json_schema: true
-
-    schema do
-      field :summary, String.t(), required: true, description: "A one-line summary"
-      field :importance, atom(), values: [:low, :medium, :high]
-      field :tokens_used, integer(), wire: false
-    end
+  output_schema do
+    field :summary, String.t(), required: true, description: "A one-line summary"
+    field :importance, atom(), values: [:low, :medium, :high]
+    field :tokens_used, integer(), wire: false
   end
 
-  @impl true
   def prompt(%Input{record: record}), do: "Summarize this record: #{inspect(record)}"
 end
 ```
+
+The blocks are the same `input_schema/2` / `output_schema/2` as above, with one
+difference: here `output_schema` defaults `json_schema: true` on, because an LLM
+step's wire contract IS its Output declaration. `input:` / `output:` default to
+the nested modules the blocks generate; pass them explicitly to point at schema
+modules declared elsewhere. `prompt/1` takes no `@impl` — it is required by the
+macro, not by the `ALLM.Pipeline.Step` behaviour, so `@impl true` on it warns.
 
 The only thing the using module must supply is `prompt/1`. The `wire: false`
 field (`tokens_used`) is populated by the harness from the response envelope,

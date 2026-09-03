@@ -702,6 +702,65 @@ defmodule ALLM.Pipeline.SchemaTest do
   # happens — at the using module's compile time — rather than by calling the
   # validator directly. Same shape as `registry_test.exs`'s `compile_registry/1`.
   @spec compile_schema(Macro.t()) :: term()
+  describe "`input_schema`/`output_schema` declare the nested module" do
+    defmodule Host do
+      @moduledoc false
+      # Only the arities this fixture calls: a hand-written `only:` import warns
+      # per unused arity, which the `use`-injected one in `ALLM.Pipeline.Step`
+      # does not (macro-generated imports are exempt).
+      import ALLM.Pipeline.Schema, only: [input_schema: 2, output_schema: 1]
+
+      input_schema json_schema: true do
+        field(:url, String.t(), required: true)
+      end
+
+      output_schema do
+        field(:records, [map()], required: true)
+      end
+    end
+
+    test "the block becomes a nested `ALLM.Pipeline.Schema` module" do
+      assert Host.Input.__allm_schema__(:fields) == [:url]
+      assert Host.Input.__allm_schema__(:required) == [:url]
+      assert Host.Output.__allm_schema__(:fields) == [:records]
+    end
+
+    test "options reach the generated module's `use`" do
+      # The Input declares `json_schema: true` and the Output does not, so the
+      # derivation's presence is the observable that the options were spliced
+      # into the generated `use` rather than dropped.
+      assert %{"properties" => %{"url" => _}} = Host.Input.__allm_schema__(:json_schema)
+    end
+
+    test "the generic `output_schema` does NOT imply `json_schema: true`" do
+      # The derivation is opt-in per module because an unmappable type — the
+      # `[map()]` above — makes it a compile error, and a non-LLM step's Output
+      # legitimately carries such fields. `ALLM.Pipeline.LLMStep` imports its
+      # own `output_schema/2` that defaults it on.
+      assert_raise FunctionClauseError, fn -> Host.Output.__allm_schema__(:json_schema) end
+    end
+
+    test "options must be a literal keyword list, because they are read as AST" do
+      message =
+        assert_raise(ArgumentError, fn ->
+          Code.eval_string("""
+          defmodule ALLM.Pipeline.SchemaTest.Computed#{System.unique_integer([:positive])} do
+            import ALLM.Pipeline.Schema, only: [input_schema: 2]
+
+            @opts [json: true]
+
+            input_schema @opts do
+              field(:url, String.t())
+            end
+          end
+          """)
+        end).message
+
+      assert message =~ "input_schema"
+      assert message =~ "literal keyword list"
+    end
+  end
+
   defp compile_schema(body) do
     module = :"Elixir.ALLM.Pipeline.SchemaTest.Generated#{System.unique_integer([:positive])}"
 
