@@ -1,3 +1,15 @@
+## [REL] v0.1.1 — History-free hexdocs
+
+Other changes:
+- Rewrite the published documentation — every module's docs plus the README — to
+  present-tense, host-neutral prose, dropping development-phase history and
+  internal consumer names from the hexdocs.
+- Add a "Building a pipeline" guide (hexdocs extra): authoring a `Step` with
+  Input/Output schemas, an `LLMStep`, composing them with `use ALLM.Pipeline`,
+  running the pipeline, and reading back step logs, lineage, and artifacts.
+- Correct the `metrics from:` documentation and its compile-time error message to
+  state the hook receives the run accumulator, matching runtime behavior.
+
 ## [REL] v0.1.0 — Standalone, consumer-ready
 
 Consumer-facing configuration (wire against these):

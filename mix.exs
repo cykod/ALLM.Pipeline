@@ -2,8 +2,8 @@ defmodule ALLMPipeline.MixProject do
   use Mix.Project
 
   # Bumped by `scripts/release.exs` (Phase A). Keep the literal on this line —
-  # the script rewrites `@version "..."` by regex.
-  @version "0.1.0"
+  # the script rewrites `@version "0.1.1"` by regex.
+  @version "0.1.1"
   @source_url "https://github.com/cykod/ALLM.Pipeline"
 
   def project do

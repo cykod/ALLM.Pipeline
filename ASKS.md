@@ -68,3 +68,5 @@
 [MILE] wed 9/2 3pm - Committed the release-script clean-tree allowlist for CHANGELOG.md/ASKS.md and Phase-B ASKS.md staging (release.exs + ASKS.md only)
 
 [ASKS] wed 9/2 3pm - Assess whether the Step macros can autogenerate __MODULE__.Input/Output from inline input_schema/output_schema blocks to cut declaration noise
+
+[MILE] thu 9/3 6pm - Added inline input_schema/output_schema blocks for steps, defaulted LLMStep's input:/output: to the nested modules, and introduced use ALLM.Pipeline.Step
