@@ -39,6 +39,17 @@ config :ex_aws,
   secret_access_key: "minioadmin",
   region: "us-east-1"
 
+# No retries against the local stack: DynamoDB Local / MinIO are either up or
+# down, and a refused connection never succeeds on a later attempt. ExAws's
+# default (10 attempts, exponential backoff) cost ~50s per full run with the
+# stack down — the exclusion probes plus every untagged test whose Executor
+# writes artifacts through the Tiered store. All three keys are given because
+# ExAws merges `:retries` shallowly (a partial list drops the backoff keys).
+config :ex_aws, :retries,
+  max_attempts: 1,
+  base_backoff_in_ms: 10,
+  max_backoff_in_ms: 10_000
+
 # Full LLM-call input/output capture on, mirroring the umbrella's config.exs.
 config :allm_pipeline, ALLM.Pipeline.LLMCallLog, enabled: true
 

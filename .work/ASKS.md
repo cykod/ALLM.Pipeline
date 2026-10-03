@@ -31,3 +31,11 @@
         [FIX] sat 10/3/2026 2pm - Fix LLM seam Phase 2 batch-2 review findings (D-impl-6 seam check, questions/1 non-map, doc wording, polish)
 
         [CDRV] sat 10/3/2026 3pm - Code review of the batch-2 fix-pass delta for steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md (2-checkpoint..2-fix)
+
+        [MILE] sat 10/3/2026 3pm - Added ClassifyStep and optional classify/4 seam callback with allm floor 0.6.0 (phase 2, 2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md)
+
+        [RETR] sat 10/3/2026 3pm - Retro on the LLM seam context + ClassifyStep build (steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md, phases 1-2)
+
+        [FIX] sat 10/3/2026 3pm - Fix retro F1: cap ExAws retries in test config so a down service stack stops costing ~50s per run
+
+        [GATE] sat 10/3/2026 3pm - Gate-review phases 1-2 of 2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md — assess whether the LLM-seam context and ClassifyStep work succeeded and was exercised

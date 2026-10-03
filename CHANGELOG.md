@@ -1,3 +1,25 @@
+## [REL] v0.2.0 — Context at the LLM seam
+
+Breaking changes:
+- Replace `LLMStep`'s generated `call_llm/1` with `call_llm(context, input)`;
+  an overriding `execute/2` passes its context through (a `nil` or bare-map
+  context still normalizes to `Context.detached()`).
+- Require `allm` `>= 0.6.0 and < 1.0.0` (was `~> 0.4.2`); check exhaustive
+  matches on allm's error enums against its v0.6.0 breaking changes.
+
+Other changes:
+- Add optional `resolve_engine/2` and `generate_structured/5` callbacks to
+  `ALLM.Pipeline.LLM`, receiving the step's `ALLM.Pipeline.Context`; the
+  package prefers them per callback when the adapter exports them, so a host
+  can read run options (engine overrides, account ids) with `Context.get_opt/3`.
+- Add `use ALLM.Pipeline.ClassifyStep` over ALLM 0.6.0 typed classification,
+  with an optional `classify/4` seam callback (a delegation to
+  `ALLM.classify/3`), compile-time declaration checks, question validation
+  before any provider call, and coercion of choice/score/yes-no answers onto
+  typed Output fields.
+- Document the step's context, its reserved option keys, and that run options
+  persist to `pipeline_runs.metadata` under the default `metadata:` hook.
+
 ## [REL] v0.1.1 — History-free hexdocs
 
 Other changes:

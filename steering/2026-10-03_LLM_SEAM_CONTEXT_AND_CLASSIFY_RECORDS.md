@@ -394,3 +394,30 @@ repo mounted). A finding, accepted by D4.
 The 0.6.0 floor forces every path-dep consumer onto allm ≥ 0.6.0; each checks
 its exhaustive matches on allm's error enums (allm `CHANGELOG.md`, v0.6.0
 "Breaking changes") before taking 2.1.
+
+## Retro fix (2026-10-03)
+
+Retro `.work/retro/2026-10-03-llm-seam-context-and-classify.md` F1 (ExAws
+retry backoff against a down stack) was fixed. F2 is a docs/process rule and
+is left for `/apply-retro`.
+
+- **Claim verified.** `docker ps` works in the container, and the allm stack
+  was not running. With the stack down, `mix test` took **59s** wall clock
+  (`Finished in 40.9 seconds`), produced 104 `econnrefused` lines and reported
+  `683 tests, 0 failures, 22 excluded`.
+- **Change.** `config/test.exs` now sets `config :ex_aws, :retries,
+  max_attempts: 1, base_backoff_in_ms: 10, max_backoff_in_ms: 10_000`. All
+  three keys are set because `ExAws.Config` merges `:retries` shallowly.
+  No test depends on ExAws retry behaviour: a grep of `test/` for
+  backoff/attempt/transient found no hits.
+- **Stack down after the change:** the same `mix test` took **6s** wall clock
+  (`Finished in 4.6 seconds`), with `683 tests, 0 failures, 22 excluded`.
+- **Stack up** (`docker compose up -d`): `mix test` showed **no** `Excluding
+  tags` line and reported `3 doctests, 683 tests, 0 failures`. Running only the
+  tagged set (`--only dynamo --only s3 --only skip_unless_dynamo --only
+  skip_unless_s3`) gave 22 tests run, 0 failures. The §4 exclusion direction
+  (`DYNAMODB_ENDPOINT=http://127.0.0.1:9`) gave `Excluding tags: [:dynamo,
+  :skip_unless_dynamo]` and `20 excluded`, which matches CLAUDE.md §4.
+- **Gate:** `mix precommit` exited 0 with the stack up: `3 doctests, 683
+  tests, 0 failures`, no `Excluding tags` line, dialyzer `Total errors: 0`. It
+  took 11s wall clock, down from the retro's ~1m median.

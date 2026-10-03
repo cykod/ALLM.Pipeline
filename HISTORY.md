@@ -1,3 +1,14 @@
+## [OTHR] Close LLM seam + ClassifyStep build: gate, changelog, test retries
+*Saturday, October 3rd at 3pm*
+Closes the gated build of steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md 
+(phases 1-2, gate PASS). Adds the v0.2.0 CHANGELOG entry (call_llm/2 and the 
+allm 0.6.0 floor as breaking changes; context-taking seam callbacks and 
+ClassifyStep), and sets ExAws test retries to a single attempt so a full run 
+with DynamoDB Local / MinIO down no longer spends ~50s in backoff (59s to 6s 
+measured), with the retro-fix outcome recorded in RECORDS.
+
+---
+
 ## [FEAT] Add ClassifyStep over ALLM 0.6.0 typed classification
 *Saturday, October 3rd at 3pm*
 Adds a classification step kind routed through the LLM seam (Phase 2 of 
