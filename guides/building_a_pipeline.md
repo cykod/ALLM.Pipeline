@@ -77,10 +77,10 @@ the generated `run/1` threads it for you.
 An LLM-calling step is authored with `use ALLM.Pipeline.LLMStep`, which
 generates the whole call path from the Output declaration: the `step_type/0` /
 `input_schema/0` / `output_schema/0` callbacks, the strict-mode JSON schema
-(`json_schema/0`), the LLM call (`call_llm/1`), the parse into the Output
-struct (`coerce/2`), and the composed `execute/2`. `ALLM.Pipeline.LLMStep`'s
-moduledoc is the authority for what it generates and what it checks at compile
-time. The Output is declared with `json_schema: true` — defaulted on by the
+(`json_schema/0`), the LLM call (`call_llm/2`, handed the step's context), the
+parse into the Output struct (`coerce/2`), and the composed `execute/2`.
+`ALLM.Pipeline.LLMStep`'s moduledoc is the authority for what it generates and
+what it checks at compile time. The Output is declared with `json_schema: true` — defaulted on by the
 block below — which makes the wire schema a derived artifact of the declaration
 rather than a second hand-written description.
 

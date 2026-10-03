@@ -126,7 +126,7 @@ defmodule ALLM.Pipeline.RegistryTest do
       # `llm:` is the one optional wiring key (there is no package adapter to
       # fall back to). The failure mode a lax implementation buys is not a
       # crash but a `nil` written into the seam's `impl:`, which then reaches a
-      # step's `call_llm/1` as a `BadFunctionError` naming neither the key nor
+      # step's `call_llm/2` as a `BadFunctionError` naming neither the key nor
       # the package.
       Application.delete_env(:allm_pipeline, LLM)
 

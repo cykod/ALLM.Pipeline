@@ -18,7 +18,7 @@ defmodule ALLM.Pipeline.LLMStepTest do
 
   use ExUnit.Case, async: false
 
-  alias ALLM.Pipeline.LLM
+  alias ALLM.Pipeline.{Context, LLM}
 
   # ── The stub engine ─────────────────────────────────────────────────────────
 
@@ -159,10 +159,10 @@ defmodule ALLM.Pipeline.LLMStepTest do
     @doc "Calls the model, then again, keeping the second result's summary."
     @impl true
     @spec execute(map(), Widget.Input.t()) :: {:ok, Widget.Output.t()} | {:error, term()}
-    def execute(_context, %Widget.Input{} = input) do
-      with {:ok, parsed, tokens} <- call_llm(input),
+    def execute(context, %Widget.Input{} = input) do
+      with {:ok, parsed, tokens} <- call_llm(context, input),
            {:ok, first} <- coerce(parsed, tokens),
-           {:ok, retry_parsed, retry_tokens} <- call_llm(input),
+           {:ok, retry_parsed, retry_tokens} <- call_llm(context, input),
            {:ok, second} <- coerce(retry_parsed, retry_tokens) do
         {:ok, %{second | name: input.name, tokens_used: first.tokens_used + second.tokens_used}}
       end
@@ -225,6 +225,84 @@ defmodule ALLM.Pipeline.LLMStepTest do
     def prompt(%Scorer.Input{}), do: "score it"
   end
 
+  # ── The step's context at the seam ──────────────────────────────────────────
+
+  # An adapter exporting the context-taking callbacks. The mandatory `/1` + `/4`
+  # RAISE — the recommended shape for a context-only adapter, and the proof that
+  # the package prefers the context arities whenever they are exported.
+  #
+  # It records by `send/2` to the root caller rather than into the process
+  # dictionary: the fan-out test's calls run in `Task` children, which cannot
+  # see the test process's dictionary.
+  defmodule ContextStubLLM do
+    @moduledoc false
+    @behaviour ALLM.Pipeline.LLM
+
+    @impl true
+    def resolve_engine(_name), do: raise("resolve_engine/1 must not be called")
+
+    @impl true
+    def resolve_engine(name, ctx) do
+      report(:resolve_engine, ctx)
+      {:engine, name}
+    end
+
+    @impl true
+    def generate_structured(_prompt, _schema, _schema_name, _engine),
+      do: raise("generate_structured/4 must not be called")
+
+    @impl true
+    def generate_structured(_prompt, _schema, _schema_name, _engine, ctx) do
+      report(:generate_structured, ctx)
+      # `kind` is `required: true` on Widget.Output, so the Executor's cast
+      # accepts this payload.
+      {:ok, %{parsed: %{"kind" => "alpha"}, tokens: 1}}
+    end
+
+    defp report(fun, ctx),
+      do: send(List.last(Process.get(:"$callers", [])) || self(), {:llm_ctx, fun, ctx})
+  end
+
+  # An overriding `execute/2` that fans its calls out — each child must still
+  # pass the step's context, which it can only do because `call_llm/2` takes it.
+  defmodule FanOutStep do
+    @moduledoc false
+    alias ALLM.Pipeline.LLMStepTest.Widget
+
+    use ALLM.Pipeline.LLMStep,
+      type: :transform_widget_fan_out,
+      input: Widget.Input,
+      output: Widget.Output,
+      engine: :nano,
+      schema_name: "widget"
+
+    @spec prompt(Widget.Input.t()) :: String.t()
+    def prompt(%Widget.Input{} = input), do: "describe #{input.name}"
+
+    @impl true
+    def execute(context, %Widget.Input{} = input) do
+      [1, 2, 3]
+      |> Task.async_stream(fn _ -> call_llm(context, input) end)
+      |> Enum.map(fn {:ok, {:ok, parsed, tokens}} -> coerce(parsed, tokens) end)
+      |> List.last()
+      |> case do
+        {:ok, output} -> {:ok, %{output | name: input.name}}
+        error -> error
+      end
+    end
+  end
+
+  defmodule ContextPipeline do
+    @moduledoc false
+    use ALLM.Pipeline, name: "llm_step_context", returns: :run
+
+    alias ALLM.Pipeline.LLMStepTest.{Widget, WidgetStep}
+
+    stage(:widget, WidgetStep, input: :widget_input)
+
+    defp widget_input(_ctx, _prev), do: Widget.Input.new(name: "dsl")
+  end
+
   # ── The generated Step surface ──────────────────────────────────────────────
 
   describe "the generated Step surface" do
@@ -274,11 +352,12 @@ defmodule ALLM.Pipeline.LLMStepTest do
 
   # ── The call ────────────────────────────────────────────────────────────────
 
-  describe "call_llm/1" do
+  describe "call_llm/2" do
     test "resolves the declared engine and sends the derived schema under its name" do
       respond(%{"kind" => "alpha"})
 
-      assert {:ok, _parsed, _tokens} = WidgetStep.call_llm(Widget.Input.new(name: "gadget"))
+      assert {:ok, _parsed, _tokens} =
+               WidgetStep.call_llm(Context.detached(), Widget.Input.new(name: "gadget"))
 
       assert [{prompt, schema_name, engine}] = calls()
       assert prompt == "describe gadget"
@@ -291,7 +370,7 @@ defmodule ALLM.Pipeline.LLMStepTest do
       Process.put(:stub_response, {:error, {:llm_error, :rate_limited}})
 
       assert {:error, {:llm_error, :rate_limited}} =
-               WidgetStep.call_llm(Widget.Input.new(name: "gadget"))
+               WidgetStep.call_llm(Context.detached(), Widget.Input.new(name: "gadget"))
     end
 
     test "an untagged adapter error is normalized to the package's shape" do
@@ -300,7 +379,7 @@ defmodule ALLM.Pipeline.LLMStepTest do
       Process.put(:stub_response, {:error, :boom})
 
       assert {:error, {:llm_error, :boom}} =
-               WidgetStep.call_llm(Widget.Input.new(name: "gadget"))
+               WidgetStep.call_llm(Context.detached(), Widget.Input.new(name: "gadget"))
     end
 
     test "an unwired host raises, naming the registry key that fixes it" do
@@ -308,11 +387,101 @@ defmodule ALLM.Pipeline.LLMStepTest do
 
       message =
         assert_raise(RuntimeError, fn ->
-          WidgetStep.call_llm(Widget.Input.new(name: "gadget"))
+          WidgetStep.call_llm(Context.detached(), Widget.Input.new(name: "gadget"))
         end).message
 
       assert message =~ "llm:"
       assert message =~ "ALLM.Pipeline.LLM"
+    end
+  end
+
+  describe "the step's context reaches the seam" do
+    setup do
+      # The module-level setup snapshots and restores the env; this only swaps
+      # the adapter.
+      Application.put_env(:allm_pipeline, LLM, impl: ContextStubLLM)
+      :ok
+    end
+
+    test "call_llm/1 does not exist; call_llm/2 does" do
+      refute function_exported?(WidgetStep, :call_llm, 1)
+      assert function_exported?(WidgetStep, :call_llm, 2)
+    end
+
+    test "a run option reaches both context-taking callbacks" do
+      ctx = Context.detached(engines: %{nano: :x})
+
+      assert {:ok, _output} = WidgetStep.execute(ctx, Widget.Input.new(name: "gadget"))
+
+      assert_received {:llm_ctx, :resolve_engine, seen}
+      assert Context.get_opt(seen, :engines) == %{nano: :x}
+
+      assert_received {:llm_ctx, :generate_structured, seen}
+      assert Context.get_opt(seen, :engines) == %{nano: :x}
+    end
+
+    test "a bare-map context is normalized to an empty context" do
+      assert {:ok, _output} = WidgetStep.execute(%{}, Widget.Input.new(name: "gadget"))
+
+      assert_received {:llm_ctx, :resolve_engine, %Context{opts: []}}
+      assert_received {:llm_ctx, :generate_structured, %Context{opts: []}}
+    end
+
+    test "a nil context is normalized to an empty context" do
+      assert {:ok, _output} = WidgetStep.execute(nil, Widget.Input.new(name: "gadget"))
+
+      assert_received {:llm_ctx, :resolve_engine, %Context{opts: []}}
+      assert_received {:llm_ctx, :generate_structured, %Context{opts: []}}
+    end
+
+    test "an overriding execute/2 that fans out passes the context from every child" do
+      ctx = Context.detached(account_id: "a3")
+
+      assert {:ok, _output} = FanOutStep.execute(ctx, Widget.Input.new(name: "gadget"))
+
+      for _ <- 1..3 do
+        assert_received {:llm_ctx, :generate_structured, seen}
+        assert Context.get_opt(seen, :account_id) == "a3"
+      end
+
+      refute_received {:llm_ctx, :generate_structured, _}
+    end
+  end
+
+  describe "the step's context reaches the seam through a run" do
+    setup do
+      pid = Ecto.Adapters.SQL.Sandbox.start_owner!(ALLM.Pipeline.Config.repo(), shared: true)
+      on_exit(fn -> Ecto.Adapters.SQL.Sandbox.stop_owner(pid) end)
+      Application.put_env(:allm_pipeline, LLM, impl: ContextStubLLM)
+      :ok
+    end
+
+    test "Executor.run_step/5's options and lineage reach the seam" do
+      {:ok, run} = ALLM.Pipeline.Executor.create_pipeline_run("llm_step_context_executor")
+
+      assert {:ok, step_log, _output} =
+               ALLM.Pipeline.Executor.run_step(
+                 run,
+                 WidgetStep,
+                 Widget.Input.new(name: "gadget"),
+                 nil,
+                 account_id: "a1"
+               )
+
+      assert_received {:llm_ctx, :generate_structured, seen}
+      assert Context.get_opt(seen, :account_id) == "a1"
+      assert Context.step_log_id(seen) == step_log.id
+      assert Context.pipeline_run_id(seen) == run.id
+    end
+
+    test "a DSL run's options reach the seam" do
+      assert {:ok, %ALLM.Pipeline.PipelineRun{}} = ContextPipeline.run(account_id: "a2")
+
+      assert_received {:llm_ctx, :resolve_engine, seen}
+      assert Context.get_opt(seen, :account_id) == "a2"
+
+      assert_received {:llm_ctx, :generate_structured, seen}
+      assert Context.get_opt(seen, :account_id) == "a2"
     end
   end
 

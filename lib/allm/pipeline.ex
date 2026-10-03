@@ -184,6 +184,10 @@ defmodule ALLM.Pipeline do
   producing stage rather than chaining. A DSL that "helpfully" chained them would
   fail a structural-identity gate against the hand-written equivalent.
 
+  Run options travel the same way: a body that calls `Executor.run_step/5` passes
+  `ctx.opts` through, or the inner step — and the LLM adapter it calls — sees
+  none of the run's options.
+
   Three rules follow:
 
   * A **skip is lineage-transparent**: the next stage's `input_step_id` is the

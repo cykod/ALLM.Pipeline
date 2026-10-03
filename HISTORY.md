@@ -1,3 +1,23 @@
+## [FEAT] Pass the step's context through the LLM seam
+*Saturday, October 3rd at 2pm*
+The LLM seam now receives the step's %ALLM.Pipeline.Context{}, so a host 
+adapter can read run options (engine overrides, account ids) with 
+Context.get_opt/3. This is subphase 1.1 of 
+steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md.
+
+- ALLM.Pipeline.LLM gains optional resolve_engine/2 and generate_structured/5 
+callbacks, dispatched per callback (after Code.ensure_loaded?/1) and falling 
+back to the mandatory /1 and /4.
+- BREAKING: LLMStep's generated call_llm/1 is replaced by call_llm(context, 
+input); an overriding execute/2 passes its context. A bare map or nil context 
+normalizes to Context.detached().
+- Moduledocs and guides document the step's context, the reserved option keys, 
+and the run-metadata persistence hazard for options carrying credentials.
+- New llm_test.exs (dispatch, lazy-load, optional set) and llm_step_test.exs 
+coverage across detached, Executor, DSL and Task fan-out paths.
+
+---
+
 ## [FEAT] Inline input_schema/output_schema blocks for steps
 *Thursday, September 3rd at 6pm*
 A step can now declare its Input and Output schemas inline instead of writing 

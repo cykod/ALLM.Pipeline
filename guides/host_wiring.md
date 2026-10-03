@@ -70,6 +70,23 @@ delegation to the host's existing engine, returning the host's own
 `{:ok, %{parsed: _, tokens: _}}` envelope unchanged), are in
 `ALLM.Pipeline.LLM`'s moduledoc.
 
+An adapter that needs the calling step's context — a per-run engine override,
+an account to attribute a call to, usage to meter — also exports the optional
+`resolve_engine/2` and/or `generate_structured/5`, which receive the step's
+`ALLM.Pipeline.Context` as their last argument and read run options with
+`ALLM.Pipeline.Context.get_opt/3`. The package calls those in preference to
+`resolve_engine/1` / `generate_structured/4`, per callback. The `/1` + `/4`
+pair stays mandatory on the behaviour; in an adapter exporting the context
+arities, make them **raise** rather than delegate with an empty context — the
+package never calls them there, so reaching one is a bug an empty context
+would hide.
+
+Run options are persisted: under the DSL's default `metadata:` hook they are
+written to `pipeline_runs.metadata`. A host passing engine structs or
+credentials as run options declares a `metadata:` hook that drops them, or
+passes engine *names* and resolves them in its adapter. See "The step's
+context" in `ALLM.Pipeline.LLM`'s moduledoc.
+
 ## 3. Production DDL adoption
 
 The package ships **no** production migrations — table names are a contract and

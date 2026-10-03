@@ -3,7 +3,7 @@ defmodule ALLM.Pipeline.LLMCallLog do
   Per-step collector for full LLM-call inputs/outputs.
 
   The `Executor` calls `activate/0` in the step process before `execute/2` and
-  `drain/0` after; a host's LLM engine's `generate_structured/4`
+  `drain/0` after; a host's LLM engine's `generate_structured/4` (or `/5`)
   calls `record/1` for each call. The active collector pid lives in the step
   process's dictionary and is resolved from child tasks via the same
   `:"$callers"` walk the host engine uses for engine injection, so a future
@@ -36,7 +36,7 @@ defmodule ALLM.Pipeline.LLMCallLog do
   @typedoc """
   One logical LLM call's captured input/output.
 
-  Built by a host's LLM engine's `generate_structured/4`; the map carries the redacted
+  Built by a host's LLM engine's `generate_structured/4` (or `/5`); the map carries the redacted
   `messages`, the `schema_name`, the requested `model` / `adapter` / `params`,
   and — depending on outcome — the raw `response_text` / `usage` /
   `finish_reason` / `served_model`, or an `error` string. The exact keys are

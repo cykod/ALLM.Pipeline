@@ -107,9 +107,10 @@ defmodule ALLM.Pipeline.Schema.JsonSchema do
 
   The consequence is a divergence, not a production defect: a host's engine
   normalizes the schema unconditionally inside its `generate_structured/4`
-  path, so the model still receives a repaired, compliant schema. What is lost
-  is this module's headline guarantee — that a malformed wire contract is a
-  *compile* error rather than something a downstream normalizer quietly fixes.
+  (or `/5`) path, so the model still receives a repaired, compliant schema.
+  What is lost is this module's headline guarantee — that a malformed wire
+  contract is a *compile* error rather than something a downstream normalizer
+  quietly fixes.
   Both halves are pinned: the package test asserts an object-shaped literal is
   emitted untouched, and a consumer repo's schema-normalization test asserts
   the host normalizer is what repairs it.

@@ -45,7 +45,7 @@ defmodule ALLM.Pipeline.LLMStep do
   |---|---|
   | `step_type/0`, `input_schema/0`, `output_schema/0` | the `ALLM.Pipeline.Step` callbacks, from the `use` options (see "Where the schema modules come from") |
   | `json_schema/0` | the Output's derived strict-mode schema — `output.__allm_schema__(:json_schema)` |
-  | `call_llm/1` | `prompt/1` → `ALLM.Pipeline.LLM.impl().generate_structured/4`; `{:ok, parsed, tokens}` or `{:error, {:llm_error, reason}}` |
+  | `call_llm/2` | `(context, input)`: `prompt/1` → the host adapter's `generate_structured/5` (or `/4`), handed the step's context; `{:ok, parsed, tokens}` or `{:error, {:llm_error, reason}}` |
   | `coerce/2` | parsed payload + token count → the Output struct |
   | `post_process/2` | identity; the ordinary hook, **overridable** |
   | `execute/2` | a thin composition of the three above, **overridable** |
@@ -82,10 +82,10 @@ defmodule ALLM.Pipeline.LLMStep do
   the coercion lived inside `execute/2` an overriding step would have to
   hand-write it again and the macro would buy that step nothing.
 
-  So an overriding `execute/2` calls `coerce/2` itself, and gets the wire-name
-  mapping, the enum coercion and the token plumbing for free. `llm_step_test.exs`
-  pins that an override calling `coerce/2` produces a struct identical to the
-  generated path's.
+  So an overriding `execute/2` calls `call_llm(context, input)` and `coerce/2`
+  itself, and gets the wire-name mapping, the enum coercion and the token
+  plumbing for free. `llm_step_test.exs` pins that an override calling
+  `coerce/2` produces a struct identical to the generated path's.
 
   ## What `coerce/2` does, field by field
 
@@ -181,9 +181,18 @@ defmodule ALLM.Pipeline.LLMStep do
 
   ## The engine name is the host's vocabulary
 
-  `engine: :nano` is resolved through `ALLM.Pipeline.LLM.impl().resolve_engine/1`
-  at **call** time. The package neither knows nor validates the names — see
+  `engine: :nano` is resolved through the host adapter's `resolve_engine/2` (or
+  `/1`) at **call** time. The package neither knows nor validates the names — see
   `ALLM.Pipeline.LLM`.
+
+  `call_llm/2` takes the step's context so the adapter can see it — a per-run
+  engine override, an account to attribute the call to. An overriding
+  `execute/2` passes the context it received — `call_llm/2` has no arity that
+  omits it, so dropping the run's options takes an explicit `nil`, and a call
+  that dropped them would call the wrong engine or attribute the call to no
+  one. A bare map or `nil` (a step called outside any run) reaches the adapter
+  as an empty `ALLM.Pipeline.Context.detached/0`; any other struct is rejected
+  with a `FunctionClauseError`.
   """
 
   require Logger
@@ -253,16 +262,25 @@ defmodule ALLM.Pipeline.LLMStep do
       def json_schema, do: @allm_llm_step_output.__allm_schema__(:json_schema)
 
       @doc """
-      Build the prompt, dispatch it, and unwrap the host's envelope.
+      Build the prompt, dispatch it with the step's `context`, and unwrap the
+      host's envelope.
+
+      An overriding `execute/2` passes the context it received. A bare map or
+      `nil` is accepted and treated as an empty detached context.
 
       Returns `{:ok, parsed, tokens}` with the payload's **string** keys intact,
       or `{:error, {:llm_error, reason}}` — the error is logged here, so a
       caller's error arm need only propagate it.
       """
-      @spec call_llm(struct()) ::
+      @spec call_llm(ALLM.Pipeline.Context.t() | map() | nil, struct()) ::
               {:ok, map(), non_neg_integer()} | {:error, {:llm_error, term()}}
-      def call_llm(input) do
-        ALLM.Pipeline.LLMStep.__call_llm__(__MODULE__, @allm_llm_step, prompt(input))
+      def call_llm(context, input) do
+        ALLM.Pipeline.LLMStep.__call_llm__(
+          __MODULE__,
+          @allm_llm_step,
+          prompt(input),
+          ALLM.Pipeline.LLM.__context__(context)
+        )
       end
 
       @doc """
@@ -289,8 +307,8 @@ defmodule ALLM.Pipeline.LLMStep do
 
       @impl ALLM.Pipeline.Step
       @spec execute(ALLM.Pipeline.Context.t(), struct()) :: {:ok, struct()} | {:error, term()}
-      def execute(_context, input) do
-        with {:ok, parsed, tokens} <- call_llm(input),
+      def execute(context, input) do
+        with {:ok, parsed, tokens} <- call_llm(context, input),
              {:ok, output} <- coerce(parsed, tokens) do
           {:ok, post_process(output, input)}
         end
@@ -370,14 +388,26 @@ defmodule ALLM.Pipeline.LLMStep do
   end
 
   @doc false
-  @spec __call_llm__(module(), declaration(), ALLM.Pipeline.LLM.prompt()) ::
+  @spec __call_llm__(
+          module(),
+          declaration(),
+          ALLM.Pipeline.LLM.prompt(),
+          ALLM.Pipeline.Context.t()
+        ) ::
           {:ok, map(), non_neg_integer()} | {:error, {:llm_error, term()}}
-  def __call_llm__(module, declaration, prompt) do
+  def __call_llm__(module, declaration, prompt, context) do
     impl = ALLM.Pipeline.LLM.impl()
-    engine = impl.resolve_engine(declaration.engine)
+    engine = ALLM.Pipeline.LLM.__resolve_engine__(impl, declaration.engine, context)
     schema = declaration.output.__allm_schema__(:json_schema)
 
-    case impl.generate_structured(prompt, schema, declaration.schema_name, engine) do
+    case ALLM.Pipeline.LLM.__generate_structured__(
+           impl,
+           prompt,
+           schema,
+           declaration.schema_name,
+           engine,
+           context
+         ) do
       {:ok, %{parsed: parsed, tokens: tokens}} ->
         {:ok, parsed, tokens}
 
