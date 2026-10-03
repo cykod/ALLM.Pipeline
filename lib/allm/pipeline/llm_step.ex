@@ -355,7 +355,7 @@ defmodule ALLM.Pipeline.LLMStep do
   defmacro __before_compile__(env) do
     declaration = Module.get_attribute(env.module, :allm_llm_step)
 
-    assert_input_struct!(env.module, declaration.input)
+    __assert_input_struct__!(env.module, declaration.input)
     assert_derives_json_schema!(env.module, declaration.output)
     assert_tokens_used_off_wire!(env.module, declaration.output)
     assert_defines_prompt!(env)
@@ -429,15 +429,18 @@ defmodule ALLM.Pipeline.LLMStep do
             inspect(reason)
         )
 
-        {:error, llm_error(reason)}
+        {:error, __llm_error__(reason)}
     end
   end
 
+  @doc false
   # The host's engine already returns `{:error, {:llm_error, _}}`; a different
-  # adapter need not, and the package's contract is the tagged form.
-  @spec llm_error(term()) :: {:llm_error, term()}
-  defp llm_error({:llm_error, _} = tagged), do: tagged
-  defp llm_error(reason), do: {:llm_error, reason}
+  # adapter need not, and the package's contract is the tagged form. Public for
+  # `ALLM.Pipeline.ClassifyStep`, which tags its seam errors the same way — one
+  # copy of the normalization.
+  @spec __llm_error__(term()) :: {:llm_error, term()}
+  def __llm_error__({:llm_error, _} = tagged), do: tagged
+  def __llm_error__(reason), do: {:llm_error, reason}
 
   @doc false
   @spec __coerce__(module(), map(), non_neg_integer()) ::
@@ -591,6 +594,15 @@ defmodule ALLM.Pipeline.LLMStep do
 
   defp coerce_scalar(:passthrough, raw, _values), do: {:ok, raw}
 
+  @doc false
+  # The vocabulary rule for an `atom()` field, exposed for
+  # `ALLM.Pipeline.ClassifyStep`'s choice answers so the rule has ONE owner:
+  # member → the declared atom; unknown → `:other` iff declared, else
+  # `{:unknown_value, raw}`. A caller must not pass `nil` (see `map_ok/3`).
+  @spec __coerce_atom__(term(), [atom() | String.t()] | nil) ::
+          {:ok, atom()} | {:error, term()}
+  def __coerce_atom__(raw, values), do: coerce_scalar(:atom, raw, values)
+
   @spec unknown_value(term(), [atom() | String.t()]) :: {:ok, :other} | {:error, term()}
   defp unknown_value(raw, values) do
     # `:other` is a fallback only where the vocabulary declares it. An
@@ -668,15 +680,19 @@ defmodule ALLM.Pipeline.LLMStep do
   # `input_schema/0` is allowed to name a plain `defstruct` — see
   # `ALLM.Pipeline.Executor.validate_against/3`'s non-DSL fallback and the
   # census test that pins its membership.
-  @spec assert_input_struct!(module(), module()) :: :ok
-  defp assert_input_struct!(module, input) do
+  #
+  # Public for `ALLM.Pipeline.ClassifyStep`, whose `input:` is the same option
+  # with the same meaning — one copy of the predicate.
+  @doc false
+  @spec __assert_input_struct__!(module(), module()) :: :ok
+  def __assert_input_struct__!(module, input) do
     if match?({:module, _}, Code.ensure_compiled(input)) and
          function_exported?(input, :__struct__, 0) do
       :ok
     else
       raise ArgumentError,
             "#{inspect(module)}: `input: #{inspect(input)}` does not name a compiled struct " <>
-              "module. `prompt/1` receives the Input STRUCT, and `ALLM.Pipeline.Executor` " <>
+              "module. The step's callbacks receive the Input STRUCT, and `ALLM.Pipeline.Executor` " <>
               "casts the step's input against it, so an atom that merely looks like a module " <>
               "surfaces far from here — as an `UndefinedFunctionError` on the first run."
     end
@@ -765,6 +781,13 @@ defmodule ALLM.Pipeline.LLMStep do
       "Known options: #{inspect(@use_options)}."
   end
 
+  @doc false
+  # The shape rule for an atom-valued `use` option: an atom that is neither
+  # `nil` nor a boolean (`is_atom(true)` is `true`). One copy, shared with
+  # `ALLM.Pipeline.ClassifyStep`'s option validation; the messages stay local.
+  defguard __atom_option__(value)
+           when is_atom(value) and not is_nil(value) and not is_boolean(value)
+
   # ONE shape check for all four atom-valued options, with the expected kind
   # supplied for the message. `input:`/`output:` used to have a second copy of
   # this named `fetch_module!/3` whose body was byte-identical — a module IS an
@@ -772,12 +795,12 @@ defmodule ALLM.Pipeline.LLMStep do
   # passed. The only honest module check is that the module EXISTS, and it
   # cannot run here: at `use` time the Output is conventionally a sibling file
   # that has not been compiled yet. It runs in `__before_compile__` instead —
-  # `assert_input_struct!/2` and `assert_derives_json_schema!/2`, both of which
+  # `__assert_input_struct__!/2` and `assert_derives_json_schema!/2`, both of which
   # go through `Code.ensure_compiled/1`'s handshake.
   @spec fetch_atom!(keyword(), atom(), module(), String.t()) :: atom()
   defp fetch_atom!(opts, key, module, expected) do
     case Keyword.fetch(opts, key) do
-      {:ok, value} when is_atom(value) and not is_nil(value) and not is_boolean(value) ->
+      {:ok, value} when __atom_option__(value) ->
         value
 
       {:ok, other} ->

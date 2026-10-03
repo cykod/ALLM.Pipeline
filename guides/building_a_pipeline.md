@@ -123,6 +123,46 @@ for free — see the `ALLM.Pipeline.LLMStep` moduledoc.
 An LLM step needs the `llm:` seam wired; a host that runs no LLM steps may omit
 it (see [the host-wiring guide](host_wiring.md) section 2).
 
+### A classification step
+
+A step that classifies its input — pick one option, place it on a scale, give
+the probability of "yes" — is authored with `use ALLM.Pipeline.ClassifyStep`
+over ALLM's typed classification (`ALLM.classify/3`). Instead of `prompt/1` it
+supplies `state/1` (what to classify) and `questions/1` (typed questions keyed
+by Output field name), and each answer is coerced into its field:
+
+```elixir
+defmodule MyApp.TriageStep do
+  use ALLM.Pipeline.ClassifyStep, type: :triage, engine: :classifier
+
+  alias ALLM.ClassificationQuestion
+
+  input_schema do
+    field :text, String.t(), required: true
+  end
+
+  output_schema do
+    field :department, atom(), values: [:billing, :technical, :other]
+    field :refund, float()
+  end
+
+  def state(%Input{text: text}), do: text
+
+  def questions(_input) do
+    %{
+      department: ClassificationQuestion.choice("Which department?", ["billing", "technical"]),
+      refund: ClassificationQuestion.yes_no("Is a refund requested?")
+    }
+  end
+end
+```
+
+The host's `llm:` adapter needs the optional `classify/4` callback, and maps
+the step's `engine:` name to an engine with a classification adapter (see
+[the host-wiring guide](host_wiring.md) section 2). `ALLM.Pipeline.ClassifyStep`'s
+moduledoc is the authority for what it generates, the question-id rules, and
+how each answer type is coerced.
+
 ## 3. Composing a pipeline
 
 `use ALLM.Pipeline` turns a module into a pipeline: it owns the run skeleton —
@@ -235,6 +275,6 @@ tiered DynamoDB/S3 backends.
   the production DDL, and the test-suite pattern that make the code above run.
 - `ALLM.Pipeline` — the full DSL: skips, sections, resources, borrowed runs,
   `--dry-run`, and the lineage rules.
-- `ALLM.Pipeline.Schema`, `ALLM.Pipeline.Step`, `ALLM.Pipeline.LLMStep` — the
-  authoring contracts.
+- `ALLM.Pipeline.Schema`, `ALLM.Pipeline.Step`, `ALLM.Pipeline.LLMStep`,
+  `ALLM.Pipeline.ClassifyStep` — the authoring contracts.
 - `ALLM.Pipeline.Query` — the read facade for step logs, lineage and artifacts.

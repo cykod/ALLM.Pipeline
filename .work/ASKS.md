@@ -17,3 +17,17 @@
         [ASRV] sat 10/3/2026 2pm - Architecture and security review on subphase 1.1 of steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md
 
         [FIX] sat 10/3/2026 2pm - Fix LLM seam 1.1 review findings (functional F1 doc, code-review F1-F5)
+
+        [MILE] sat 10/3/2026 2pm - Committed subphase 1.1 (step context reaches the LLM seam, call_llm/2) of 2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md
+
+        [IMPL] sat 10/3/2026 2pm - Implement phase 2 (subphases 2.1 classify/4 seam callback and 2.2 ClassifyStep) from steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md
+
+        [REVW] sat 10/3/2026 2pm - Functional review of LLM seam phase 2 (classify/4 seam callback + ClassifyStep)
+
+        [CDRV] sat 10/3/2026 2pm - Code review of Phase 2 (2.1+2.2) of steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md — classify seam + ClassifyStep
+
+        [ASRV] sat 10/3/2026 2pm - Architecture and security review on Phase 2 (2.1+2.2) of steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md — classify seam + ClassifyStep
+
+        [FIX] sat 10/3/2026 2pm - Fix LLM seam Phase 2 batch-2 review findings (D-impl-6 seam check, questions/1 non-map, doc wording, polish)
+
+        [CDRV] sat 10/3/2026 3pm - Code review of the batch-2 fix-pass delta for steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md (2-checkpoint..2-fix)

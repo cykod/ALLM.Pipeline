@@ -1,3 +1,24 @@
+## [FEAT] Add ClassifyStep over ALLM 0.6.0 typed classification
+*Saturday, October 3rd at 3pm*
+Adds a classification step kind routed through the LLM seam (Phase 2 of 
+steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md).
+
+- ALLM.Pipeline.LLM gains an optional classify/4 callback (a one-line 
+delegation to ALLM.classify/3) and a dispatch helper that raises loudly when 
+the adapter lacks it, and names the adapter when it returns anything but a 
+ClassificationResponse or an error.
+- New use ALLM.Pipeline.ClassifyStep: validated options, compile-time checks 
+(input struct, schema output, state/1 + questions/1 defined, no wire:, values: 
+on atom fields), question-id validation before any provider call, and a coerce 
+table mapping choice/score/yes_no answers onto typed Output fields.
+- LLMStep exposes its input-struct assertion, atom-vocabulary coercion, error 
+tagging and atom-option guard as shared helpers so ClassifyStep keeps one copy 
+of each rule.
+- The allm requirement's floor rises to 0.6.0 (>= 0.6.0 and < 1.0.0); README 
+and guides document the step and the classify/4 wiring.
+
+---
+
 ## [FEAT] Pass the step's context through the LLM seam
 *Saturday, October 3rd at 2pm*
 The LLM seam now receives the step's %ALLM.Pipeline.Context{}, so a host 

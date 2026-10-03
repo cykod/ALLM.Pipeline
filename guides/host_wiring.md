@@ -57,8 +57,9 @@ are load-bearing (a value folded into a compile-time declaration is unset in a
 ## 2. The optional `llm:` seam
 
 `llm:` is the one wiring key a host may omit. A host that runs no
-`ALLM.Pipeline.LLMStep` steps need not name an engine, so an undeclared `llm:`
-installs nothing — and `ALLM.Pipeline.LLM.impl/0` then **raises**, by design,
+`ALLM.Pipeline.LLMStep` or `ALLM.Pipeline.ClassifyStep` steps need not name an
+engine, so an undeclared `llm:` installs nothing — and
+`ALLM.Pipeline.LLM.impl/0` then **raises**, by design,
 naming the `llm:` registry key.
 
 That is deliberate, not a defect: unlike `store` / `artifacts` / `lock`, there
@@ -80,6 +81,18 @@ pair stays mandatory on the behaviour; in an adapter exporting the context
 arities, make them **raise** rather than delegate with an empty context — the
 package never calls them there, so reaching one is a bug an empty context
 would hide.
+
+A host that runs `ALLM.Pipeline.ClassifyStep` steps also exports the optional
+`classify/4`, a one-line delegation to `ALLM.classify/3` that returns ALLM's
+`ALLM.ClassificationResponse` unchanged; the step's `engine:` name resolves
+through the same `resolve_engine/1` (or `/2`), to an `ALLM.Engine` carrying a
+`:classification_adapter`. A classify step on an adapter without `classify/4`
+raises, naming the callback. A bare delegation records nothing into
+`ALLM.Pipeline.LLMCallLog` — the host's own engine writes those entries — so
+unless the adapter records an entry, a classify step's step log carries no
+LLM-call artifact and its `llm_call_count` and `llm_total_tokens` stay `NULL`,
+not `0`. The Output's `tokens_used` field, when declared, carries the
+response's total.
 
 Run options are persisted: under the DSL's default `metadata:` hook they are
 written to `pipeline_runs.metadata`. A host passing engine structs or

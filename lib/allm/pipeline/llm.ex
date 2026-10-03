@@ -21,8 +21,9 @@ defmodule ALLM.Pipeline.LLM do
 
   `resolve_engine/1` (or `/2`) takes an atom naming a *call-site intent*
   (`:nano`, `:summarize`, …) and returns whatever engine value the host's
-  `generate_structured/4` (or `/5`) accepts. The package never inspects it and
-  never validates the name — the vocabulary belongs to the host, and a step
+  `generate_structured/4` (or `/5`) accepts — or, for a classify step,
+  `classify/4`. The package never inspects it and never validates the name —
+  the vocabulary belongs to the host, and a step
   declaring `engine: :nano` is asserting that its host knows that name. An
   unknown name is the host adapter's error to raise.
 
@@ -31,7 +32,8 @@ defmodule ALLM.Pipeline.LLM do
   An adapter that exports `resolve_engine/2` or `generate_structured/5`
   receives the calling step's `ALLM.Pipeline.Context` as the last argument, and
   the package calls that arity in preference to `/1` / `/4` — per callback, so
-  an adapter may take the context in one and not the other. This is how a host
+  an adapter may take the context in one and not the other. `classify/4`, the
+  optional callback a classify step needs, always takes it. This is how a host
   applies a per-run engine override, attributes a call to an account, or meters
   usage itself:
 
@@ -99,7 +101,7 @@ defmodule ALLM.Pipeline.LLM do
   A host engine handle, opaque to the package.
 
   Whatever `resolve_engine/1` (or `/2`) returns is passed straight back into
-  `generate_structured/4` (or `/5`); nothing here inspects it.
+  `generate_structured/4` (or `/5`), or `classify/4`; nothing here inspects it.
   """
   @type engine :: term()
 
@@ -164,7 +166,37 @@ defmodule ALLM.Pipeline.LLM do
               context :: Context.t()
             ) :: result()
 
-  @optional_callbacks resolve_engine: 2, generate_structured: 5
+  @doc """
+  Classify `state` against typed `questions` — optional, needed only by
+  `ALLM.Pipeline.ClassifyStep`.
+
+  `questions` is keyed by string question id. `engine` is whatever
+  `resolve_engine/1` (or `/2`) returned for the step's `engine:` name; for a
+  classify step the host maps that name to an `ALLM.Engine` carrying a
+  `:classification_adapter`. The intended implementation is a one-line
+  delegation that returns ALLM's response unchanged:
+
+      @impl true
+      def classify(state, questions, engine, _context),
+        do: ALLM.classify(engine, state, questions: questions)
+
+  The error term is opaque to the package, which only tags it
+  `{:llm_error, reason}`.
+
+  A bare delegation records nothing into `ALLM.Pipeline.LLMCallLog` (the
+  host's own engine writes those entries), so unless the adapter records an
+  entry, a classify step's step log carries no LLM-call artifact and its
+  `llm_call_count` and `llm_total_tokens` stay `nil`, not `0`. The Output's
+  `tokens_used` field, when declared, carries the response's total.
+  """
+  @callback classify(
+              state :: ALLM.ClassificationRequest.state(),
+              questions :: %{String.t() => ALLM.ClassificationQuestion.t()},
+              engine :: engine(),
+              context :: Context.t()
+            ) :: {:ok, ALLM.ClassificationResponse.t()} | {:error, term()}
+
+  @optional_callbacks resolve_engine: 2, generate_structured: 5, classify: 4
 
   @doc """
   The host's LLM adapter.
@@ -229,8 +261,10 @@ defmodule ALLM.Pipeline.LLM do
   # `Code.ensure_loaded/1` comes first because `impl/0` returns a bare atom and
   # never loads it: `function_exported?/3` answers `false` for an unloaded
   # module, which would silently pick the context-free arity on the first call
-  # of a lazily loaded (interactive-mode) host. On a load failure the legacy
-  # branch runs and raises `UndefinedFunctionError` naming the adapter.
+  # of a lazily loaded (interactive-mode) host. On a load failure
+  # `__resolve_engine__/3` and `__generate_structured__/6` take the legacy
+  # branch, which raises `UndefinedFunctionError` naming the adapter;
+  # `__classify__/5` has no legacy branch and raises its own message.
 
   @doc false
   # Resolve an engine, preferring the adapter's `resolve_engine/2`.
@@ -249,6 +283,65 @@ defmodule ALLM.Pipeline.LLM do
     if exports?(impl, :generate_structured, 5),
       do: impl.generate_structured(prompt, schema, schema_name, engine, context),
       else: impl.generate_structured(prompt, schema, schema_name, engine)
+  end
+
+  @doc false
+  # Classify through the adapter's `classify/4`. There is no context-free
+  # fallback to choose, so an adapter without it is a wiring bug and raises —
+  # loudly, like `impl/0` — before anything else is called. A load failure is
+  # named as one, rather than as a loaded adapter missing the callback.
+  #
+  # The callback's return is checked here, at the boundary, so this function's
+  # spec is enforced rather than assumed and every caller can match on it.
+  @spec __classify__(
+          module(),
+          ALLM.ClassificationRequest.state(),
+          %{String.t() => ALLM.ClassificationQuestion.t()},
+          engine(),
+          Context.t()
+        ) :: {:ok, ALLM.ClassificationResponse.t()} | {:error, term()}
+  def __classify__(impl, state, questions, engine, %Context{} = context) do
+    case Code.ensure_loaded(impl) do
+      {:module, ^impl} ->
+        unless function_exported?(impl, :classify, 4),
+          do: raise(no_classify_message(impl, "does not export classify/4"))
+
+        checked_classification!(impl, impl.classify(state, questions, engine, context))
+
+      {:error, reason} ->
+        raise no_classify_message(impl, "could not be loaded (#{inspect(reason)})")
+    end
+  end
+
+  # `impl` is a host module the compiler never sees, so the callback's spec is a
+  # promise, kept by an explicit match — never a `KeyError` or `CaseClauseError`
+  # far from the adapter.
+  @spec checked_classification!(module(), term()) ::
+          {:ok, ALLM.ClassificationResponse.t()} | {:error, term()}
+  defp checked_classification!(_impl, {:ok, %ALLM.ClassificationResponse{}} = ok), do: ok
+  defp checked_classification!(_impl, {:error, _reason} = error), do: error
+
+  defp checked_classification!(impl, other) do
+    raise ArgumentError,
+          "#{inspect(impl)}.classify/4 returned #{inspect(other)}; the ALLM.Pipeline.LLM " <>
+            "contract is {:ok, %ALLM.ClassificationResponse{}} | {:error, reason} — return " <>
+            "ALLM.classify/3's result unchanged."
+  end
+
+  @spec no_classify_message(module(), String.t()) :: String.t()
+  defp no_classify_message(impl, problem) do
+    """
+    ALLM.Pipeline's LLM adapter #{inspect(impl)} #{problem}, but a classify step \
+    tried to call it.
+
+    ALLM.Pipeline.ClassifyStep reaches the host through the optional classify/4 \
+    callback of the ALLM.Pipeline.LLM behaviour. Define it on the adapter as a \
+    delegation to ALLM.classify/3:
+
+        @impl true
+        def classify(state, questions, engine, _context),
+          do: ALLM.classify(engine, state, questions: questions)
+    """
   end
 
   @doc false

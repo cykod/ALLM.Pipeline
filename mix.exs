@@ -133,8 +133,14 @@ defmodule ALLMPipeline.MixProject do
       {:telemetry, "~> 1.0"},
 
       # Hard dependency, and the reason for the namespace: the framework's
-      # centre of gravity is LLM pipelines (extraction plan §3.1).
-      {:allm, "~> 0.4.2"},
+      # centre of gravity is LLM pipelines (extraction plan §3.1). 0.6.0 is the
+      # floor: `lib/` builds and matches ALLM's typed-classification structs
+      # (`ALLM.ClassificationAnswer` / `ClassificationResponse`, read by
+      # `ALLM.Pipeline.ClassifyStep`) and calls `ALLM.Usage.total_tokens/1`,
+      # none of which exist before 0.6.0. Deliberately wider than `~>` above
+      # it: if a 0.x release breaks the precommit gate, cap the ceiling below
+      # that release (or adapt the code and raise the floor).
+      {:allm, ">= 0.6.0 and < 1.0.0"},
 
       # Optional, gated per artifact adapter. `Artifacts.Dynamo` needs
       # `ex_aws`/`ex_aws_dynamo`; `Artifacts.S3` (Phase 7) needs

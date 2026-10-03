@@ -34,7 +34,7 @@ defmodule ALLM.Pipeline.Schema.JsonSchemaCrossFileTest do
   often: `<step>.ex` beside `<step>/output.ex` is not a refactor away, it is the
   convention every ported transformer already follows. The second test below
   pins it, with its own fixture trio in `test/fixtures/cross_file_step/` —
-  `input.ex` too, because `LLMStep`'s `assert_input_struct!/2` probes that
+  `input.ex` too, because `LLMStep`'s `__assert_input_struct__!/2` probes that
   module across the same boundary.
   """
 

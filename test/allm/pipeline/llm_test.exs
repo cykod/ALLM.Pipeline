@@ -47,6 +47,35 @@ defmodule ALLM.Pipeline.LLMTest do
       do: {:legacy, prompt, schema, name, engine}
   end
 
+  # Exports `classify/4` and nothing else the classify helper could reach. It
+  # reports its arguments and returns whatever the test put under
+  # `:classify_return` (a contract-conforming error by default).
+  defmodule Classifier do
+    @moduledoc false
+    def classify(state, questions, engine, ctx) do
+      send(self(), {:classify, state, questions, engine, ctx})
+      Process.get(:classify_return, {:error, :scripted})
+    end
+  end
+
+  # Exports every OTHER seam function, each reporting a call — so a helper that
+  # dispatched anywhere before refusing would be observed.
+  defmodule NoClassify do
+    @moduledoc false
+    def resolve_engine(name), do: report({:resolve_engine, name})
+    def resolve_engine(name, _ctx), do: report({:resolve_engine, name})
+    def generate_structured(p, _s, _n, _e), do: report({:generate_structured, p})
+    def generate_structured(p, _s, _n, _e, _ctx), do: report({:generate_structured, p})
+    defp report(call), do: send(self(), {:unexpected_call, call})
+  end
+
+  # The intended host shape: a one-line delegation to `ALLM.classify/3`.
+  defmodule DelegatingClassifier do
+    @moduledoc false
+    def classify(state, questions, engine, _ctx),
+      do: ALLM.classify(engine, state, questions: questions)
+  end
+
   @ctx Context.detached(engines: %{nano: :override}, account_id: "acct")
 
   describe "__resolve_engine__/3" do
@@ -110,8 +139,110 @@ defmodule ALLM.Pipeline.LLMTest do
     end
   end
 
-  test "the context-taking callbacks are exactly the optional ones" do
+  describe "__classify__/5" do
+    @question ALLM.ClassificationQuestion.choice("Which team?", ["billing", "technical"])
+
+    test "an adapter exporting classify/4 gets every argument and the exact context" do
+      questions = %{"team" => @question}
+
+      LLM.__classify__(Classifier, "text", questions, :eng, @ctx)
+
+      assert_received {:classify, "text", seen_questions, :eng, ctx}
+      assert seen_questions === questions
+      assert ctx === @ctx
+    end
+
+    test "an adapter's error is returned unchanged" do
+      reason = %{why: make_ref()}
+      Process.put(:classify_return, {:error, reason})
+      assert LLM.__classify__(Classifier, %{"a" => 1}, %{}, :eng, @ctx) === {:error, reason}
+    end
+
+    test "an adapter's response is returned unchanged" do
+      ok =
+        {:ok,
+         %ALLM.ClassificationResponse{answers: %{}, request_id: "req-#{System.unique_integer()}"}}
+
+      Process.put(:classify_return, ok)
+      assert LLM.__classify__(Classifier, "text", %{}, :eng, @ctx) === ok
+    end
+
+    test "a success that is not a ClassificationResponse raises, naming the adapter" do
+      Process.put(:classify_return, {:ok, %{answers: %{}}})
+
+      message =
+        assert_raise(ArgumentError, fn ->
+          LLM.__classify__(Classifier, "text", %{}, :eng, @ctx)
+        end).message
+
+      assert message =~ inspect(Classifier)
+      assert message =~ "ALLM.ClassificationResponse"
+    end
+
+    test "a non-tuple return raises, naming the adapter — never a CaseClauseError" do
+      Process.put(:classify_return, :ok)
+
+      message =
+        assert_raise(ArgumentError, fn ->
+          LLM.__classify__(Classifier, "text", %{}, :eng, @ctx)
+        end).message
+
+      assert message =~ "#{inspect(Classifier)}.classify/4 returned :ok"
+    end
+
+    test "an adapter without classify/4 raises, naming the adapter and the callback" do
+      message =
+        assert_raise(RuntimeError, fn ->
+          LLM.__classify__(NoClassify, "text", %{"team" => @question}, :eng, @ctx)
+        end).message
+
+      assert message =~ "classify/4"
+      assert message =~ inspect(NoClassify)
+      assert message =~ "ALLM.classify/3"
+    end
+
+    test "an adapter without classify/4 is not called at all before the raise" do
+      assert_raise RuntimeError, fn ->
+        LLM.__classify__(NoClassify, "text", %{"team" => @question}, :eng, @ctx)
+      end
+
+      refute_received {:unexpected_call, _}
+    end
+
+    test "an adapter that fails to load is named as a load failure" do
+      message =
+        assert_raise(RuntimeError, fn ->
+          LLM.__classify__(ALLM.Pipeline.NoSuchAdapter, "text", %{}, :eng, @ctx)
+        end).message
+
+      assert message =~ "ALLM.Pipeline.NoSuchAdapter"
+      assert message =~ ":nofile"
+      refute message =~ "does not export"
+    end
+
+    test "a delegating adapter returns ALLM 0.6.0's own response" do
+      engine =
+        ALLM.Engine.new(
+          classification_adapter: ALLM.Providers.FakeClassification,
+          adapter_opts: [classification_script: [{:answers, %{"team" => "billing"}}]]
+        )
+
+      assert {:ok, %ALLM.ClassificationResponse{} = response} =
+               LLM.__classify__(
+                 DelegatingClassifier,
+                 "My card was charged twice.",
+                 %{"team" => @question},
+                 engine,
+                 @ctx
+               )
+
+      assert %ALLM.ClassificationAnswer{type: :choice, choice: "billing"} =
+               response.answers["team"]
+    end
+  end
+
+  test "the context-taking callbacks and classify/4 are exactly the optional ones" do
     assert Enum.sort(LLM.behaviour_info(:optional_callbacks)) ==
-             Enum.sort(resolve_engine: 2, generate_structured: 5)
+             Enum.sort(classify: 4, generate_structured: 5, resolve_engine: 2)
   end
 end

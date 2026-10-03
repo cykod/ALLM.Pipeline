@@ -1,6 +1,6 @@
 # See `output.ex`. The `alias` + short reference is how every step in this tree
 # names its Output; `input:` names a SECOND sibling file, so both compile-time
-# module probes (`assert_input_struct!/2` and `assert_derives_json_schema!/2`)
+# module probes (`__assert_input_struct__!/2` and `assert_derives_json_schema!/2`)
 # are exercised across the file boundary rather than only one of them.
 defmodule ALLMPipelineCrossFileStepFixture.Step do
   @moduledoc false

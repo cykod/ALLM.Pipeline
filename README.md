@@ -26,6 +26,9 @@ dependency or published to Hex as `allm_pipeline` via `scripts/release.exs`
 - `use ALLM.Pipeline.LLMStep` — generated LLM call path (strict-mode JSON
   schema derived from the Output declaration) on top of
   [`allm`](https://hex.pm/packages/allm).
+- `use ALLM.Pipeline.ClassifyStep` — a step over `allm`'s typed
+  classification: typed questions in, each answer coerced into its Output
+  field.
 - `use ALLM.Pipeline.Registry` — how a host wires its repo and adapters in at
   boot. The package resolves host collaborators at runtime; nothing in `lib/`
   may name a host module.

@@ -34,10 +34,10 @@ corollary, `Code.eval_string` rejection tests); `agent-spec/DESIGN.md`.
 | Subphase | Concern | Status |
 |---|---|---|
 | 1.1 | Context reaches the LLM seam; `call_llm/1` → `call_llm/2` | Completed |
-| 2.1 | Optional `classify/4` seam callback; allm floor 0.6.0 | Not Started |
-| 2.2 | `use ALLM.Pipeline.ClassifyStep` | Not Started |
+| 2.1 | Optional `classify/4` seam callback; allm floor 0.6.0 | Completed |
+| 2.2 | `use ALLM.Pipeline.ClassifyStep` | Completed |
 
-Overall Progress: 1/3 (records: `2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY_RECORDS.md`)
+Overall Progress: 3/3 (records: `2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY_RECORDS.md`)
 
 ---
 
@@ -285,6 +285,18 @@ same way `coercion/1` matches `Date` (`llm_step.ex:626`).
 | | `ArgumentError` naming the adapter — `classify/4` returned `{:ok, other}` where `other` is not a `%ALLM.ClassificationResponse{}` (matched explicitly, never a `KeyError` on `.usage`) | host adapter bug |
 | | `FunctionClauseError` from `ALLM.classify/3`'s guard (`allm.ex:2216-2217`) — `state/1` returned a non-`state()` value, when the host delegates to ALLM | step author's bug; not rescued |
 | `coerce/2` | `{:error, {:coerce, [{field, {:unknown_value, raw} \| {:type_mismatch, answer_type}}]}}` | step author's declaration vs the question |
+
+> CORRECTED (2026-10-03, batch-2 fix pass — functional review F1): the table
+> omitted a row. `call_classifier/2` | `ArgumentError` naming the step module
+> and `questions/1` — `questions/1` returned a non-map (e.g. a keyword list);
+> raised before `state/1` runs or anything is dispatched | step author's bug.
+> It was an anonymous `FunctionClauseError` in `__call_classifier__/5` until
+> this fix; see the RECORDS companion's 2.2 fix pass.
+>
+> CORRECTED (2026-10-03, batch-2 fix pass — code review F1): the adapter row
+> above is raised by `LLM.__classify__/5` (the seam), not by ClassifyStep, and
+> covers any return that is neither `{:ok, %ALLM.ClassificationResponse{}}` nor
+> `{:error, _}` — a non-tuple such as `:ok` included.
 
 Several `call_classifier/2` checks failing at once report the first in the
 order above (empty, unknown, duplicate) — each is a static author error,
