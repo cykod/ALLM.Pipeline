@@ -8,7 +8,7 @@ This spec is the build workflow plus the stack lessons CLAUDE.md doesn't carry.
 
 - The design doc is the source of truth. Read the WHOLE design before writing code;
   implement subphases in order — build order is load-bearing.
-- **Start green**: `mix precommit` (and `mix dialyzer` if the phase touches specs)
+- **Start green**: `mix precommit`
   must pass before any code. A pre-existing failure blocks the phase — stop and ask.
   Baseline repair is a separate, user-authorized `chore:` commit, minimum touch.
 - Per subphase: mark its status row `In Progress` → write the Test Plan tests first
@@ -33,10 +33,10 @@ This spec is the build workflow plus the stack lessons CLAUDE.md doesn't carry.
 ## Project bindings
 
 ```bash
-mix precommit        # compile --warnings-as-errors + format + test --warnings-as-errors
+mix precommit        # compile --warnings-as-errors + format + test --warnings-as-errors + dialyzer
 mix test             # creates + migrates allm_pipeline_test itself (see CLAUDE.md §2)
-mix dialyzer         # NOT in precommit; run whenever a @spec'd function changes
-docker compose up -d # DynamoDB Local :4028 + MinIO :4026 (--profile postgres for DB)
+docker compose up -d # BEFORE the first gate when docker works: DynamoDB Local :4028 + MinIO :4026
+                     # (--profile postgres for DB); "N excluded" with the stack startable is a weakened gate
 ```
 
 Toolchain pin: `.tool-versions` (erlang 27.1.2 / elixir 1.17.3-otp-27). The suite

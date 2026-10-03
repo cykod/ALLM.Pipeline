@@ -39,3 +39,5 @@
         [FIX] sat 10/3/2026 3pm - Fix retro F1: cap ExAws retries in test config so a down service stack stops costing ~50s per run
 
         [GATE] sat 10/3/2026 3pm - Gate-review phases 1-2 of 2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md — assess whether the LLM-seam context and ClassifyStep work succeeded and was exercised
+
+        [MILE] sat 10/3/2026 3pm - Closed the gated LLM seam + ClassifyStep build (phases 1-2, 2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md) with the v0.2.0 changelog entry and test retry config

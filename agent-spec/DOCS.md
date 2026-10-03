@@ -45,7 +45,7 @@ normative rule.
 
 ### What the grep can't see (review-lane obligation)
 
-The hard grep (C2a) is a floor over an *enumerable* token set. Two blind spots
+The hard grep (C2a) is a floor over an *enumerable* token set. Three blind spots
 are the review lane's, not the grep's:
 
 - **Over-stripping.** A category-A rewrite that deleted the rationale instead of
@@ -57,6 +57,9 @@ are the review lane's, not the grep's:
   umbrella/borrowed runs" is host-specific but reworded generically it leaves no
   banned token. The **soft advisory grep (C2b)** surfaces the `umbrella` /
   host-framing lines with line numbers; the reviewer reads each to zero.
+- **False universals.** Every added/edited doc sentence with a universal ("none",
+  "no", "never", "only", "exactly N", "zero") names the code that makes it true, or
+  is softened; adding a callback or option re-reads every sibling-enumerating section.
 
 **`umbrella` is soft-advisory, not a hard ban.** "Umbrella" is a legitimate
 generic Elixir term, and every *current* occurrence refers to *the* Amesbury

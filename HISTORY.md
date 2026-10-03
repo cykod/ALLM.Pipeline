@@ -1,3 +1,13 @@
+## [DOC] Apply LLM-seam build retro to agent specs
+*Saturday, October 3rd at 3pm*
+Folds the 2026-10-03 LLM seam retro into the specs: IMPLEMENTATION.md's project 
+bindings now say precommit runs dialyzer and that the DynamoDB Local + MinIO 
+stack is started before the first gate (an excluded set with the stack 
+startable is a weakened gate); DOCS.md's review-lane blind spots gain a 
+false-universals rule for doc sentences.
+
+---
+
 ## [OTHR] Close LLM seam + ClassifyStep build: gate, changelog, test retries
 *Saturday, October 3rd at 3pm*
 Closes the gated build of steering/2026-10-03_LLM_SEAM_CONTEXT_AND_CLASSIFY.md 
