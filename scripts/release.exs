@@ -572,7 +572,9 @@ defmodule ALLM.Pipeline.Release do
 
   defp bump_mix_version!(new_version, dry_run?) do
     body = File.read!(@mix_exs_path)
-    pattern = ~r/(@version\s+")[^"]+(")/
+    # Anchored to line start: the comment above `@version` in mix.exs quotes the
+    # literal, and an unanchored first match rewrote the comment, not the attribute.
+    pattern = ~r/^(\s*@version\s+")[^"]+(")/m
 
     unless Regex.match?(pattern, body) do
       abort("could not find `@version \"...\"` in #{@mix_exs_path}")
